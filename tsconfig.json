@@ -1,0 +1,34 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "paths": {
+      "@veriscope/cli": ["packages/cli/src/index.ts"],
+      "@veriscope/coverage": ["packages/coverage/src/index.ts"],
+      "@veriscope/devtools": ["packages/devtools/src/index.ts"],
+      "@veriscope/devtools/bridge": ["packages/devtools/src/bridge.ts"],
+      "@veriscope/graph": ["packages/graph/src/index.ts"],
+      "@veriscope/mutate": ["packages/mutate/src/index.ts"],
+      "@veriscope/react": ["packages/react/src/index.ts"],
+      "@veriscope/solid": ["packages/solid/src/index.ts"],
+      "@veriscope/test": ["packages/test/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "examples/*/src/**/*.ts",
+    "examples/*/src/**/*.tsx"
+  ],
+  "exclude": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
+}

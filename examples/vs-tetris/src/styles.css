@@ -1,0 +1,725 @@
+:root {
+  color: #e8e5dd;
+  background: #101113;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #101113;
+}
+
+button {
+  border: 1px solid #3a3d42;
+  background: #1b1d20;
+  color: #f4f1e8;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #26292d;
+  border-color: #5b8def;
+}
+
+button:disabled,
+button:disabled:hover {
+  background: #15171a;
+  border-color: #2b2e33;
+  color: #6f7680;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.app-shell {
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.arena-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #303238;
+  background: #17191c;
+  border-radius: 8px;
+}
+
+.brand-lockup {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brand-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #f4f1e8;
+}
+
+.brand-subtitle {
+  color: #a7abb3;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.target-control,
+.command-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.send-control {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) auto;
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
+}
+
+.garbage-bank {
+  display: grid;
+  gap: 5px;
+  min-width: 180px;
+}
+
+.garbage-bank-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #a7abb3;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.garbage-bank-label strong {
+  color: #f4f1e8;
+  font-size: 0.86rem;
+}
+
+.garbage-bank-meter {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(10px, 1fr));
+  gap: 3px;
+  min-height: 11px;
+}
+
+.garbage-bank-meter span {
+  border: 1px solid #343840;
+  background: #0f1114;
+  border-radius: 3px;
+}
+
+.garbage-bank-meter span.filled {
+  border-color: #9bdc84;
+  background: #5ee6a8;
+  box-shadow: 0 0 8px rgba(94, 230, 168, 0.22);
+}
+
+.attack-ready {
+  border-color: #5ee6a8;
+  color: #eafff4;
+}
+
+.target-button.active {
+  background: #5b8def;
+  border-color: #82a7ff;
+  color: #081120;
+  font-weight: 800;
+}
+
+.arena-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.player-card {
+  border: 1px solid #303238;
+  background: #16181b;
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0;
+}
+
+.player-card.human {
+  border-color: #5b8def;
+}
+
+.player-card.received {
+  border-color: #ffd166;
+  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.35);
+}
+
+.player-card.ko {
+  opacity: 0.58;
+}
+
+.player-header {
+  min-height: 44px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.player-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.player-header span {
+  color: #a7abb3;
+  font-size: 0.72rem;
+}
+
+.target-badge {
+  font-size: 0.68rem;
+  color: #101113;
+  background: #ffd166;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.badge-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.recv-badge {
+  font-size: 0.68rem;
+  color: #07120d;
+  background: #5ee6a8;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.board {
+  width: 100%;
+  aspect-ratio: 10 / 20;
+  display: grid;
+  gap: 1px;
+  padding: 4px;
+  background: #0b0c0e;
+  border: 1px solid #2b2e33;
+  border-radius: 6px;
+}
+
+.cell {
+  display: block;
+  aspect-ratio: 1;
+  min-width: 0;
+  background: #14171a;
+  border-radius: 2px;
+}
+
+.cell.filled {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.cell.garbage {
+  background: #6b7280;
+}
+
+.player-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px;
+  background: #101214;
+  border: 1px solid #2c2f34;
+  border-radius: 6px;
+}
+
+.metric small {
+  color: #8f949d;
+  font-size: 0.67rem;
+}
+
+.metric b {
+  color: #f4f1e8;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.telemetry-panel,
+.devtools-shell {
+  border: 1px solid #303238;
+  background: #17191c;
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0;
+}
+
+.panel-title {
+  color: #e8e5dd;
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.signal-grid.compact {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.send-log,
+.event-list {
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #c6cad1;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+}
+
+.send-row,
+.event-list span,
+.empty-row {
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: #101214;
+  border: 1px solid #2c2f34;
+}
+
+.send-row b {
+  color: #ffd166;
+}
+
+.devtools-shell {
+  margin-top: 12px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.live-graph-panel {
+  margin-top: 12px;
+  border: 1px solid #303238;
+  background: #17191c;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.graph-panel-header {
+  min-height: 52px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #303238;
+}
+
+.graph-panel-header p {
+  margin: 3px 0 0;
+  color: #8f949d;
+  font-size: 0.76rem;
+}
+
+.graph-scroll {
+  width: 100%;
+  overflow: auto;
+  background: #101214;
+}
+
+.graph-scroll svg {
+  display: block;
+  min-width: 920px;
+  width: 100%;
+}
+
+.graph-lane {
+  fill: #15181b;
+  stroke: #2c2f34;
+}
+
+.graph-lane.signal {
+  stroke: rgba(91, 141, 239, 0.45);
+}
+
+.graph-lane.derived {
+  stroke: rgba(94, 230, 168, 0.45);
+}
+
+.graph-lane.assertion {
+  stroke: rgba(255, 95, 126, 0.45);
+}
+
+.graph-lane.effect {
+  stroke: rgba(255, 209, 102, 0.45);
+}
+
+.graph-lane-title {
+  fill: #8f949d;
+  font: 700 13px "SFMono-Regular", Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.graph-edge {
+  fill: none;
+  stroke: rgba(167, 171, 179, 0.28);
+  stroke-width: 1.4;
+}
+
+.graph-node rect {
+  fill: #1b1e22;
+  stroke: #3a3d42;
+  stroke-width: 1;
+}
+
+.graph-node.signal rect {
+  stroke: #5b8def;
+}
+
+.graph-node.derived rect {
+  stroke: #5ee6a8;
+}
+
+.graph-node.assertion rect {
+  stroke: #ff5f7e;
+}
+
+.graph-node.effect rect {
+  stroke: #ffd166;
+}
+
+.graph-node.hot rect {
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 7px rgba(255, 209, 102, 0.65));
+}
+
+.graph-node-name {
+  fill: #f4f1e8;
+  font: 700 11px "SFMono-Regular", Consolas, monospace;
+}
+
+.graph-node-value {
+  fill: #a7abb3;
+  font: 10px "SFMono-Regular", Consolas, monospace;
+}
+
+.review-workbench {
+  margin-top: 12px;
+}
+
+.code-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.code-pane,
+.runner-panel {
+  border: 1px solid #303238;
+  background: #17191c;
+  border-radius: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tab-row {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid #303238;
+  overflow-x: auto;
+}
+
+.code-footnote {
+  padding: 8px 10px;
+  border-top: 1px solid #303238;
+  background: #101214;
+  color: #ffd166;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.tab {
+  min-height: 30px;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+
+.tab.active {
+  background: #5ee6a8;
+  border-color: #77f1b8;
+  color: #07120d;
+  font-weight: 800;
+}
+
+.code-block {
+  position: relative;
+  background: #101214;
+}
+
+.code-meta {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px;
+  border-bottom: 1px solid #2c2f34;
+  background: #14171a;
+  color: #8f949d;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.7rem;
+}
+
+pre {
+  margin: 0;
+  min-height: 240px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 8px 0;
+  background: #101214;
+  color: #d8dce3;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.code-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 18px;
+}
+
+.line-no {
+  user-select: none;
+  color: #676c75;
+  text-align: right;
+  padding-right: 12px;
+  border-right: 1px solid #25282d;
+}
+
+.code-line code {
+  display: block;
+  min-width: 0;
+  padding-left: 12px;
+  white-space: pre;
+}
+
+.tok-keyword {
+  color: #ff9f7a;
+}
+
+.tok-string {
+  color: #ffd166;
+}
+
+.tok-comment {
+  color: #7b8491;
+}
+
+.tok-call {
+  color: #5ee6a8;
+}
+
+.tok-type {
+  color: #8fb4ff;
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.runner-panel {
+  padding: 10px;
+}
+
+.runner-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #f4f1e8;
+  font-weight: 800;
+  font-size: 0.82rem;
+}
+
+.runner-header b {
+  color: #5ee6a8;
+}
+
+.runner-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.runner-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 190px;
+  overflow: auto;
+}
+
+.runner-row {
+  display: grid;
+  grid-template-columns: 70px minmax(120px, 1fr);
+  gap: 4px 8px;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #2c2f34;
+  background: #101214;
+}
+
+.runner-row b {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.runner-row.pass b,
+.runner-row.killed b {
+  color: #5ee6a8;
+}
+
+.runner-row.fail b,
+.runner-row.survived b {
+  color: #ff5f7e;
+}
+
+.runner-row em {
+  color: #f4f1e8;
+  font-style: normal;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runner-row small {
+  grid-column: 2;
+  color: #a7abb3;
+  font-size: 0.7rem;
+}
+
+.coverage-bins {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.bin {
+  min-height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid #3a3d42;
+  background: #101214;
+  color: #8f949d;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.bin.hit {
+  background: #163629;
+  border-color: #5ee6a8;
+  color: #8ff5c5;
+}
+
+.coverage-table {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  color: #a7abb3;
+  font-size: 0.76rem;
+}
+
+.coverage-table b {
+  color: #f4f1e8;
+}
+
+@media (max-width: 1050px) {
+  .arena-toolbar,
+  .telemetry-grid,
+  .code-compare,
+  .review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .target-control,
+  .command-row,
+  .send-control {
+    justify-content: flex-start;
+  }
+
+  .send-control {
+    grid-template-columns: 1fr;
+  }
+
+  .arena-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    padding: 10px;
+  }
+
+  .arena-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-grid,
+  .signal-grid.compact,
+  .player-stats,
+  .runner-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

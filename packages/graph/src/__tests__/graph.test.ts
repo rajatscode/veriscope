@@ -46,13 +46,53 @@ describe('CircuitGraph', () => {
     expect(g.currentTick).toBe(1);
   });
 
-  it('auto-manages ticks outside test mode', () => {
+  it('batches synchronous changes into one auto-managed tick outside test mode', async () => {
     const g = new CircuitGraph();
     const a = g.registerNode({ name: 'a', type: 'signal' });
     g.notifyChange(a, 0, 1);
-    expect(g.currentTick).toBe(1);
     g.notifyChange(a, 1, 2);
+    expect(g.currentTick).toBe(0);
+
+    await g.flushTick();
+
+    expect(g.currentTick).toBe(1);
+    const events = g.getRecentEvents(2);
+    expect(events).toHaveLength(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(0);
+  });
+
+  it('starts a new tick for async continuations after a flush', async () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.notifyChange(a, 0, 1);
+    await g.flushTick();
+
+    g.notifyChange(a, 1, 2);
+    await g.flushTick();
+
     expect(g.currentTick).toBe(2);
+    const events = g.getRecentEvents(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(1);
+  });
+
+  it('keeps nested openTick calls in the same tick', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.openTick();
+    g.notifyChange(a, 0, 1);
+    g.openTick();
+    g.notifyChange(a, 1, 2);
+    g.closeTick();
+
+    expect(g.currentTick).toBe(1);
+    const events = g.getRecentEvents(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(0);
   });
 
   it('does not auto-manage ticks in test mode', () => {
@@ -65,7 +105,7 @@ describe('CircuitGraph', () => {
     expect(g.currentTick).toBe(0);
   });
 
-  it('exitTestMode re-enables auto tick management', () => {
+  it('exitTestMode re-enables auto tick management', async () => {
     const g = new CircuitGraph();
     g.enterTestMode();
     const a = g.registerNode({ name: 'a', type: 'signal' });
@@ -73,6 +113,25 @@ describe('CircuitGraph', () => {
     expect(g.currentTick).toBe(0);
     g.exitTestMode();
     g.notifyChange(a, 1, 2);
+    await g.flushTick();
+    expect(g.currentTick).toBe(1);
+  });
+
+  it('checks assertions when an auto-managed tick closes', async () => {
+    const g = new CircuitGraph();
+    const sig = g.registerNode({ name: 'sig', type: 'signal' });
+    let ok = true;
+    const assertId = g.registerNode({ name: 'ok', type: 'assertion', deps: [sig] });
+    g.setAssertionFn(assertId, () => ok, 'always');
+
+    const events: any[] = [];
+    g.subscribe(e => events.push(e));
+
+    ok = false;
+    g.notifyChange(sig, true, false);
+    await g.flushTick();
+
+    expect(events.some(e => e.type === 'assertion-failed' && e.tick === 0)).toBe(true);
     expect(g.currentTick).toBe(1);
   });
 

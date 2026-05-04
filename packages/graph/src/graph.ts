@@ -20,6 +20,7 @@ export class CircuitGraph {
   private _currentTick = 0;
   private testMode = false;
   private tickOpen = false;
+  private tickCloseScheduled = false;
   private coverageEnabled = false;
   private _inAsyncContext = false;
   private nodeLastSetContext = new Map<string, 'sync' | 'async'>();
@@ -117,13 +118,34 @@ export class CircuitGraph {
     }
   }
 
+  private ensureTickOpen(): void {
+    if (!this.tickOpen) {
+      this.tickOpen = true;
+    }
+  }
+
+  private scheduleTickClose(): void {
+    if (this.testMode || this.tickCloseScheduled) return;
+
+    this.tickCloseScheduled = true;
+    const schedule =
+      typeof queueMicrotask === 'function'
+        ? queueMicrotask
+        : (fn: () => void) => Promise.resolve().then(fn);
+
+    schedule(() => {
+      this.tickCloseScheduled = false;
+      this.closeTick();
+    });
+  }
+
   notifyChange(nodeId: string, oldValue: any, newValue: any): void {
     const node = this.nodes.get(nodeId);
     if (!node) return;
 
-    // Auto-manage ticks when not in test mode
-    if (!this.testMode && !this.tickOpen) {
-      this.tickOpen = true;
+    if (!this.testMode) {
+      this.ensureTickOpen();
+      this.scheduleTickClose();
     }
 
     const eventType: GraphEvent['type'] =
@@ -191,14 +213,14 @@ export class CircuitGraph {
       listener(event);
     }
 
-    // Auto-close tick when not in test mode
-    if (!this.testMode && this.tickOpen) {
-      this._currentTick++;
-      this.tickOpen = false;
-    }
   }
 
   notifyEffect(nodeId: string): void {
+    if (!this.testMode) {
+      this.ensureTickOpen();
+      this.scheduleTickClose();
+    }
+
     const event: GraphEvent = {
       type: 'effect-run',
       nodeId,
@@ -364,14 +386,21 @@ export class CircuitGraph {
   }
 
   openTick(): void {
-    this.tickOpen = true;
+    this.ensureTickOpen();
   }
 
   closeTick(): void {
     if (this.tickOpen) {
+      this.checkAssertions();
       this._currentTick++;
       this.tickOpen = false;
+      this.tickCloseScheduled = false;
     }
+  }
+
+  async flushTick(): Promise<void> {
+    this.closeTick();
+    await Promise.resolve();
   }
 
   exitTestMode(): void {
@@ -453,6 +482,7 @@ export class CircuitGraph {
     this._currentTick = 0;
     this.testMode = false;
     this.tickOpen = false;
+    this.tickCloseScheduled = false;
     this.coverageEnabled = false;
     this._inAsyncContext = false;
     this.nodeLastSetContext.clear();

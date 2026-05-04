@@ -210,7 +210,7 @@ describe('Integration: signals + derived + assertions', () => {
     expect(warnings).toHaveLength(0);
   });
 
-  it('tick semantics: enterTestMode, manual openTick/closeTick', () => {
+  it('tick semantics: enterTestMode, manual openTick/closeTick', async () => {
     const sig = g.registerNode({ name: 's', type: 'signal' });
 
     // In test mode, ticks don't auto-advance
@@ -231,6 +231,7 @@ describe('Integration: signals + derived + assertions', () => {
     // Exit test mode: auto-advance resumes
     g.exitTestMode();
     g.notifyChange(sig, 3, 4);
+    await g.flushTick();
     expect(g.currentTick).toBe(3);
   });
 

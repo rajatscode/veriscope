@@ -39,7 +39,7 @@ export function createAssertionsPanel(
       entries.set(node.id, {
         nodeId: node.id,
         name: node.name,
-        kind: node.assertionKind ?? 'unknown',
+        kind: node.kind ?? 'unknown',
         status: prev?.status ?? 'unknown',
         lastTick: prev?.lastTick ?? 0,
         failCount: prev?.failCount ?? 0,
