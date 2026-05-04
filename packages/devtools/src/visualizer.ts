@@ -27,14 +27,21 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
   const nodes = graph.getNodes();
   const edges = graph.getEdges();
 
-  // Topological layering: nodes with no deps go in layer 0, etc.
+  // Separate assertion nodes from the rest
+  const assertionIds = new Set(nodes.filter(n => n.type === 'assertion').map(n => n.id));
+  const nonAssertionNodes = nodes.filter(n => !assertionIds.has(n.id));
+  const assertionNodes = nodes.filter(n => assertionIds.has(n.id));
+
+  // Topological layering for non-assertion nodes
   const inDegree = new Map<string, number>();
   const children = new Map<string, string[]>();
-  for (const n of nodes) {
+  for (const n of nonAssertionNodes) {
     inDegree.set(n.id, 0);
     children.set(n.id, []);
   }
   for (const e of edges) {
+    // Only consider edges between non-assertion nodes
+    if (assertionIds.has(e.to) || assertionIds.has(e.from)) continue;
     if (inDegree.has(e.to)) {
       inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1);
     }
@@ -45,7 +52,7 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
 
   const layers: string[][] = [];
   const assigned = new Set<string>();
-  const remaining = new Set(nodes.map(n => n.id));
+  const remaining = new Set(nonAssertionNodes.map(n => n.id));
 
   while (remaining.size > 0) {
     const layer: string[] = [];
@@ -69,7 +76,7 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
     layers.push(layer);
   }
 
-  // Position nodes in layers
+  // Position nodes in layers, with assertions in the rightmost column
   const layoutNodes: LayoutNode[] = [];
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -85,6 +92,25 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
         name: node.name,
         type: node.type,
         x: layerX,
+        y: PADDING + i * (NODE_H + 20),
+        deps: node.deps,
+      });
+    }
+  }
+
+  // Place assertion nodes in the rightmost column
+  if (assertionNodes.length > 0) {
+    const rightmostX = layers.length > 0 ?
+      PADDING + (layers.length) * (NODE_W + 60) :
+      PADDING;
+
+    for (let i = 0; i < assertionNodes.length; i++) {
+      const node = assertionNodes[i];
+      layoutNodes.push({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        x: rightmostX,
         y: PADDING + i * (NODE_H + 20),
         deps: node.deps,
       });
