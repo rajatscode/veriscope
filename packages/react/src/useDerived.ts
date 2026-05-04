@@ -1,6 +1,10 @@
 import { useMemo, useRef, useSyncExternalStore, useEffect } from 'react';
-import { graph } from '@veriscope/graph';
-import type { ReadonlySignal, Signal } from '@veriscope/graph';
+import { graph as defaultGraph } from '@veriscope/graph';
+import type { ReadonlySignal, Signal, CircuitGraph } from '@veriscope/graph';
+
+interface UseDerivedOptions {
+  graph?: CircuitGraph;
+}
 
 /**
  * Create a derived (computed) signal that tracks dependencies and registers in the graph.
@@ -12,15 +16,18 @@ export function useDerived<T>(
   computeFn: () => T,
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
+  options?: UseDerivedOptions,
 ): ReadonlySignal<T> {
+  const g = options?.graph ?? defaultGraph;
   const nodeIdRef = useRef<string | null>(null);
   const prevRef = useRef<T | undefined>(undefined);
   const valueRef = useRef<T>(undefined as T);
   const subscribersRef = useRef(new Set<() => void>());
+  const graphRef = useRef(g);
 
   // Register in graph once
   if (nodeIdRef.current === null) {
-    nodeIdRef.current = graph.registerNode({
+    nodeIdRef.current = graphRef.current.registerNode({
       name,
       type: 'derived',
       deps: deps.map(d => d.nodeId),
@@ -28,7 +35,7 @@ export function useDerived<T>(
     // Compute initial value
     valueRef.current = computeFn();
     prevRef.current = valueRef.current;
-    graph.setNodeValue(nodeIdRef.current, () => valueRef.current);
+    graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
   }
 
   const nodeId = nodeIdRef.current;
@@ -42,7 +49,7 @@ export function useDerived<T>(
     const old = prevRef.current;
     prevRef.current = newValue;
     valueRef.current = newValue;
-    graph.notifyChange(nodeId, old, newValue);
+    graphRef.current.notifyChange(nodeId, old, newValue);
     // Notify external store subscribers
     for (const sub of subscribersRef.current) sub();
   } else {
@@ -53,7 +60,7 @@ export function useDerived<T>(
   useEffect(() => {
     return () => {
       if (nodeIdRef.current) {
-        graph.disposeNode(nodeIdRef.current);
+        graphRef.current.disposeNode(nodeIdRef.current);
       }
     };
   }, []);

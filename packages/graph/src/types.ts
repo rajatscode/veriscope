@@ -54,3 +54,12 @@ export interface AssertionViolation {
   kind: 'always' | 'never' | 'after';
   tick: number;
 }
+
+export interface CdcWarning {
+  type: 'cdc-async-unguarded';
+  signalId: string;
+  signalName: string;
+  derivedId: string;
+  derivedName: string;
+  tick: number;
+}

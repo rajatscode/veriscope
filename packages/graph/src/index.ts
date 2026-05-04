@@ -11,6 +11,7 @@ export type {
   GraphDiff,
   NodeType,
   AssertionViolation,
+  CdcWarning,
 } from './types.js';
 export type {
   ToggleCoverage,

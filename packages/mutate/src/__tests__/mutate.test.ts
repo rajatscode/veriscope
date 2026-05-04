@@ -51,6 +51,103 @@ describe('generateMutations', () => {
     undo();
     expect(g.getNode(a)!.getValue!()).toBe(true); // restored
   });
+
+  it('generates swap-edge mutations for same-type signals', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const b = g.registerNode({ name: 'b', type: 'signal' });
+    g.setNodeValue(a, () => 1);
+    g.setNodeValue(b, () => 2);
+
+    const mutations = generateMutations(g);
+    const swapMuts = mutations.filter(m => m.name.startsWith('swap-edge:'));
+    expect(swapMuts.length).toBeGreaterThan(0);
+
+    // Apply swap: a should now read b's value
+    const undo = swapMuts[0].apply(g);
+    expect(g.getNode(a)!.getValue!()).toBe(2);
+    undo();
+    expect(g.getNode(a)!.getValue!()).toBe(1);
+  });
+
+  it('generates skip-effect mutations', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const e = g.registerNode({ name: 'myEffect', type: 'effect' });
+    g.addEdge(a, e);
+    let ran = false;
+    g.setNodeValue(e, () => { ran = true; });
+
+    const mutations = generateMutations(g);
+    const skipMuts = mutations.filter(m => m.name.startsWith('skip-effect:'));
+    expect(skipMuts.length).toBeGreaterThan(0);
+
+    // Apply skip: effect should be a no-op
+    ran = false;
+    const undo = skipMuts[0].apply(g);
+    g.getNode(e)!.getValue!();
+    expect(ran).toBe(false);
+    undo();
+    g.getNode(e)!.getValue!();
+    expect(ran).toBe(true);
+  });
+
+  it('generates invert-comparison mutations for boolean derived nodes', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const d = g.registerNode({ name: 'isPositive', type: 'derived' });
+    g.addEdge(a, d);
+    g.setNodeValue(a, () => 5);
+    g.setNodeValue(d, () => true);
+
+    const mutations = generateMutations(g);
+    const invertMuts = mutations.filter(m => m.name.startsWith('invert-comparison:'));
+    expect(invertMuts.length).toBeGreaterThan(0);
+
+    const undo = invertMuts[0].apply(g);
+    expect(g.getNode(d)!.getValue!()).toBe(false);
+    undo();
+    expect(g.getNode(d)!.getValue!()).toBe(true);
+  });
+
+  it('generates remove-assertion mutations', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const assertId = g.registerNode({ name: 'myAssert', type: 'assertion' });
+    g.addEdge(a, assertId);
+    g.setAssertionFn(assertId, () => false, 'always');
+
+    const mutations = generateMutations(g);
+    const removeMuts = mutations.filter(m => m.name.startsWith('remove-assertion:'));
+    expect(removeMuts.length).toBeGreaterThan(0);
+
+    // Before: assertion fails
+    expect(g.getNode(assertId)!.assertionFn!()).toBe(false);
+    // Apply: assertion disabled (always passes)
+    const undo = removeMuts[0].apply(g);
+    expect(g.getNode(assertId)!.assertionFn!()).toBe(true);
+    undo();
+    expect(g.getNode(assertId)!.assertionFn!()).toBe(false);
+  });
+
+  it('generates delay-effect mutations', () => {
+    const g = new CircuitGraph();
+    const e = g.registerNode({ name: 'delayMe', type: 'effect' });
+    let callOrder: string[] = [];
+    g.setNodeValue(e, () => { callOrder.push('immediate'); });
+
+    const mutations = generateMutations(g);
+    const delayMuts = mutations.filter(m => m.name.startsWith('delay-effect:'));
+    expect(delayMuts.length).toBeGreaterThan(0);
+
+    // Apply: the effect should be wrapped in setTimeout
+    callOrder = [];
+    const undo = delayMuts[0].apply(g);
+    g.getNode(e)!.getValue!();
+    // Immediate call list should be empty (queued to next tick)
+    expect(callOrder).toEqual([]);
+    undo();
+  });
 });
 
 describe('mutate', () => {

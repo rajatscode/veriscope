@@ -1,7 +1,8 @@
 // graph.ts — CircuitGraph: introspectable reactive dependency graph
 // Extracted from Comb's runtime, simplified for framework-agnostic use
 
-import type { GraphNode, GraphEdge, GraphEvent, GraphSnapshot, GraphDiff, NodeType, AssertionViolation } from './types.js';
+import type { GraphNode, GraphEdge, GraphEvent, GraphSnapshot, GraphDiff, NodeType, AssertionViolation, CdcWarning } from './types.js';
+import { coverage } from './coverage.js';
 
 const EVENT_BUFFER_SIZE = 256;
 
@@ -19,6 +20,10 @@ export class CircuitGraph {
   private _currentTick = 0;
   private testMode = false;
   private tickOpen = false;
+  private coverageEnabled = false;
+  private _inAsyncContext = false;
+  private nodeLastSetContext = new Map<string, 'sync' | 'async'>();
+  private cdcWarningListeners = new Set<(warning: CdcWarning) => void>();
 
   /** Current simulation tick (increments on closeTick). */
   get currentTick(): number {
@@ -103,6 +108,11 @@ export class CircuitGraph {
     const node = this.nodes.get(nodeId);
     if (!node) return;
 
+    // Auto-manage ticks when not in test mode
+    if (!this.testMode && !this.tickOpen) {
+      this.tickOpen = true;
+    }
+
     const eventType: GraphEvent['type'] =
       node.type === 'signal' ? 'signal-change' :
       node.type === 'derived' ? 'derived-recompute' : 'effect-run';
@@ -118,9 +128,54 @@ export class CircuitGraph {
     this.pushEvent(event);
     if (this.recording) this.recordWaveform(nodeId, newValue);
 
+    // Track async context for CDC warnings
+    if (node.type === 'signal') {
+      this.nodeLastSetContext.set(nodeId, this._inAsyncContext ? 'async' : 'sync');
+    }
+
+    // CDC warning: check if derived nodes reading this signal are unguarded
+    if (node.type === 'signal' && this._inAsyncContext && this.cdcWarningListeners.size > 0) {
+      for (const edge of this.edges) {
+        if (edge.from === nodeId) {
+          const downstream = this.nodes.get(edge.to);
+          if (downstream && downstream.type === 'derived') {
+            // Check if downstream also reads a guard signal (one set from sync context)
+            const hasGuard = downstream.deps.some(dep => {
+              const ctx = this.nodeLastSetContext.get(dep);
+              return ctx === 'sync' && dep !== nodeId;
+            });
+            if (!hasGuard) {
+              const warning: CdcWarning = {
+                type: 'cdc-async-unguarded',
+                signalId: nodeId,
+                signalName: node.name,
+                derivedId: edge.to,
+                derivedName: downstream.name,
+                tick: this._currentTick,
+              };
+              for (const listener of this.cdcWarningListeners) {
+                listener(warning);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Auto-record toggle coverage for boolean values
+    if (this.coverageEnabled && typeof newValue === 'boolean') {
+      coverage.recordToggle(nodeId, newValue);
+    }
+
     // Notify listeners
     for (const listener of this.listeners) {
       listener(event);
+    }
+
+    // Auto-close tick when not in test mode
+    if (!this.testMode && this.tickOpen) {
+      this._currentTick++;
+      this.tickOpen = false;
     }
   }
 
@@ -180,8 +235,16 @@ export class CircuitGraph {
     return this.nodes.get(id);
   }
 
-  getAssertions(): GraphNode[] {
-    return this.getNodes().filter(n => n.type === 'assertion');
+  getAssertions(): Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[] }> {
+    return [...this.nodes.values()]
+      .filter(n => n.type === 'assertion' && n.assertionFn)
+      .map(n => ({
+        id: n.id,
+        name: n.name,
+        kind: n.assertionKind ?? 'always',
+        checkFn: n.assertionFn!,
+        deps: n.deps,
+      }));
   }
 
   checkAssertions(): AssertionViolation[] {
@@ -291,6 +354,35 @@ export class CircuitGraph {
     }
   }
 
+  exitTestMode(): void {
+    this.testMode = false;
+  }
+
+  enableCoverage(): void {
+    this.coverageEnabled = true;
+    coverage.enable();
+  }
+
+  disableCoverage(): void {
+    this.coverageEnabled = false;
+    coverage.disable();
+  }
+
+  // --- CDC async context tracking ---
+
+  setAsyncContext(isAsync: boolean): void {
+    this._inAsyncContext = isAsync;
+  }
+
+  getNodeLastSetContext(nodeId: string): 'sync' | 'async' | undefined {
+    return this.nodeLastSetContext.get(nodeId);
+  }
+
+  onCdcWarning(listener: (warning: CdcWarning) => void): () => void {
+    this.cdcWarningListeners.add(listener);
+    return () => { this.cdcWarningListeners.delete(listener); };
+  }
+
   // --- Waveform recording ---
 
   startRecording(): void {
@@ -341,6 +433,10 @@ export class CircuitGraph {
     this._currentTick = 0;
     this.testMode = false;
     this.tickOpen = false;
+    this.coverageEnabled = false;
+    this._inAsyncContext = false;
+    this.nodeLastSetContext.clear();
+    this.cdcWarningListeners.clear();
   }
 }
 

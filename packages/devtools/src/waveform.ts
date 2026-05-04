@@ -27,12 +27,49 @@ interface SearchMatch {
   value: any;
 }
 
+interface ViewState {
+  viewStart: number;
+  viewEnd: number;
+  markerA: number | null;
+  markerB: number | null;
+  hiddenSignals: string[];
+}
+
+function saveViewState(key: string, state: ViewState): void {
+  localStorage.setItem(`veriscope-waveform-${key}`, JSON.stringify(state));
+}
+
+function loadViewState(key: string): ViewState | null {
+  const s = localStorage.getItem(`veriscope-waveform-${key}`);
+  return s ? JSON.parse(s) : null;
+}
+
 const COLORS = [
   '#6ee7f9', '#72f1b8', '#a78bfa', '#ff5d8f',
   '#f8d66d', '#5b9bd5', '#e8915a', '#c084fc',
 ];
 const ROW_H = 56;
 const LABEL_W = 120;
+
+// --- Snap-to-edge ---
+
+function snapToNearestEdge(
+  clickTime: number,
+  data: Map<string, Array<{ t: number }>>,
+  visibleSignals: string[],
+): number {
+  let closest = clickTime;
+  let minDist = Infinity;
+  for (const id of visibleSignals) {
+    const buf = data.get(id);
+    if (!buf) continue;
+    for (const entry of buf) {
+      const dist = Math.abs(entry.t - clickTime);
+      if (dist < minDist) { minDist = dist; closest = entry.t; }
+    }
+  }
+  return closest;
+}
 
 // --- Signal list builder ---
 
@@ -274,7 +311,54 @@ function searchWaveform(
     return matches;
   }
 
-  // AND/OR: scan all timestamps
+  // Helper: get value at timestamp for a signal (last value <= t)
+  function valueAt(buf: Array<{ t: number; v: any }>, t: number): { v: any; prev: any } {
+    let v: any = undefined;
+    let prev: any = undefined;
+    for (let i = buf.length - 1; i >= 0; i--) {
+      if (buf[i].t <= t) {
+        v = buf[i].v;
+        prev = i > 0 ? buf[i - 1].v : undefined;
+        break;
+      }
+    }
+    return { v, prev };
+  }
+
+  // Evaluate a predicate tree at a given timestamp
+  function evalTree(node: PredicateTree, t: number): boolean {
+    if (isSinglePredicate(node)) {
+      const ids = resolveSignalIds(node, signalIds, signals);
+      for (const id of ids) {
+        const buf = data.get(id);
+        if (!buf || buf.length === 0) continue;
+        const { v, prev } = valueAt(buf, t);
+        if (v !== undefined && matchesPredicate(node, v, prev)) return true;
+      }
+      return false;
+    }
+    if (node.kind === 'and') return evalTree(node.left, t) && evalTree(node.right, t);
+    if (node.kind === 'or') return evalTree(node.left, t) || evalTree(node.right, t);
+    if (node.kind === 'within') {
+      // Check if left matches at t and right matches within ±count ms of t
+      if (!evalTree(node.left, t)) return false;
+      const tsSet2 = new Set<number>();
+      const rIds = resolveSignalIds(node.right, signalIds, signals);
+      for (const id of rIds) {
+        const buf = data.get(id);
+        if (buf) for (const e of buf) {
+          if (Math.abs(e.t - t) <= node.count) tsSet2.add(e.t);
+        }
+      }
+      for (const t2 of tsSet2) {
+        if (evalTree(node.right, t2)) return true;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  // Collect all timestamps from all signals
   const tsSet = new Set<number>();
   for (const id of signalIds) {
     const buf = data.get(id);
@@ -283,8 +367,9 @@ function searchWaveform(
   const timestamps = Array.from(tsSet).sort((a, b) => a - b);
   const matches: SearchMatch[] = [];
   for (const ts of timestamps) {
-    // simplified evaluation
-    matches.push({ timestamp: ts, signalId: '', value: undefined });
+    if (evalTree(tree, ts)) {
+      matches.push({ timestamp: ts, signalId: '', value: undefined });
+    }
   }
   return matches.slice(0, 1000);
 }
@@ -330,6 +415,21 @@ function drawWaveforms(
     ctx.font = '11px "SF Mono", "Fira Code", monospace';
     ctx.textBaseline = 'middle';
     ctx.fillText(sig.displayName, 8, y0 + ROW_H / 2);
+
+    // Inline value at cursor (right-aligned in label column)
+    if (cursorX >= LABEL_W && cursorX < width && buf.length > 0) {
+      const t = viewStart + ((cursorX - LABEL_W) / chartW) * tRange;
+      let val: any = '\u2014';
+      for (let i = buf.length - 1; i >= 0; i--) {
+        if (buf[i].t <= t) { val = buf[i].v; break; }
+      }
+      if (typeof val === 'number') val = val.toFixed(2);
+      ctx.fillStyle = 'rgba(200,210,225,0.7)';
+      ctx.font = '10px "SF Mono", "Fira Code", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(String(val), LABEL_W - 6, y0 + ROW_H / 2);
+      ctx.textAlign = 'left';
+    }
 
     if (buf.length === 0) continue;
 
@@ -617,6 +717,21 @@ export function createWaveformPanel(
   // Ensure recording is active
   graph.startRecording();
 
+  // Restore persisted view state
+  const stateKey = 'default';
+  const savedState = loadViewState(stateKey);
+  if (savedState) {
+    viewStart = savedState.viewStart;
+    viewEnd = savedState.viewEnd;
+    viewInitialized = true;
+    userInteracted = true;
+    if (savedState.markerA !== null) markers.setMarker('A', savedState.markerA);
+    if (savedState.markerB !== null) markers.setMarker('B', savedState.markerB);
+    for (const sig of signals) {
+      if (savedState.hiddenSignals.includes(sig.id)) sig.visible = false;
+    }
+  }
+
   // --- Control bar ---
   const controlBar = document.createElement('div');
   controlBar.style.cssText = 'display:flex; align-items:center; gap:4px; padding:3px 8px; background:#0d1117; border-bottom:1px solid #21262d; font-size:0.7rem; flex-wrap:wrap; flex-shrink:0;';
@@ -672,6 +787,24 @@ export function createWaveformPanel(
   searchBar.appendChild(nextBtn);
   searchBar.appendChild(searchCount);
   controlBar.appendChild(searchBar);
+
+  // Export JSON button
+  const exportBtn = document.createElement('button');
+  exportBtn.style.cssText = 'background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:1px 6px; border-radius:2px; cursor:pointer; font-size:0.7rem; margin-left:8px;';
+  exportBtn.textContent = 'Export JSON';
+  exportBtn.addEventListener('click', () => {
+    const data = graph.getWaveformData();
+    const obj: Record<string, Array<{ t: number; v: any }>> = {};
+    for (const [id, buf] of data) obj[id] = buf;
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `veriscope-waveform-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  controlBar.appendChild(exportBtn);
 
   // Zoom buttons
   const zoomGroup = document.createElement('span');
@@ -839,7 +972,13 @@ export function createWaveformPanel(
     if (mouseX >= LABEL_W) {
       if (e.altKey || e.metaKey) {
         const chartW = canvasWrap.clientWidth - LABEL_W;
-        markers.handleClick(e, rect, viewStart, viewEnd, chartW);
+        const tRange = viewEnd - viewStart || 1;
+        const rawT = viewStart + ((mouseX - LABEL_W) / chartW) * tRange;
+        const waveData = graph.getWaveformData();
+        const visIds = getVisibleSignals().map(s => s.id);
+        const snapped = snapToNearestEdge(rawT, waveData, visIds);
+        const markerId: 'A' | 'B' = e.shiftKey ? 'B' : 'A';
+        markers.setMarker(markerId, snapped);
         draw();
       } else {
         isPanning = true;
@@ -936,6 +1075,17 @@ export function createWaveformPanel(
   }, 500);
 
   function dispose() {
+    // Persist view state before teardown
+    const markerA = markers.markers.find(m => m.id === 'A');
+    const markerB = markers.markers.find(m => m.id === 'B');
+    saveViewState(stateKey, {
+      viewStart,
+      viewEnd,
+      markerA: markerA ? markerA.timestamp : null,
+      markerB: markerB ? markerB.timestamp : null,
+      hiddenSignals: signals.filter(s => !s.visible).map(s => s.id),
+    });
+
     disposed = true;
     clearInterval(interval);
     window.removeEventListener('mouseup', handleMouseUp);

@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { graph } from '@veriscope/graph';
-import type { Signal, ReadonlySignal } from '@veriscope/graph';
+import { graph as defaultGraph } from '@veriscope/graph';
+import type { Signal, ReadonlySignal, CircuitGraph } from '@veriscope/graph';
+
+interface UseEdgeEffectOptions {
+  graph?: CircuitGraph;
+}
 
 /**
  * Fire an action on a signal edge transition (posedge or negedge).
@@ -15,14 +19,17 @@ export function useEdgeEffect(
   edge: 'posedge' | 'negedge',
   action: () => void,
   name: string,
+  options?: UseEdgeEffectOptions,
 ): void {
+  const g = options?.graph ?? defaultGraph;
   const nodeIdRef = useRef<string | null>(null);
   const prevRef = useRef<any>(signal.val);
   const initializedRef = useRef(false);
+  const graphRef = useRef(g);
 
   // Register in graph once
   if (nodeIdRef.current === null) {
-    nodeIdRef.current = graph.registerNode({
+    nodeIdRef.current = graphRef.current.registerNode({
       name,
       type: 'effect',
       deps: [signal.nodeId],
@@ -51,7 +58,7 @@ export function useEdgeEffect(
     }
 
     if (edgeDetected) {
-      graph.notifyEffect(nodeId);
+      graphRef.current.notifyEffect(nodeId);
       action();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,7 +68,7 @@ export function useEdgeEffect(
   useEffect(() => {
     return () => {
       if (nodeIdRef.current) {
-        graph.disposeNode(nodeIdRef.current);
+        graphRef.current.disposeNode(nodeIdRef.current);
       }
     };
   }, []);
