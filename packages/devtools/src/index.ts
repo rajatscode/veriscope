@@ -1,5 +1,6 @@
 // @veriscope/devtools — Standalone web-based debugging UI
 // Provides waveform viewing, graph visualization, assertion monitoring, and coverage display
+// Bridge is imported for side effects only: import '@veriscope/devtools/bridge'
 
 import type { CircuitGraph, CoverageCollector } from '@veriscope/graph';
 import { createTabLayout } from './layout.js';

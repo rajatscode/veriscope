@@ -4,6 +4,10 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./bridge": "./dist/bridge.js"
+  },
   "files": ["dist"],
   "dependencies": {
     "@veriscope/graph": "*"
@@ -13,6 +17,6 @@
     "typescript": "^5.7.0"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts"
+    "build": "tsup"
   }
 }
