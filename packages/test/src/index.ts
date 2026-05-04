@@ -1,0 +1,9 @@
+export { explore } from './explore.js';
+export { backwardCone } from './backward-solve.js';
+export { enumerateBooleanCombinations } from './truth-table.js';
+export { traceReads } from './read-tracer.js';
+export { parseComputeFn } from './fn-parser.js';
+export { shrinkSequence } from './shrink.js';
+export type { ExploreOptions, ExploreResult, Violation, ParsedExpression } from './types.js';
+export type { TruthTableSignal, TruthTableRow } from './truth-table.js';
+export type { ShrinkStep } from './shrink.js';
