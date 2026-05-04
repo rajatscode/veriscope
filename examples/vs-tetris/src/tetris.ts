@@ -1,10 +1,11 @@
 export const COLS = 10;
 export const ROWS = 20;
 
-export type PlayerId = 'p1' | 'p2' | 'p3' | 'p4';
+export type PlayerId = string;
 export type PlayerKind = 'human' | 'ai';
 export type PieceName = 'I' | 'O' | 'T' | 'S' | 'Z' | 'L' | 'J';
 export type Cell = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export type OpponentCount = number;
 
 export interface PlayerState {
   id: PlayerId;
@@ -37,7 +38,27 @@ export interface ArenaTickResult {
   sends: GarbageSend[];
 }
 
-export const PLAYER_IDS: PlayerId[] = ['p1', 'p2', 'p3', 'p4'];
+export const MIN_OPPONENTS = 1;
+export const DEFAULT_OPPONENTS = 3;
+export const MAX_OPPONENTS = 99;
+
+export function clampOpponentCount(value: number): OpponentCount {
+  if (!Number.isFinite(value)) return DEFAULT_OPPONENTS;
+  return Math.max(MIN_OPPONENTS, Math.min(MAX_OPPONENTS, Math.floor(value)));
+}
+
+export function playerIdAt(index: number): PlayerId {
+  return `p${index + 1}`;
+}
+
+export function playerIdsFor(opponentCount: number): PlayerId[] {
+  const count = clampOpponentCount(opponentCount);
+  return Array.from({ length: count + 1 }, (_, index) => playerIdAt(index));
+}
+
+export function targetIdsFor(opponentCount: number): PlayerId[] {
+  return playerIdsFor(opponentCount).slice(1);
+}
 
 export const PIECE_COLORS: Record<number, string> = {
   1: '#63d2ff',
@@ -225,10 +246,8 @@ export function advanceArena(
     if (player.id === 'p1' && options?.holdHumanGarbage) continue;
     const target = chooseTarget(player, next, humanTarget);
     if (!target) continue;
-    player.lastSent = lines;
-    target.pendingGarbage += lines;
-    target.lastReceived += lines;
-    sends.push({ from: player.id, to: target.id, lines });
+    const send = deliverGarbage(player, target, lines);
+    if (send) sends.push(send);
   }
 
   return { players: next, sends };
@@ -245,18 +264,15 @@ export function sendManualGarbage(players: PlayerState[], from: PlayerId, to: Pl
   if (!sender || !target || sender.id === target.id || target.ko) {
     return { players: next, sends: [] };
   }
-  sender.lastSent = lines;
-  target.pendingGarbage += lines;
-  target.lastReceived += lines;
-  return { players: next, sends: [{ from, to, lines }] };
+  const send = deliverGarbage(sender, target, lines);
+  return { players: next, sends: send ? [send] : [] };
 }
 
-export function resetPlayers(): PlayerState[] {
+export function resetPlayers(opponentCount: OpponentCount = DEFAULT_OPPONENTS): PlayerState[] {
+  const count = clampOpponentCount(opponentCount);
   return [
     createPlayer('p1', 'You', 'human'),
-    createPlayer('p2', 'AI 1', 'ai'),
-    createPlayer('p3', 'AI 2', 'ai'),
-    createPlayer('p4', 'AI 3', 'ai'),
+    ...Array.from({ length: count }, (_, index) => createPlayer(playerIdAt(index + 1), `AI ${index + 1}`, 'ai')),
   ];
 }
 
@@ -343,6 +359,15 @@ function addGarbage(player: PlayerState, lines: number): void {
     row[gap] = 0;
     player.board.push(row);
   }
+}
+
+function deliverGarbage(sender: PlayerState, target: PlayerState, lines: number): GarbageSend | null {
+  if (lines <= 0 || sender.id === target.id || sender.ko || target.ko) return null;
+  sender.lastSent += lines;
+  target.lastReceived += lines;
+  target.pendingGarbage = 0;
+  addGarbage(target, lines);
+  return { from: sender.id, to: target.id, lines };
 }
 
 function locksAboveTop(player: PlayerState): boolean {

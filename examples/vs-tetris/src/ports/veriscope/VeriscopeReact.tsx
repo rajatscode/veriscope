@@ -3,9 +3,12 @@ import { assertAfter, assertAlways, coverage, graph } from '@veriscope/graph';
 import { useDerived, useSignal } from '@veriscope/react';
 import {
   COLS,
-  PLAYER_IDS,
+  DEFAULT_OPPONENTS,
+  MAX_OPPONENTS,
+  MIN_OPPONENTS,
   ROWS,
   advanceArena,
+  clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
   move,
@@ -14,13 +17,15 @@ import {
   sendManualGarbage,
   shapeFor,
   softDrop,
+  targetIdsFor,
   type Cell,
   type GarbageSend,
+  type OpponentCount,
   type PlayerId,
   type PlayerState,
 } from '../../tetris';
 
-const TARGETS: PlayerId[] = ['p2', 'p3', 'p4'];
+const TARGET_STATES = targetIdsFor(MAX_OPPONENTS);
 
 export function VeriscopeReactVsTetris() {
   const initialized = useRef(false);
@@ -30,48 +35,47 @@ export function VeriscopeReactVsTetris() {
     initialized.current = true;
   }
 
-  const initial = useMemo(() => resetPlayers(), []);
-  const p1 = useSignal(initial[0], 'p1.state');
-  const p2 = useSignal(initial[1], 'p2.state');
-  const p3 = useSignal(initial[2], 'p3.state');
-  const p4 = useSignal(initial[3], 'p4.state');
-  const target = useSignal<PlayerId>('p2', 'arena.humanTarget', { states: TARGETS });
+  const initial = useMemo(() => resetPlayers(DEFAULT_OPPONENTS), []);
+  const players = useSignal(initial, 'arena.players');
+  const opponentCount = useSignal<OpponentCount>(DEFAULT_OPPONENTS, 'arena.opponentCount');
+  const started = useSignal(false, 'arena.started');
+  const target = useSignal<PlayerId>('p2', 'arena.humanTarget', { states: TARGET_STATES });
   const tick = useSignal(0, 'arena.tick');
   const paused = useSignal(false, 'arena.paused');
   const garbagePulse = useSignal(false, 'arena.garbagePulse');
   const attack = useSignal(0, 'p1.attackBank');
-  const players = [p1, p2, p3, p4] as const;
 
   const totalPending = useDerived(
-    () => players.reduce((sum, player) => sum + player.val.pendingGarbage, 0),
-    [...players],
+    () => players.val.reduce((sum, player) => sum + player.pendingGarbage, 0),
+    [players],
     'arena.totalPendingGarbage',
   );
+  const activePlayers = useDerived(
+    () => players.val.filter(player => !player.ko).length,
+    [players],
+    'arena.activePlayers',
+  );
   const leader = useDerived(
-    () => [...players].sort((a, b) => b.val.score - a.val.score)[0].val.id,
-    [...players],
+    () => [...players.val].sort((a, b) => b.score - a.score)[0]?.id ?? 'p1',
+    [players],
     'arena.leader',
   );
-  const activePlayers = useDerived(
-    () => players.filter(player => !player.val.ko).length,
-    [...players],
-    'arena.activePlayers',
+  const winner = useDerived(
+    () => {
+      if (!started.val) return null;
+      const active = players.val.filter(player => !player.ko);
+      return active.length === 1 ? active[0].id : null;
+    },
+    [started, players],
+    'arena.winner',
   );
 
   const [sendLog, setSendLog] = useState<GarbageSend[]>([]);
   const stepRef = useRef<() => void>(() => {});
 
-  function currentPlayers(): PlayerState[] {
-    return players.map(player => player.val);
-  }
-
   function commit(nextPlayers: PlayerState[], sends: GarbageSend[]) {
-    p1.set(nextPlayers[0]);
-    p2.set(nextPlayers[1]);
-    p3.set(nextPlayers[2]);
-    p4.set(nextPlayers[3]);
+    players.set(nextPlayers);
     tick.set(tick.val + 1);
-
     if (sends.length > 0) {
       if (garbagePulse.val) garbagePulse.set(false);
       garbagePulse.set(true);
@@ -82,27 +86,47 @@ export function VeriscopeReactVsTetris() {
   }
 
   function stepArena() {
-    if (paused.val || activePlayers.val <= 1) return;
-    const result = advanceArena(currentPlayers(), target.val, { holdHumanGarbage: true });
+    if (!started.val || paused.val || activePlayers.val <= 1) return;
+    const result = advanceArena(players.val, target.val, { holdHumanGarbage: true });
     const earned = garbageFromClearedLines(result.players[0].lastCleared);
     commit(result.players, result.sends);
     if (earned > 0) attack.set(attack.val + earned);
   }
 
+  function start() {
+    const count = clampOpponentCount(opponentCount.val);
+    opponentCount.set(count);
+    players.set(resetPlayers(count));
+    target.set('p2');
+    tick.set(0);
+    paused.set(false);
+    attack.set(0);
+    garbagePulse.set(false);
+    setSendLog([]);
+    started.set(true);
+  }
+
+  function changeOpponentCount(value: number) {
+    const count = clampOpponentCount(value);
+    opponentCount.set(count);
+    target.set('p2');
+    if (!started.val) players.set(resetPlayers(count));
+  }
+
   function sendGarbage(lines: number) {
-    if (attack.val < lines) return;
-    const recipient = players.find(player => player.val.id === target.val);
-    if (!recipient || recipient.val.ko) return;
-    const result = sendManualGarbage(currentPlayers(), 'p1', target.val, lines);
+    if (!started.val || winner.val || players.val[0]?.ko || attack.val < lines) return;
+    const recipient = players.val.find(player => player.id === target.val);
+    if (!recipient || recipient.ko) return;
+    const result = sendManualGarbage(players.val, 'p1', target.val, lines);
     if (result.sends.length === 0) return;
     attack.set(attack.val - lines);
     commit(result.players, result.sends);
   }
 
   function updateHuman(nextHuman: PlayerState) {
-    const newlyCleared = Math.max(0, nextHuman.lines - p1.val.lines);
-    const earned = garbageFromClearedLines(newlyCleared);
-    p1.set(nextHuman);
+    if (!started.val || winner.val || players.val[0]?.ko) return;
+    const earned = garbageFromClearedLines(Math.max(0, nextHuman.lines - players.val[0].lines));
+    players.set([nextHuman, ...players.val.slice(1)]);
     if (earned > 0) attack.set(attack.val + earned);
   }
 
@@ -121,17 +145,17 @@ export function VeriscopeReactVsTetris() {
   useEffect(() => {
     const assertionIds = [
       assertAlways(
-        () => players.every(player => player.val.score >= 0 && player.val.pendingGarbage >= 0),
+        () => players.val.every(player => player.score >= 0 && player.pendingGarbage >= 0),
         'scores-and-garbage-nonnegative',
         graph,
-        [...players],
+        [players],
       ),
       assertAlways(() => target.val !== 'p1', 'human-never-targets-self', graph, [target]),
       assertAfter(
         garbagePulse,
         'posedge',
         'immediately',
-        () => totalPending.val > 0 || players.some(player => player.val.lastReceived > 0),
+        () => totalPending.val > 0 || players.val.some(player => player.lastReceived > 0),
         { name: 'garbage-send-has-recipient' },
         graph,
       ),
@@ -141,44 +165,59 @@ export function VeriscopeReactVsTetris() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-      if (p1.val.ko) return;
-      if (event.key === 'ArrowLeft') updateHuman(move(p1.val, -1));
-      if (event.key === 'ArrowRight') updateHuman(move(p1.val, 1));
-      if (event.key === 'ArrowUp') updateHuman(rotate(p1.val));
-      if (event.key === 'ArrowDown') updateHuman(softDrop(p1.val));
+      if (!started.val) return;
+      const human = players.val[0];
+      if (!human || human.ko) return;
+      if (event.key === 'ArrowLeft') updateHuman(move(human, -1));
+      if (event.key === 'ArrowRight') updateHuman(move(human, 1));
+      if (event.key === 'ArrowUp') updateHuman(rotate(human));
+      if (event.key === 'ArrowDown') updateHuman(softDrop(human));
       if (event.key === ' ') {
         event.preventDefault();
-        updateHuman(hardDrop(p1.val));
+        updateHuman(hardDrop(human));
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const targetKo = players.find(player => player.val.id === target.val)?.val.ko ?? true;
+  const targetKo = players.val.find(player => player.id === target.val)?.ko ?? true;
+  const targets = targetIdsFor(opponentCount.val);
 
   return (
     <section>
+      {!started.val ? (
+        <section>
+          <label>
+            AI opponents
+            <input type="range" min={MIN_OPPONENTS} max={MAX_OPPONENTS} value={opponentCount.val} onChange={event => changeOpponentCount(Number(event.currentTarget.value))} />
+            <input type="number" min={MIN_OPPONENTS} max={MAX_OPPONENTS} value={opponentCount.val} onChange={event => changeOpponentCount(Number(event.currentTarget.value))} />
+          </label>
+          <button onClick={start}>Start</button>
+        </section>
+      ) : null}
+
       <header>
         <strong>Tick {tick.val}</strong>
+        <span>Opponents {opponentCount.val}</span>
         <span>Leader {leader.val}</span>
         <span>Active {activePlayers.val}</span>
         <span>Pending {totalPending.val}</span>
-        {TARGETS.map(id => (
+        <span>Available garbage {attack.val}</span>
+        {winner.val ? <b>Winner {winner.val}</b> : null}
+        {targets.map(id => (
           <button key={id} onClick={() => target.set(id)} disabled={target.val === id}>{id}</button>
         ))}
-        <span>Available garbage {attack.val}</span>
-        <button disabled={attack.val < 2 || targetKo} onClick={() => sendGarbage(2)}>Send 2</button>
-        <button disabled={attack.val < 4 || targetKo} onClick={() => sendGarbage(4)}>Send 4</button>
+        <button disabled={!started.val || !!winner.val || attack.val < 2 || targetKo} onClick={() => sendGarbage(2)}>Send 2</button>
+        <button disabled={!started.val || !!winner.val || attack.val < 4 || targetKo} onClick={() => sendGarbage(4)}>Send 4</button>
         <button onClick={() => paused.set(!paused.val)}>{paused.val ? 'Run' : 'Pause'}</button>
+        <button onClick={start}>Restart</button>
       </header>
 
       <div>
-        {PLAYER_IDS.map(id => {
-          const player = players.find(candidate => candidate.val.id === id)!.val;
-          return <PlayerCard key={id} player={player} selected={target.val === id} />;
-        })}
+        {players.val.map(player => (
+          <PlayerCard key={player.id} player={player} selected={target.val === player.id} />
+        ))}
       </div>
 
       <ol>

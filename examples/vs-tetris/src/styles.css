@@ -48,6 +48,73 @@ button:disabled:hover {
   padding: 16px;
 }
 
+.setup-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #303238;
+  background: #17191c;
+  border-radius: 8px;
+}
+
+.setup-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.setup-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.opponent-control {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 280px) 72px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #303238;
+  background: #101214;
+  border-radius: 8px;
+}
+
+.opponent-control label {
+  color: #a7abb3;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.opponent-control input[type="range"] {
+  width: 100%;
+  accent-color: #5ee6a8;
+}
+
+.opponent-control input[type="number"] {
+  width: 72px;
+  min-height: 34px;
+  border: 1px solid #3a3d42;
+  background: #15171a;
+  color: #f4f1e8;
+  border-radius: 6px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.start-button {
+  background: #5ee6a8;
+  border-color: #77f1b8;
+  color: #07120d;
+  font-weight: 800;
+}
+
 .arena-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto auto;
@@ -80,12 +147,35 @@ button:disabled:hover {
   text-overflow: ellipsis;
 }
 
-.target-control,
 .command-row {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.target-control {
+  display: grid;
+  grid-template-columns: auto minmax(100px, 150px);
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
+}
+
+.target-control label {
+  color: #a7abb3;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.target-control select {
+  min-height: 34px;
+  border: 1px solid #3a3d42;
+  background: #15171a;
+  color: #f4f1e8;
+  border-radius: 6px;
+  padding: 0 8px;
+  font: inherit;
 }
 
 .send-control {
@@ -140,16 +230,9 @@ button:disabled:hover {
   color: #eafff4;
 }
 
-.target-button.active {
-  background: #5b8def;
-  border-color: #82a7ff;
-  color: #081120;
-  font-weight: 800;
-}
-
 .arena-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
@@ -276,7 +359,7 @@ button:disabled:hover {
 
 .telemetry-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 12px;
 }
@@ -303,12 +386,7 @@ button:disabled:hover {
   gap: 6px;
 }
 
-.signal-grid.compact {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.send-log,
-.event-list {
+.send-log {
   min-height: 72px;
   display: flex;
   flex-direction: column;
@@ -319,7 +397,6 @@ button:disabled:hover {
 }
 
 .send-row,
-.event-list span,
 .empty-row {
   padding: 4px 6px;
   border-radius: 4px;
@@ -337,112 +414,6 @@ button:disabled:hover {
   overflow: hidden;
 }
 
-.live-graph-panel {
-  margin-top: 12px;
-  border: 1px solid #303238;
-  background: #17191c;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.graph-panel-header {
-  min-height: 52px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #303238;
-}
-
-.graph-panel-header p {
-  margin: 3px 0 0;
-  color: #8f949d;
-  font-size: 0.76rem;
-}
-
-.graph-scroll {
-  width: 100%;
-  overflow: auto;
-  background: #101214;
-}
-
-.graph-scroll svg {
-  display: block;
-  min-width: 920px;
-  width: 100%;
-}
-
-.graph-lane {
-  fill: #15181b;
-  stroke: #2c2f34;
-}
-
-.graph-lane.signal {
-  stroke: rgba(91, 141, 239, 0.45);
-}
-
-.graph-lane.derived {
-  stroke: rgba(94, 230, 168, 0.45);
-}
-
-.graph-lane.assertion {
-  stroke: rgba(255, 95, 126, 0.45);
-}
-
-.graph-lane.effect {
-  stroke: rgba(255, 209, 102, 0.45);
-}
-
-.graph-lane-title {
-  fill: #8f949d;
-  font: 700 13px "SFMono-Regular", Consolas, monospace;
-  text-transform: uppercase;
-}
-
-.graph-edge {
-  fill: none;
-  stroke: rgba(167, 171, 179, 0.28);
-  stroke-width: 1.4;
-}
-
-.graph-node rect {
-  fill: #1b1e22;
-  stroke: #3a3d42;
-  stroke-width: 1;
-}
-
-.graph-node.signal rect {
-  stroke: #5b8def;
-}
-
-.graph-node.derived rect {
-  stroke: #5ee6a8;
-}
-
-.graph-node.assertion rect {
-  stroke: #ff5f7e;
-}
-
-.graph-node.effect rect {
-  stroke: #ffd166;
-}
-
-.graph-node.hot rect {
-  stroke-width: 2.2;
-  filter: drop-shadow(0 0 7px rgba(255, 209, 102, 0.65));
-}
-
-.graph-node-name {
-  fill: #f4f1e8;
-  font: 700 11px "SFMono-Regular", Consolas, monospace;
-}
-
-.graph-node-value {
-  fill: #a7abb3;
-  font: 10px "SFMono-Regular", Consolas, monospace;
-}
-
 .review-workbench {
   margin-top: 12px;
 }
@@ -453,8 +424,7 @@ button:disabled:hover {
   gap: 12px;
 }
 
-.code-pane,
-.runner-panel {
+.code-pane {
   border: 1px solid #303238;
   background: #17191c;
   border-radius: 8px;
@@ -567,135 +537,24 @@ pre {
   color: #8fb4ff;
 }
 
-.review-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.runner-panel {
-  padding: 10px;
-}
-
-.runner-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  color: #f4f1e8;
-  font-weight: 800;
-  font-size: 0.82rem;
-}
-
-.runner-header b {
-  color: #5ee6a8;
-}
-
-.runner-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.runner-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  max-height: 190px;
-  overflow: auto;
-}
-
-.runner-row {
-  display: grid;
-  grid-template-columns: 70px minmax(120px, 1fr);
-  gap: 4px 8px;
-  padding: 6px;
-  border-radius: 6px;
-  border: 1px solid #2c2f34;
-  background: #101214;
-}
-
-.runner-row b {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-}
-
-.runner-row.pass b,
-.runner-row.killed b {
-  color: #5ee6a8;
-}
-
-.runner-row.fail b,
-.runner-row.survived b {
-  color: #ff5f7e;
-}
-
-.runner-row em {
-  color: #f4f1e8;
-  font-style: normal;
-  font-size: 0.78rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.runner-row small {
-  grid-column: 2;
-  color: #a7abb3;
-  font-size: 0.7rem;
-}
-
-.coverage-bins {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.bin {
-  min-height: 30px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  border: 1px solid #3a3d42;
-  background: #101214;
-  color: #8f949d;
-  font-size: 0.76rem;
-  font-weight: 800;
-}
-
-.bin.hit {
-  background: #163629;
-  border-color: #5ee6a8;
-  color: #8ff5c5;
-}
-
-.coverage-table {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px;
-  color: #a7abb3;
-  font-size: 0.76rem;
-}
-
-.coverage-table b {
-  color: #f4f1e8;
-}
-
 @media (max-width: 1050px) {
   .arena-toolbar,
+  .setup-panel,
   .telemetry-grid,
-  .code-compare,
-  .review-grid {
+  .code-compare {
     grid-template-columns: 1fr;
   }
 
   .target-control,
   .command-row,
+  .setup-controls,
   .send-control {
     justify-content: flex-start;
+  }
+
+  .target-control,
+  .opponent-control {
+    grid-template-columns: 1fr;
   }
 
   .send-control {
@@ -717,9 +576,7 @@ pre {
   }
 
   .signal-grid,
-  .signal-grid.compact,
-  .player-stats,
-  .runner-stats {
+  .player-stats {
     grid-template-columns: repeat(2, 1fr);
   }
 }

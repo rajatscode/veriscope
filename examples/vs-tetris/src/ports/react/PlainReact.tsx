@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   COLS,
-  PLAYER_IDS,
+  DEFAULT_OPPONENTS,
+  MAX_OPPONENTS,
+  MIN_OPPONENTS,
   ROWS,
   advanceArena,
+  clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
   move,
@@ -12,17 +15,19 @@ import {
   sendManualGarbage,
   shapeFor,
   softDrop,
+  targetIdsFor,
   type Cell,
   type GarbageSend,
+  type OpponentCount,
   type PlayerId,
   type PlayerState,
 } from '../../tetris';
 
-const TARGETS: PlayerId[] = ['p2', 'p3', 'p4'];
-
 export function PlainReactVsTetris() {
-  const initial = useMemo(() => resetPlayers(), []);
+  const initial = useMemo(() => resetPlayers(DEFAULT_OPPONENTS), []);
   const [players, setPlayers] = useState(initial);
+  const [opponentCount, setOpponentCount] = useState<OpponentCount>(DEFAULT_OPPONENTS);
+  const [started, setStarted] = useState(false);
   const [target, setTarget] = useState<PlayerId>('p2');
   const [tick, setTick] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -32,8 +37,9 @@ export function PlainReactVsTetris() {
 
   const activePlayers = players.filter(player => !player.ko).length;
   const leader = [...players].sort((a, b) => b.score - a.score)[0].id;
-  const winner = activePlayers === 1 ? players.find(player => !player.ko)?.id : null;
+  const winner = started && activePlayers === 1 ? players.find(player => !player.ko)?.id : null;
   const totalPending = players.reduce((sum, player) => sum + player.pendingGarbage, 0);
+  const targets = targetIdsFor(opponentCount);
 
   function commit(nextPlayers: PlayerState[], sends: GarbageSend[]) {
     setPlayers(nextPlayers);
@@ -44,15 +50,34 @@ export function PlainReactVsTetris() {
   }
 
   function step() {
-    if (paused || activePlayers <= 1) return;
+    if (!started || paused || activePlayers <= 1) return;
     const result = advanceArena(players, target, { holdHumanGarbage: true });
     const earned = garbageFromClearedLines(result.players[0].lastCleared);
     commit(result.players, result.sends);
     if (earned > 0) setAttack(current => current + earned);
   }
 
+  function start() {
+    const count = clampOpponentCount(opponentCount);
+    setOpponentCount(count);
+    setPlayers(resetPlayers(count));
+    setTarget('p2');
+    setTick(0);
+    setPaused(false);
+    setAttack(0);
+    setSendLog([]);
+    setStarted(true);
+  }
+
+  function changeOpponentCount(value: number) {
+    const count = clampOpponentCount(value);
+    setOpponentCount(count);
+    setTarget('p2');
+    if (!started) setPlayers(resetPlayers(count));
+  }
+
   function send(lines: number) {
-    if (attack < lines) return;
+    if (!started || winner || players[0].ko || attack < lines) return;
     const recipient = players.find(player => player.id === target);
     if (!recipient || recipient.ko) return;
     const result = sendManualGarbage(players, 'p1', target, lines);
@@ -62,6 +87,7 @@ export function PlainReactVsTetris() {
   }
 
   function updateHuman(next: PlayerState) {
+    if (!started || winner || players[0].ko) return;
     const newlyCleared = Math.max(0, next.lines - players[0].lines);
     const earned = garbageFromClearedLines(newlyCleared);
     setPlayers(current => [next, ...current.slice(1)]);
@@ -77,6 +103,7 @@ export function PlainReactVsTetris() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (!started) return;
       const human = players[0];
       if (event.key === 'ArrowLeft') updateHuman(move(human, -1));
       if (event.key === 'ArrowRight') updateHuman(move(human, 1));
@@ -92,26 +119,37 @@ export function PlainReactVsTetris() {
 
   return (
     <main>
+      {!started ? (
+        <section>
+          <label>
+            AI opponents
+            <input type="range" min={MIN_OPPONENTS} max={MAX_OPPONENTS} value={opponentCount} onChange={event => changeOpponentCount(Number(event.currentTarget.value))} />
+            <input type="number" min={MIN_OPPONENTS} max={MAX_OPPONENTS} value={opponentCount} onChange={event => changeOpponentCount(Number(event.currentTarget.value))} />
+          </label>
+          <button onClick={start}>Start</button>
+        </section>
+      ) : null}
       <header>
         <strong>Tick {tick}</strong>
+        <span>Opponents {opponentCount}</span>
         <span>Leader {leader}</span>
         <span>Active {activePlayers}</span>
         <span>Pending {totalPending}</span>
         <span>Attack {attack}</span>
         {winner ? <b>Winner {winner}</b> : null}
-        {TARGETS.map(id => (
+        {targets.map(id => (
           <button key={id} disabled={target === id} onClick={() => setTarget(id)}>{id}</button>
         ))}
-        <button disabled={attack < 2 || targetKo} onClick={() => send(2)}>Send 2</button>
-        <button disabled={attack < 4 || targetKo} onClick={() => send(4)}>Send 4</button>
+        <button disabled={!started || !!winner || attack < 2 || targetKo} onClick={() => send(2)}>Send 2</button>
+        <button disabled={!started || !!winner || attack < 4 || targetKo} onClick={() => send(4)}>Send 4</button>
         <button onClick={() => setPaused(value => !value)}>{paused ? 'Run' : 'Pause'}</button>
+        <button onClick={start}>Restart</button>
       </header>
 
       <section>
-        {PLAYER_IDS.map(id => {
-          const player = players.find(candidate => candidate.id === id)!;
-          return <PlayerCard key={id} player={player} selected={target === id} />;
-        })}
+        {players.map(player => (
+          <PlayerCard key={player.id} player={player} selected={target === player.id} />
+        ))}
       </section>
 
       <ol>
