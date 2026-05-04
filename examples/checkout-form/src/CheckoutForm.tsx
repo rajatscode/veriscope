@@ -3,9 +3,11 @@ import { useSignal, useDerived, useEdgeEffect } from '@veriscope/react';
 import { assertAlways, assertNever, assertAfter } from '@veriscope/graph';
 
 export function CheckoutForm() {
+  // 8 tracked signals
   const username = useSignal('', 'username');
   const email = useSignal('', 'email');
   const password = useSignal('', 'password');
+  const confirmPassword = useSignal('', 'confirmPassword');
   const loading = useSignal(false, 'loading');
   const submitted = useSignal(false, 'submitted');
   const error = useSignal<string | null>(null, 'error');
@@ -13,6 +15,7 @@ export function CheckoutForm() {
     states: ['idle', 'loading', 'success', 'error'],
   });
 
+  // 4 derived signals
   const usernameValid = useDerived(
     () => username.val.length >= 3,
     [username],
@@ -23,13 +26,18 @@ export function CheckoutForm() {
     [email],
     'emailValid',
   );
+  const passwordMatch = useDerived(
+    () => password.val === confirmPassword.val && password.val.length > 0,
+    [password, confirmPassword],
+    'passwordMatch',
+  );
   const canSubmit = useDerived(
-    () => usernameValid.val && emailValid.val && !loading.val,
-    [usernameValid, emailValid, loading],
+    () => !loading.val && usernameValid.val && emailValid.val && passwordMatch.val,
+    [loading, usernameValid, emailValid, passwordMatch],
     'canSubmit',
   );
 
-  // Assertions — the spec, not test cases
+  // 5 assertions — the spec
   assertAlways(() => !(loading.val && error.val !== null), 'loading-error-mutex');
   assertAlways(() => phase.val !== 'success' || submitted.val, 'success-requires-submit');
   assertNever(() => phase.val === 'loading' && !loading.val, 'phase-loading-sync');
@@ -41,6 +49,7 @@ export function CheckoutForm() {
     devWatchdogMs: 5000,
   });
 
+  // Edge effect
   useEdgeEffect(loading, 'negedge', () => {
     console.log('Loading complete!');
   }, 'loading-done-toast');
@@ -51,10 +60,15 @@ export function CheckoutForm() {
     loading.set(true);
     error.set(null);
     phase.set('loading');
-    // Simulate async
+
     setTimeout(() => {
       loading.set(false);
       if (Math.random() > 0.3) {
+        // SEEDED BUG: sets phase to 'success' without clearing a prior error.
+        // If a previous submit failed (error still lingers from re-submit flow),
+        // this violates loading-error-mutex on the next cycle.
+        // More directly: explore() can drive loading=true + error!=null to violate
+        // loading-error-mutex, because the handler doesn't guard against that combo.
         phase.set('success');
       } else {
         error.set('Server error');
@@ -96,6 +110,18 @@ export function CheckoutForm() {
           onChange={e => password.set(e.target.value)}
           style={{ width: '100%', padding: 6 }}
         />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'block', marginBottom: 4 }}>Confirm Password</label>
+        <input
+          type="password"
+          value={confirmPassword.val}
+          onChange={e => confirmPassword.set(e.target.value)}
+          style={{ width: '100%', padding: 6 }}
+        />
+        <small style={{ color: passwordMatch.val ? 'green' : '#888' }}>
+          {passwordMatch.val ? 'Matches' : 'Passwords must match'}
+        </small>
       </div>
       <button
         onClick={handleSubmit}

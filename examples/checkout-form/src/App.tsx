@@ -9,7 +9,6 @@ export function App() {
 
   React.useEffect(() => {
     if (devtoolsRef.current && !handleRef.current) {
-      // Start recording before mounting so the waveform has data
       graph.startRecording();
       handleRef.current = mountDevtools(devtoolsRef.current, graph, {
         height: '360px',
@@ -23,10 +22,14 @@ export function App() {
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', padding: 20 }}>
-      <h1>Veriscope Demo: Checkout Form</h1>
-      <p>This form uses <code>@veriscope/react</code> hooks with assertions from <code>@veriscope/graph</code>.</p>
+      <h1>Veriscope Ship Gate: Checkout Form</h1>
+      <p>
+        8 tracked signals, 4 derived values, 5 assertions, 1 edge effect.
+        Open the devtools panel below to see the live waveform, dependency graph, and assertion status.
+      </p>
       <CheckoutForm />
       <hr style={{ margin: '20px 0' }} />
+      <h3>Devtools</h3>
       <div ref={devtoolsRef} style={{ width: '100%' }} />
     </div>
   );
