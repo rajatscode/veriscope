@@ -173,6 +173,39 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     steps += advViolations.steps;
   }
 
+  // 7. Coverage completion pass — drive untoggled booleans and FSM states
+  if (steps < budget) {
+    for (const node of signalNodes) {
+      if (steps >= budget) break;
+      if (!node.setValue) continue;
+
+      const currentVal = node.getValue?.();
+
+      if (typeof currentVal === 'boolean') {
+        // Toggle to both true and false
+        for (const val of [true, false]) {
+          graph.openTick();
+          node.setValue(val);
+          await flush();
+          graph.closeTick();
+          steps++;
+        }
+      }
+
+      // FSM signals with known states — drive through each state
+      if (node.metadata?.states && Array.isArray(node.metadata.states)) {
+        for (const state of node.metadata.states) {
+          if (steps >= budget) break;
+          graph.openTick();
+          node.setValue(state);
+          await flush();
+          graph.closeTick();
+          steps++;
+        }
+      }
+    }
+  }
+
   // Restore original signal values
   graph.openTick();
   for (const node of signalNodes) {
