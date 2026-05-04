@@ -36,6 +36,13 @@ export function useSignal<T>(
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
+    graphRef.current.setNodeSetter(nodeIdRef.current, (next: T) => {
+      const old = valueRef.current;
+      if (Object.is(old, next)) return;
+      valueRef.current = next;
+      setValue(next);
+      graphRef.current.notifyChange(nodeIdRef.current!, old, next);
+    });
   }
 
   // Keep ref in sync
@@ -60,6 +67,13 @@ export function useSignal<T>(
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
       graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
+      graphRef.current.setNodeSetter(nodeIdRef.current, (next: T) => {
+        const old = valueRef.current;
+        if (Object.is(old, next)) return;
+        valueRef.current = next;
+        setValue(next);
+        graphRef.current.notifyChange(nodeIdRef.current!, old, next);
+      });
     }
     return () => {
       if (nodeIdRef.current) {

@@ -22,6 +22,13 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
 
   graph.enterTestMode();
 
+  // Save original signal values so we can restore after exploration
+  const signalNodes = graph.getNodes().filter(n => n.type === 'signal' && n.getValue);
+  const savedValues = new Map<string, any>();
+  for (const node of signalNodes) {
+    savedValues.set(node.id, node.getValue!());
+  }
+
   // 1. Discover assertions
   const assertions = graph.getAssertions();
 
@@ -165,6 +172,16 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     violations.push(...advViolations.violations);
     steps += advViolations.steps;
   }
+
+  // Restore original signal values
+  graph.openTick();
+  for (const node of signalNodes) {
+    if (node.setValue && savedValues.has(node.id)) {
+      node.setValue(savedValues.get(node.id));
+    }
+  }
+  graph.closeTick();
+  graph.exitTestMode();
 
   return {
     violations,
