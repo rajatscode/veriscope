@@ -139,7 +139,7 @@ describe('shrinkSequence', () => {
 });
 
 describe('explore', () => {
-  it('finds assertion violations', () => {
+  it('finds assertion violations', async () => {
     const g = new CircuitGraph();
     let aVal = false, bVal = false;
     const a = g.registerNode({ name: 'a', type: 'signal' });
@@ -155,12 +155,12 @@ describe('explore', () => {
     g.addEdge(b, assertId);
     g.setAssertionFn(assertId, () => !(aVal && bVal), 'always');
 
-    const result = explore(g, { budget: 100 });
+    const result = await explore(g, { budget: 100 });
     expect(result.violations.length).toBeGreaterThan(0);
     expect(result.violations[0].assertionName).toBe('mutex');
   });
 
-  it('reports no violations when assertions hold', () => {
+  it('reports no violations when assertions hold', async () => {
     const g = new CircuitGraph();
     let aVal = false;
     const a = g.registerNode({ name: 'a', type: 'signal' });
@@ -172,11 +172,11 @@ describe('explore', () => {
     g.addEdge(a, assertId);
     g.setAssertionFn(assertId, () => true, 'always');
 
-    const result = explore(g, { budget: 100 });
+    const result = await explore(g, { budget: 100 });
     expect(result.violations).toHaveLength(0);
   });
 
-  it('respects budget', () => {
+  it('respects budget', async () => {
     const g = new CircuitGraph();
     let aVal = false, bVal = false, cVal = false;
     const a = g.registerNode({ name: 'a', type: 'signal' });
@@ -196,7 +196,258 @@ describe('explore', () => {
     g.setAssertionFn(assertId, () => true, 'always');
 
     // 3 boolean signals = 8 combos, but budget is 5
-    const result = explore(g, { budget: 5 });
+    const result = await explore(g, { budget: 5 });
     expect(result.steps).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('explore — eventually-resolution driver', () => {
+  it('resolves pending eventually assertion by driving signals', async () => {
+    const g = new CircuitGraph();
+
+    // Create a loading signal that starts true
+    let loadingVal = true;
+    const loading = g.registerNode({ name: 'loading', type: 'signal' });
+    g.setNodeValue(loading, () => loadingVal);
+    g.setNodeSetter(loading, (v: boolean) => {
+      const old = loadingVal;
+      loadingVal = v;
+      g.notifyChange(loading, old, v);
+    });
+
+    // Create a trigger signal
+    let triggerVal = false;
+    const trigger = g.registerNode({ name: 'trigger', type: 'signal' });
+    g.setNodeValue(trigger, () => triggerVal);
+    g.setNodeSetter(trigger, (v: boolean) => {
+      const old = triggerVal;
+      triggerVal = v;
+      g.notifyChange(trigger, old, v);
+    });
+
+    // assertAfter: when trigger goes high, eventually loading should be false
+    let armed = false;
+    let resolved = false;
+    const assertId = g.registerNode({ name: 'eventually-not-loading', type: 'assertion' });
+    g.addEdge(trigger, assertId);
+    g.addEdge(loading, assertId);
+
+    const checkFn = () => {
+      if (!armed) return true; // vacuously true when not armed
+      if (!loadingVal) {
+        armed = false;
+        resolved = true;
+        return true; // property satisfied
+      }
+      return true; // still waiting, not a violation yet
+    };
+    g.setAssertionFn(assertId, checkFn, 'after');
+
+    // Subscribe to trigger edge to arm
+    g.subscribe((event) => {
+      if (event.nodeId === trigger && event.type === 'signal-change' && !event.oldValue && event.newValue) {
+        armed = true;
+      }
+    });
+
+    // Arm the assertion by triggering posedge
+    g.enterTestMode();
+    g.openTick();
+    triggerVal = true;
+    g.notifyChange(trigger, false, true);
+    g.closeTick();
+
+    expect(armed).toBe(true);
+
+    // Now explore — the truth-table enumeration should drive loading=false,
+    // which resolves the eventually assertion
+    const result = await explore(g, { budget: 50 });
+
+    // The exploration should have resolved the eventually assertion
+    // (loading was set to false in at least one truth-table combo)
+    expect(resolved).toBe(true);
+  });
+
+  it('resolves disjunctive eventually assertion', async () => {
+    const g = new CircuitGraph();
+
+    let showSuccessVal = false;
+    const showSuccess = g.registerNode({ name: 'showSuccess', type: 'signal' });
+    g.setNodeValue(showSuccess, () => showSuccessVal);
+    g.setNodeSetter(showSuccess, (v: boolean) => {
+      const old = showSuccessVal;
+      showSuccessVal = v;
+      g.notifyChange(showSuccess, old, v);
+    });
+
+    let showErrorVal = false;
+    const showError = g.registerNode({ name: 'showError', type: 'signal' });
+    g.setNodeValue(showError, () => showErrorVal);
+    g.setNodeSetter(showError, (v: boolean) => {
+      const old = showErrorVal;
+      showErrorVal = v;
+      g.notifyChange(showError, old, v);
+    });
+
+    let triggerVal = false;
+    const trigger = g.registerNode({ name: 'trigger', type: 'signal' });
+    g.setNodeValue(trigger, () => triggerVal);
+    g.setNodeSetter(trigger, (v: boolean) => {
+      const old = triggerVal;
+      triggerVal = v;
+      g.notifyChange(trigger, old, v);
+    });
+
+    let armed = false;
+    const assertId = g.registerNode({ name: 'eventually-result', type: 'assertion' });
+    g.addEdge(trigger, assertId);
+    g.addEdge(showSuccess, assertId);
+    g.addEdge(showError, assertId);
+
+    const checkFn = () => {
+      if (!armed) return true;
+      if (showSuccessVal || showErrorVal) {
+        armed = false;
+        return true;
+      }
+      return true; // still waiting
+    };
+    g.setAssertionFn(assertId, checkFn, 'after');
+
+    g.subscribe((event) => {
+      if (event.nodeId === trigger && event.type === 'signal-change' && !event.oldValue && event.newValue) {
+        armed = true;
+      }
+    });
+
+    // Arm the assertion
+    g.enterTestMode();
+    g.openTick();
+    triggerVal = true;
+    g.notifyChange(trigger, false, true);
+    g.closeTick();
+
+    expect(armed).toBe(true);
+
+    const result = await explore(g, { budget: 50 });
+
+    // At least one of the disjuncts should have been driven true
+    expect(showSuccessVal || showErrorVal).toBe(true);
+  });
+});
+
+describe('explore — adversarial mode', () => {
+  it('finds violation by driving toward negation of always assertion', async () => {
+    const g = new CircuitGraph();
+
+    let loadingVal = false;
+    const loading = g.registerNode({ name: 'loading', type: 'signal' });
+    g.setNodeValue(loading, () => loadingVal);
+    g.setNodeSetter(loading, (v: boolean) => { loadingVal = v; });
+
+    let errorVal = false;
+    const error = g.registerNode({ name: 'error', type: 'signal' });
+    g.setNodeValue(error, () => errorVal);
+    g.setNodeSetter(error, (v: boolean) => { errorVal = v; });
+
+    // Assertion: loading and error should never both be true
+    // Written as: assertAlways(() => !(loading && error))
+    const assertId = g.registerNode({ name: 'no-loading-and-error', type: 'assertion' });
+    g.addEdge(loading, assertId);
+    g.addEdge(error, assertId);
+    g.setAssertionFn(assertId, () => !(loadingVal && errorVal), 'always');
+
+    const result = await explore(g, { budget: 100 });
+
+    // The adversarial pass should find the violation: loading=true, error=true
+    const violation = result.violations.find(v => v.assertionName === 'no-loading-and-error');
+    expect(violation).toBeDefined();
+  });
+
+  it('does not report violations for unbreakable assertions', async () => {
+    const g = new CircuitGraph();
+
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: boolean) => { aVal = v; });
+
+    // Tautology — always true regardless of inputs
+    const assertId = g.registerNode({ name: 'tautology', type: 'assertion' });
+    g.addEdge(a, assertId);
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 100 });
+    expect(result.violations).toHaveLength(0);
+  });
+});
+
+describe('explore — async flush integration', () => {
+  it('calls flush after each signal set', async () => {
+    const g = new CircuitGraph();
+    let flushCount = 0;
+    const asyncFlush = async () => {
+      flushCount++;
+      // Simulate async work (like React act())
+      await Promise.resolve();
+    };
+
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: boolean) => { aVal = v; });
+
+    const assertId = g.registerNode({ name: 'test', type: 'assertion' });
+    g.addEdge(a, assertId);
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 10, flush: asyncFlush });
+
+    // flush should have been called at least once
+    expect(flushCount).toBeGreaterThan(0);
+  });
+
+  it('works with synchronous flush (default)', async () => {
+    const g = new CircuitGraph();
+
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: boolean) => { aVal = v; });
+
+    const assertId = g.registerNode({ name: 'test', type: 'assertion' });
+    g.addEdge(a, assertId);
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    // No flush option — should use sync no-op default
+    const result = await explore(g, { budget: 10 });
+    expect(result.steps).toBeGreaterThan(0);
+  });
+
+  it('awaits async flush before checking assertions', async () => {
+    const g = new CircuitGraph();
+    let sideEffectApplied = false;
+
+    const asyncFlush = async () => {
+      await Promise.resolve();
+      sideEffectApplied = true;
+    };
+
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: boolean) => { aVal = v; });
+
+    // Assertion that depends on the side effect from flush
+    const assertId = g.registerNode({ name: 'flush-dependent', type: 'assertion' });
+    g.addEdge(a, assertId);
+    g.setAssertionFn(assertId, () => sideEffectApplied, 'always');
+
+    const result = await explore(g, { budget: 10, flush: asyncFlush });
+
+    // Because flush is awaited before checkAssertions, sideEffectApplied should be true
+    // and the assertion should pass
+    expect(sideEffectApplied).toBe(true);
+    expect(result.violations).toHaveLength(0);
   });
 });

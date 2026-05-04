@@ -1,0 +1,78 @@
+import { describe, it, expect } from 'vitest';
+import { parseComputeFn } from '../fn-parser';
+
+// Declare globals so fn.toString() references them by name
+declare const loading: { val: boolean };
+declare const validated: { val: boolean };
+declare const score: { val: number };
+declare const foo: { val: any };
+declare const bar: { val: any };
+declare const x: { val: number };
+declare const y: { val: number };
+
+describe('parseComputeFn (Acorn)', () => {
+  it('extracts single .val signal read', () => {
+    const fn = () => loading.val;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toEqual(['loading']);
+    expect(parsed!.comparisons).toHaveLength(0);
+  });
+
+  it('extracts multiple .val signal reads', () => {
+    const fn = () => foo.val + bar.val;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('foo');
+    expect(parsed!.signals).toContain('bar');
+  });
+
+  it('extracts negated AND expression with branches', () => {
+    const fn = () => !loading.val && validated.val;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('loading');
+    expect(parsed!.signals).toContain('validated');
+    expect(parsed!.branches).toBeGreaterThan(0);
+  });
+
+  it('extracts comparison with operator and boundary', () => {
+    const fn = () => score.val > 100;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('score');
+    expect(parsed!.comparisons).toHaveLength(1);
+    expect(parsed!.comparisons[0]).toEqual({
+      signal: 'score',
+      op: '>',
+      value: '100',
+    });
+  });
+
+  it('extracts multiple comparisons in OR expression', () => {
+    const fn = () => x.val < 0 || x.val > 10;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toEqual(['x']);
+    expect(parsed!.comparisons).toHaveLength(2);
+    expect(parsed!.comparisons[0].op).toBe('<');
+    expect(parsed!.comparisons[1].op).toBe('>');
+    expect(parsed!.branches).toBe(1);
+  });
+
+  it('handles equality comparisons', () => {
+    const fn = () => score.val === 42;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.comparisons[0]).toEqual({
+      signal: 'score',
+      op: '===',
+      value: '42',
+    });
+  });
+
+  it('returns null for unparseable input', () => {
+    const result = parseComputeFn(null as any);
+    expect(result).toBeNull();
+  });
+});

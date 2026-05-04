@@ -12,10 +12,10 @@ import type { MutateOptions, MutateResult } from './types.js';
  * @param options Configuration options
  * @returns Mutation testing results including kill rate
  */
-export function mutate(
+export async function mutate(
   factory: () => CircuitGraph,
   options: MutateOptions = {},
-): MutateResult {
+): Promise<MutateResult> {
   const budget = options.budget ?? 500;
 
   // Get mutation list from a reference graph
@@ -44,7 +44,7 @@ export function mutate(
     const undo = mutation.apply(graph);
 
     // Explore the mutated graph
-    const result = explore(graph, { budget: budgetPerMutation });
+    const result = await explore(graph, { budget: budgetPerMutation });
 
     if (result.violations.length > 0) {
       killed++;

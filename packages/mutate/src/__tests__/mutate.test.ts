@@ -151,7 +151,7 @@ describe('generateMutations', () => {
 });
 
 describe('mutate', () => {
-  it('detects well-asserted graphs (mutations killed)', () => {
+  it('detects well-asserted graphs (mutations killed)', async () => {
     const factory = () => {
       const g = new CircuitGraph();
       let val = true;
@@ -166,12 +166,12 @@ describe('mutate', () => {
       return g;
     };
 
-    const result = mutate(factory, { budget: 100 });
+    const result = await mutate(factory, { budget: 100 });
     expect(result.killed).toBeGreaterThan(0);
     expect(result.score).toBeGreaterThan(0);
   });
 
-  it('reports survived mutations for weak assertions', () => {
+  it('reports survived mutations for weak assertions', async () => {
     const factory = () => {
       const g = new CircuitGraph();
       let aVal = false, bVal = false;
@@ -191,13 +191,13 @@ describe('mutate', () => {
       return g;
     };
 
-    const result = mutate(factory, { budget: 100 });
+    const result = await mutate(factory, { budget: 100 });
     // With a tautological assertion, no mutations should be killed
     expect(result.survived.length).toBe(result.total);
     expect(result.score).toBe(0);
   });
 
-  it('filters by operator type', () => {
+  it('filters by operator type', async () => {
     const factory = () => {
       const g = new CircuitGraph();
       let val = true;
@@ -216,7 +216,7 @@ describe('mutate', () => {
       return g;
     };
 
-    const result = mutate(factory, { budget: 100, operators: ['negate'] });
+    const result = await mutate(factory, { budget: 100, operators: ['negate'] });
     // Only negate mutations should be tested
     for (const s of result.survived) {
       expect(s.mutation).toMatch(/^negate:/);

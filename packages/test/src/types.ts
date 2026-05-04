@@ -10,8 +10,8 @@ export interface Violation {
 export interface ExploreOptions {
   /** Maximum number of exploration steps. Default: 1000. */
   budget?: number;
-  /** Flush function for framework integration (React: act(), Solid: no-op). */
-  flush?: () => void;
+  /** Flush function for framework integration (React: () => act(() => {}), Solid: () => {}). */
+  flush?: () => void | Promise<void>;
 }
 
 export interface ExploreResult {
@@ -27,4 +27,5 @@ export interface ExploreResult {
 export interface ParsedExpression {
   signals: string[];
   comparisons: Array<{ signal: string; op: string; value: string }>;
+  branches?: number;
 }

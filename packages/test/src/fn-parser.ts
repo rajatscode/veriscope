@@ -1,26 +1,72 @@
-// fn-parser.ts — fn.toString() parsing for expression structure
+// fn-parser.ts — fn.toString() parsing via Acorn AST for expression structure
 
+import * as acorn from 'acorn';
+import * as walk from 'acorn-walk';
 import type { ParsedExpression } from './types.js';
 
+function nodeToString(node: any, source: string): string {
+  return source.slice(node.start, node.end);
+}
+
 /**
- * Parse fn.toString() to extract expression structure for comparison boundary detection.
- * Uses lightweight regex-based parsing (no Acorn dependency for MVP).
+ * Parse fn.toString() to extract expression structure using Acorn AST.
+ * Detects signal reads (.val), comparison operators/boundaries, and branch structure.
  */
 export function parseComputeFn(fn: () => any): ParsedExpression | null {
   try {
     const source = fn.toString();
+    const ast = acorn.parse(source, {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+    });
+    const signals = new Set<string>();
+    const comparisons: Array<{ signal: string; op: string; value: string }> = [];
+    let branches = 0;
 
-    // Find .val accesses: identifier.val
-    const valReads = [...source.matchAll(/(\w+)\.val/g)].map(m => m[1]);
+    walk.simple(ast, {
+      MemberExpression(node: any) {
+        if (
+          node.property.type === 'Identifier' &&
+          node.property.name === 'val' &&
+          node.object.type === 'Identifier'
+        ) {
+          signals.add(node.object.name);
+        }
+      },
+      BinaryExpression(node: any) {
+        // Check if left side is a .val access
+        if (
+          node.left.type === 'MemberExpression' &&
+          node.left.property.type === 'Identifier' &&
+          node.left.property.name === 'val' &&
+          node.left.object.type === 'Identifier'
+        ) {
+          comparisons.push({
+            signal: node.left.object.name,
+            op: node.operator,
+            value: nodeToString(node.right, source),
+          });
+        }
+        // Also check if right side is a .val access (e.g., 100 < score.val)
+        if (
+          node.right.type === 'MemberExpression' &&
+          node.right.property.type === 'Identifier' &&
+          node.right.property.name === 'val' &&
+          node.right.object.type === 'Identifier'
+        ) {
+          comparisons.push({
+            signal: node.right.object.name,
+            op: node.operator,
+            value: nodeToString(node.left, source),
+          });
+        }
+      },
+      LogicalExpression(_node: any) {
+        branches++;
+      },
+    });
 
-    // Find comparisons: identifier.val <op> <value>
-    const comparisons = [...source.matchAll(/(\w+)\.val\s*([><=!]+)\s*([^;,)&|]+)/g)].map(m => ({
-      signal: m[1],
-      op: m[2],
-      value: m[3].trim(),
-    }));
-
-    return { signals: valReads, comparisons };
+    return { signals: [...signals], comparisons, branches };
   } catch {
     return null;
   }

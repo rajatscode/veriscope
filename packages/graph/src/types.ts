@@ -20,6 +20,7 @@ export interface GraphNode {
   assertionFn?: () => boolean;
   assertionKind?: 'always' | 'never' | 'after';
   metadata?: Record<string, any>;
+  trigger?: { element: string; action: 'click' | 'type' | 'select'; value?: string };
 }
 
 export interface GraphEdge {

@@ -1,12 +1,18 @@
 // vitest-plugin.ts — Vitest custom reporter that outputs reactive coverage alongside standard coverage
 
 import type { CoverageReport } from '@veriscope/graph';
-import { formatConsole, formatJSON } from './reporter.js';
+import { coverage } from '@veriscope/graph';
+import { formatConsole, formatJSON, formatHTML } from './reporter.js';
+import { checkThresholds, type CoverageThresholds } from './thresholds.js';
 
 export interface VeriscopeCoverageReporterOptions {
-  /** Format: 'console' | 'json'. Default: 'console'. */
-  format?: 'console' | 'json';
-  /** If provided, called to get the CoverageReport (for testability). */
+  /** Format: 'console' | 'json' | 'html'. Default: 'console'. */
+  format?: 'console' | 'json' | 'html';
+  /** Coverage thresholds — fail the run if not met. */
+  thresholds?: CoverageThresholds;
+  /** Output file path for json/html format. */
+  outputFile?: string;
+  /** If provided, called to get the CoverageReport (for testability). Otherwise uses global singleton. */
   getReport?: () => CoverageReport;
 }
 
@@ -26,20 +32,39 @@ export function veriscopeCoverageReporter(options: VeriscopeCoverageReporterOpti
   return {
     name: 'veriscope-coverage',
 
-    onFinished(_files?: any[], _errors?: any[]) {
-      if (!options.getReport) {
-        // In real use, this would import the global coverage singleton
-        // For now, this is a hook point — users wire it up via getReport
-        return;
+    onTestRunEnd(_testModules?: any[], _unhandledErrors?: any[], _reason?: string) {
+      const report = options.getReport ? options.getReport() : coverage.getReport();
+
+      // Format and output
+      let output: string;
+      if (format === 'json') {
+        output = formatJSON(report);
+      } else if (format === 'html') {
+        output = formatHTML(report);
+      } else {
+        output = formatConsole(report);
       }
 
-      const report = options.getReport();
-
-      if (format === 'console') {
-        const output = formatConsole(report);
-        console.log('\n' + output);
+      if (options.outputFile) {
+        // Write to file — dynamic import to keep browser-portability
+        import('fs').then(fs => {
+          fs.writeFileSync(options.outputFile!, output, 'utf-8');
+        }).catch(() => {
+          // Fallback: print to console if fs not available
+          console.log('\n' + output);
+        });
       } else {
-        console.log(formatJSON(report));
+        console.log('\n' + output);
+      }
+
+      // Check thresholds
+      if (options.thresholds) {
+        const result = checkThresholds(report, options.thresholds);
+        if (!result.pass) {
+          console.error('\nVeriscope coverage thresholds not met:');
+          result.failures.forEach(f => console.error(`  - ${f}`));
+          process.exitCode = 1;
+        }
       }
     },
   };
