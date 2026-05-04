@@ -478,65 +478,10 @@ async function adversarialPass(
           }
         }
       }
-    } else if (assertion.kind === 'after') {
-      // For assertAfter: trigger the edge, then try to prevent the property
-      // The assertion depends on a trigger signal — find it in deps
-      const depNodes = assertion.deps
-        .map(id => graph.getNode(id))
-        .filter((n): n is NonNullable<typeof n> => n != null && n.setValue != null);
-
-      if (depNodes.length === 0) continue;
-
-      // Trigger the edge: set the trigger signal to false then true (posedge)
-      const triggerNode = depNodes[0];
-      graph.openTick();
-      triggerNode.setValue!(false);
-      await flush();
-      graph.checkAssertions();
-      graph.closeTick();
-      steps++;
-
-      if (steps >= remainingBudget) break;
-
-      graph.openTick();
-      triggerNode.setValue!(true);
-      await flush();
-      graph.checkAssertions();
-      graph.closeTick();
-      steps++;
-
-      if (steps >= remainingBudget) break;
-
-      // Now try to prevent the property from being satisfied by
-      // driving other signals to adversarial values
-      const otherNodes = depNodes.slice(1);
-      for (const node of otherNodes) {
-        if (steps >= remainingBudget) break;
-        for (const val of [true, false]) {
-          if (steps >= remainingBudget) break;
-          graph.openTick();
-          node.setValue!(val);
-          await flush();
-          const v = graph.checkAssertions();
-          graph.closeTick();
-          steps++;
-
-          if (v.length > 0) {
-            for (const violation of v) {
-              violations.push({
-                assertionName: violation.name,
-                tick: graph.currentTick,
-                signalValues: { [triggerNode.name]: true, [node.name]: val },
-                sequence: [
-                  { signal: triggerNode.name, value: true },
-                  { signal: node.name, value: val },
-                ],
-              });
-            }
-          }
-        }
-      }
     }
+    // Skip 'after' assertions — they depend on trigger→property sequences that
+    // explore() can't simulate correctly at the graph level. Only 'always' and
+    // 'never' assertions are testable via combinational state enumeration.
   }
 
   return { violations, steps };
