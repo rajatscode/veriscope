@@ -60,6 +60,18 @@ export function parseComputeFn(fn: () => any): ParsedExpression | null {
             value: nodeToString(node.left, source),
           });
         }
+        // Also detect plain identifier comparisons (headless test mode without .val)
+        if (node.left.type === 'Identifier') {
+          signals.add(node.left.name);
+          comparisons.push({
+            signal: node.left.name,
+            op: node.operator,
+            value: nodeToString(node.right, source),
+          });
+        }
+        if (node.right.type === 'Identifier') {
+          signals.add(node.right.name);
+        }
       },
       LogicalExpression(_node: any) {
         branches++;

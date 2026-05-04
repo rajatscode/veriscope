@@ -58,10 +58,10 @@ function buildCheckoutGraph(): CircuitGraph {
   g.registerNode({ name: 'passwordMatch', type: 'derived', deps: [passwordId, confirmPasswordId] });
   g.registerNode({ name: 'canSubmit', type: 'derived', deps: [loadingId] });
 
-  // Assertions — same spec as CheckoutForm.tsx
-  assertAlways(() => !(loading && error !== null), 'loading-error-mutex', g);
-  assertAlways(() => phase !== 'success' || submitted, 'success-requires-submit', g);
-  assertNever(() => phase === 'loading' && !loading, 'phase-loading-sync', g);
+  // Assertions — same spec as CheckoutForm.tsx (deps required for backward cone analysis)
+  assertAlways(() => !(loading && error !== null), 'loading-error-mutex', g, [{ nodeId: loadingId }, { nodeId: errorId }]);
+  assertAlways(() => phase !== 'success' || submitted, 'success-requires-submit', g, [{ nodeId: phaseId }, { nodeId: submittedId }]);
+  assertNever(() => phase === 'loading' && !loading, 'phase-loading-sync', g, [{ nodeId: phaseId }, { nodeId: loadingId }]);
   assertAfter({ nodeId: submittedId }, 'posedge', 'immediately', () => loading, {
     name: 'submit-starts-loading',
   }, g);

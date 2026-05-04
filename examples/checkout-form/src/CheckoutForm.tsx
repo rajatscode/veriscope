@@ -1,6 +1,6 @@
 import React from 'react';
 import { useSignal, useDerived, useEdgeEffect } from '@veriscope/react';
-import { assertAlways, assertNever, assertAfter } from '@veriscope/graph';
+import { assertAlways, assertNever, assertAfter, graph } from '@veriscope/graph';
 
 export function CheckoutForm() {
   // 8 tracked signals
@@ -37,21 +37,28 @@ export function CheckoutForm() {
     'canSubmit',
   );
 
-  // 5 assertions — the spec (registered once via ref to avoid duplicates on re-render)
-  const assertionsRef = React.useRef(false);
-  if (!assertionsRef.current) {
-    assertionsRef.current = true;
-    assertAlways(() => !(loading.val && error.val !== null), 'loading-error-mutex', undefined, [loading, error]);
-    assertAlways(() => phase.val !== 'success' || submitted.val, 'success-requires-submit', undefined, [phase, submitted]);
-    assertNever(() => phase.val === 'loading' && !loading.val, 'phase-loading-sync', undefined, [phase, loading]);
-    assertAfter(submitted, 'posedge', 'immediately', () => loading.val, {
+  // 5 assertions — registered in useEffect so deps capture final nodeIds after StrictMode remount
+  const assertionIdsRef = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    const ids: string[] = [];
+    ids.push(assertAlways(() => !(loading.val && error.val !== null), 'loading-error-mutex', undefined, [loading, error]));
+    ids.push(assertAlways(() => phase.val !== 'success' || submitted.val, 'success-requires-submit', undefined, [phase, submitted]));
+    ids.push(assertNever(() => phase.val === 'loading' && !loading.val, 'phase-loading-sync', undefined, [phase, loading]));
+    ids.push(assertAfter(submitted, 'posedge', 'immediately', () => loading.val, {
       name: 'submit-starts-loading',
-    });
-    assertAfter(loading, 'posedge', 'eventually', () => !loading.val, {
+    }));
+    ids.push(assertAfter(loading, 'posedge', 'eventually', () => !loading.val, {
       name: 'loading-resolves',
       devWatchdogMs: 5000,
-    });
-  }
+    }));
+    assertionIdsRef.current = ids;
+    return () => {
+      for (const id of assertionIdsRef.current) {
+        graph.disposeNode(id);
+      }
+      assertionIdsRef.current = [];
+    };
+  }, []);
 
   // Edge effect
   useEdgeEffect(loading, 'negedge', () => {
