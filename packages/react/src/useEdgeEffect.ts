@@ -36,7 +36,6 @@ export function useEdgeEffect(
     });
   }
 
-  const nodeId = nodeIdRef.current;
   const currentVal = signal.val;
 
   useEffect(() => {
@@ -58,14 +57,21 @@ export function useEdgeEffect(
     }
 
     if (edgeDetected) {
-      graphRef.current.notifyEffect(nodeId);
+      graphRef.current.notifyEffect(nodeIdRef.current!);
       action();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVal]);
 
-  // Cleanup on unmount
+  // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
+    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      nodeIdRef.current = graphRef.current.registerNode({
+        name,
+        type: 'effect',
+        deps: [signal.nodeId],
+      });
+    }
     return () => {
       if (nodeIdRef.current) {
         graphRef.current.disposeNode(nodeIdRef.current);

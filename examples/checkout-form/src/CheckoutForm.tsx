@@ -37,17 +37,21 @@ export function CheckoutForm() {
     'canSubmit',
   );
 
-  // 5 assertions — the spec
-  assertAlways(() => !(loading.val && error.val !== null), 'loading-error-mutex');
-  assertAlways(() => phase.val !== 'success' || submitted.val, 'success-requires-submit');
-  assertNever(() => phase.val === 'loading' && !loading.val, 'phase-loading-sync');
-  assertAfter(submitted, 'posedge', 'immediately', () => loading.val, {
-    name: 'submit-starts-loading',
-  });
-  assertAfter(loading, 'posedge', 'eventually', () => !loading.val, {
-    name: 'loading-resolves',
-    devWatchdogMs: 5000,
-  });
+  // 5 assertions — the spec (registered once via ref to avoid duplicates on re-render)
+  const assertionsRef = React.useRef(false);
+  if (!assertionsRef.current) {
+    assertionsRef.current = true;
+    assertAlways(() => !(loading.val && error.val !== null), 'loading-error-mutex', undefined, [loading, error]);
+    assertAlways(() => phase.val !== 'success' || submitted.val, 'success-requires-submit', undefined, [phase, submitted]);
+    assertNever(() => phase.val === 'loading' && !loading.val, 'phase-loading-sync', undefined, [phase, loading]);
+    assertAfter(submitted, 'posedge', 'immediately', () => loading.val, {
+      name: 'submit-starts-loading',
+    });
+    assertAfter(loading, 'posedge', 'eventually', () => !loading.val, {
+      name: 'loading-resolves',
+      devWatchdogMs: 5000,
+    });
+  }
 
   // Edge effect
   useEdgeEffect(loading, 'negedge', () => {

@@ -162,9 +162,15 @@ export class CircuitGraph {
       }
     }
 
-    // Auto-record toggle coverage for boolean values
-    if (this.coverageEnabled && typeof newValue === 'boolean') {
-      coverage.recordToggle(nodeId, newValue);
+    // Auto-record coverage
+    if (this.coverageEnabled) {
+      if (typeof newValue === 'boolean') {
+        coverage.recordToggle(nodeId, newValue);
+      }
+      // Auto-record FSM transitions for signals with states metadata
+      if (node.metadata?.states && typeof oldValue === 'string' && typeof newValue === 'string') {
+        coverage.recordTransition(nodeId, oldValue, newValue);
+      }
     }
 
     // Notify listeners

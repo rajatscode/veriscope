@@ -38,8 +38,6 @@ export function useSignal<T>(
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
   }
 
-  const nodeId = nodeIdRef.current;
-
   // Keep ref in sync
   valueRef.current = value;
 
@@ -48,11 +46,21 @@ export function useSignal<T>(
     if (Object.is(old, next)) return;
     valueRef.current = next;
     setValue(next);
-    graphRef.current.notifyChange(nodeId, old, next);
-  }, [nodeId]);
+    graphRef.current.notifyChange(nodeIdRef.current!, old, next);
+  }, []);
 
-  // Cleanup on unmount
+  // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
+    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      const metadata: Record<string, any> = {};
+      if (options?.states) metadata.states = options.states;
+      nodeIdRef.current = graphRef.current.registerNode({
+        name,
+        type: 'signal',
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      });
+      graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
+    }
     return () => {
       if (nodeIdRef.current) {
         graphRef.current.disposeNode(nodeIdRef.current);
@@ -60,19 +68,21 @@ export function useSignal<T>(
     };
   }, []);
 
-  // Return a stable signal object
-  // We use Object.defineProperty for .val to always read from valueRef
+  // Return a stable signal object with getter-based nodeId to track re-registrations
   const signalRef = useRef<Signal<T> | null>(null);
   if (signalRef.current === null) {
-    const sig: any = { set, nodeId, name };
+    const sig: any = { set, name };
     Object.defineProperty(sig, 'val', {
       get() { return valueRef.current; },
+      enumerable: true,
+    });
+    Object.defineProperty(sig, 'nodeId', {
+      get() { return nodeIdRef.current; },
       enumerable: true,
     });
     signalRef.current = sig as Signal<T>;
   }
 
-  // Update the set function on the signal if it changes (it shouldn't, since nodeId is stable)
   signalRef.current!.set = set;
 
   return signalRef.current!;

@@ -82,10 +82,12 @@ function buildSignalList(graph: CircuitGraph): WaveformSignal[] {
       const displayName = parts.pop() ?? node.name;
       const group = parts.join('.') || 'signals';
       let sigType: WaveformSignal['type'] = 'numeric';
+      let renderMode: WaveformSignal['renderMode'] = 'analog';
       if (node.getValue) {
         try {
           const v = node.getValue();
-          if (typeof v === 'boolean') sigType = 'boolean';
+          if (typeof v === 'boolean') { sigType = 'boolean'; renderMode = 'digital'; }
+          else if (typeof v === 'string' || v === null || v === undefined) { sigType = 'enum'; renderMode = 'digital'; }
         } catch (_) { /* ignore */ }
       }
       signals.push({
@@ -95,7 +97,7 @@ function buildSignalList(graph: CircuitGraph): WaveformSignal[] {
         type: sigType,
         visible: true,
         color: COLORS[signals.length % COLORS.length],
-        renderMode: sigType === 'boolean' ? 'digital' : 'analog',
+        renderMode,
       });
     }
   }
@@ -441,6 +443,8 @@ function drawWaveforms(
       drawAssertionOverlay(ctx, buf, y0, padY, plotH, viewStart, tRange, chartW);
     } else if (isBoolean) {
       drawBooleanSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, tRange, chartW, width);
+    } else if (sig.type === 'enum') {
+      drawEnumSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, tRange, chartW, width);
     } else if (sig.renderMode === 'digital') {
       drawDigitalSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, viewEnd, tRange, chartW);
     } else {
@@ -480,8 +484,33 @@ function drawBooleanSignal(
   y0: number, padY: number, plotH: number,
   color: string, viewStart: number, tRange: number, chartW: number, width: number,
 ): void {
+  // Draw step waveform: high (true) at top, low (false) at bottom
+  const highY = y0 + padY;
+  const lowY = y0 + padY + plotH;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < buf.length; i++) {
+    const x = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
+    const y = buf[i].v ? highY : lowY;
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else {
+      // Step: horizontal to previous Y, then vertical to new Y
+      ctx.lineTo(x, buf[i - 1].v ? highY : lowY);
+      ctx.lineTo(x, y);
+    }
+  }
+  // Extend to the right edge
+  if (started && buf.length > 0) {
+    ctx.lineTo(LABEL_W + chartW, buf[buf.length - 1].v ? highY : lowY);
+  }
+  ctx.stroke();
+
+  // Fill true regions with translucent color
   ctx.fillStyle = color;
-  ctx.globalAlpha = 0.45;
+  ctx.globalAlpha = 0.15;
   for (let i = 0; i < buf.length; i++) {
     if (!buf[i].v) continue;
     const x1 = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
@@ -489,9 +518,75 @@ function drawBooleanSignal(
       ? LABEL_W + ((buf[i + 1].t - viewStart) / tRange) * chartW
       : LABEL_W + chartW;
     if (x2 < LABEL_W || x1 > width) continue;
-    ctx.fillRect(Math.max(x1, LABEL_W), y0 + padY, Math.max(x2 - Math.max(x1, LABEL_W), 2), plotH);
+    ctx.fillRect(Math.max(x1, LABEL_W), highY, Math.max(x2 - Math.max(x1, LABEL_W), 2), plotH);
   }
   ctx.globalAlpha = 1;
+
+  // Labels
+  ctx.fillStyle = 'rgba(154,168,189,0.4)';
+  ctx.font = '9px system-ui';
+  ctx.textBaseline = 'top';
+  ctx.fillText('T', LABEL_W + 2, highY + 1);
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('F', LABEL_W + 2, lowY - 1);
+}
+
+function drawEnumSignal(
+  ctx: CanvasRenderingContext2D,
+  buf: Array<{ t: number; v: any }>,
+  y0: number, padY: number, plotH: number,
+  color: string, viewStart: number, tRange: number, chartW: number, width: number,
+): void {
+  // Draw colored blocks for each value span with text labels
+  for (let i = 0; i < buf.length; i++) {
+    const x1 = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
+    const x2 = i + 1 < buf.length
+      ? LABEL_W + ((buf[i + 1].t - viewStart) / tRange) * chartW
+      : LABEL_W + chartW;
+    if (x2 < LABEL_W || x1 > width) continue;
+
+    const clampX1 = Math.max(x1, LABEL_W);
+    const blockW = Math.max(x2 - clampX1, 2);
+
+    // Background fill
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.15;
+    ctx.fillRect(clampX1, y0 + padY, blockW, plotH);
+    ctx.globalAlpha = 1;
+
+    // Top/bottom border lines for transitions
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(clampX1, y0 + padY);
+    ctx.lineTo(clampX1 + blockW, y0 + padY);
+    ctx.moveTo(clampX1, y0 + padY + plotH);
+    ctx.lineTo(clampX1 + blockW, y0 + padY + plotH);
+    ctx.stroke();
+
+    // Vertical transition line
+    if (i > 0) {
+      ctx.beginPath();
+      ctx.moveTo(clampX1, y0 + padY);
+      ctx.lineTo(clampX1, y0 + padY + plotH);
+      ctx.stroke();
+    }
+
+    // Text label (only if block is wide enough)
+    if (blockW > 20) {
+      const label = String(buf[i].v ?? 'null');
+      const displayLabel = label.length > 12 ? label.slice(0, 11) + '\u2026' : label;
+      ctx.fillStyle = color;
+      ctx.font = '9px "SF Mono", "Fira Code", monospace';
+      ctx.textBaseline = 'middle';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(clampX1, y0 + padY, blockW, plotH);
+      ctx.clip();
+      ctx.fillText(displayLabel, clampX1 + 3, y0 + ROW_H / 2);
+      ctx.restore();
+    }
+  }
 }
 
 function drawAnalogSignal(
@@ -714,23 +809,10 @@ export function createWaveformPanel(
 
   container.style.cssText = 'position:relative; display:flex; flex-direction:column; overflow:hidden; height:100%;';
 
-  // Ensure recording is active
+  // Ensure recording is active — clear stale view state since this is a new session
   graph.startRecording();
-
-  // Restore persisted view state
   const stateKey = 'default';
-  const savedState = loadViewState(stateKey);
-  if (savedState) {
-    viewStart = savedState.viewStart;
-    viewEnd = savedState.viewEnd;
-    viewInitialized = true;
-    userInteracted = true;
-    if (savedState.markerA !== null) markers.setMarker('A', savedState.markerA);
-    if (savedState.markerB !== null) markers.setMarker('B', savedState.markerB);
-    for (const sig of signals) {
-      if (savedState.hiddenSignals.includes(sig.id)) sig.visible = false;
-    }
-  }
+  localStorage.removeItem(`veriscope-waveform-${stateKey}`);
 
   // --- Control bar ---
   const controlBar = document.createElement('div');
@@ -897,18 +979,26 @@ export function createWaveformPanel(
     const chartW = w - LABEL_W;
 
     if (!viewInitialized || !userInteracted) {
-      let tMin = Infinity, tMax = -Infinity;
+      // Find the time range where actual changes happen (skip flat initial snapshots)
+      let tFirstChange = Infinity, tMax = -Infinity;
       for (const sig of visible) {
         const buf = data.get(sig.id);
-        if (buf && buf.length > 0) {
-          if (buf[0].t < tMin) tMin = buf[0].t;
+        if (buf && buf.length > 1) {
+          // First change is the second data point (first is the initial snapshot)
+          if (buf[1].t < tFirstChange) tFirstChange = buf[1].t;
           if (buf[buf.length - 1].t > tMax) tMax = buf[buf.length - 1].t;
+        } else if (buf && buf.length === 1) {
+          if (buf[0].t > tMax) tMax = buf[0].t;
         }
       }
-      if (tMin === Infinity) { tMin = 0; tMax = 5000; }
-      if (tMax - tMin < 5000) tMin = tMax - 5000;
-      viewStart = tMin;
-      viewEnd = tMax;
+      if (tMax === -Infinity) { tMax = 5000; tFirstChange = 0; }
+      if (tFirstChange === Infinity) tFirstChange = tMax - 5000;
+      // Show from slightly before first change to slightly after last, min 5s window
+      const padding = 500;
+      const rangeStart = tFirstChange - padding;
+      const range = Math.max(tMax - rangeStart + padding, 5000);
+      viewStart = rangeStart;
+      viewEnd = rangeStart + range;
       viewInitialized = true;
     }
 
@@ -1055,6 +1145,9 @@ export function createWaveformPanel(
   resize();
   draw();
 
+  // Track last known container width to detect when resize is needed
+  let lastContainerWidth = 0;
+
   // Refresh signals from graph periodically (new signals may appear)
   const interval = setInterval(() => {
     if (disposed) return;
@@ -1069,6 +1162,13 @@ export function createWaveformPanel(
       }
       signals = newSignals;
       hierarchyBrowser.update();
+      resize();
+      lastContainerWidth = canvasWrap.clientWidth;
+    }
+    // Re-resize if container width changed (e.g. panel became visible after being hidden)
+    const currentWidth = canvasWrap.clientWidth;
+    if (currentWidth > 0 && currentWidth !== lastContainerWidth) {
+      lastContainerWidth = currentWidth;
       resize();
     }
     draw();

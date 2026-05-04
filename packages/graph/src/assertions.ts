@@ -15,8 +15,10 @@ export function assertAlways(
   checkFn: () => boolean,
   name: string,
   targetGraph: CircuitGraph = graph,
+  deps?: Array<{ nodeId: string }>,
 ): string {
-  const nodeId = targetGraph.registerNode({ name, type: 'assertion' });
+  const depIds = deps?.map(d => d.nodeId);
+  const nodeId = targetGraph.registerNode({ name, type: 'assertion', deps: depIds });
   targetGraph.setAssertionFn(nodeId, checkFn, 'always');
   return nodeId;
 }
@@ -29,8 +31,9 @@ export function assertNever(
   checkFn: () => boolean,
   name: string,
   targetGraph: CircuitGraph = graph,
+  deps?: Array<{ nodeId: string }>,
 ): string {
-  return assertAlways(() => !checkFn(), name, targetGraph);
+  return assertAlways(() => !checkFn(), name, targetGraph, deps);
 }
 
 interface AssertAfterOptions {
@@ -59,6 +62,7 @@ export function assertAfter(
   const nodeId = targetGraph.registerNode({
     name: options.name,
     type: 'assertion',
+    deps: [signal.nodeId],
   });
 
   let armed = false;

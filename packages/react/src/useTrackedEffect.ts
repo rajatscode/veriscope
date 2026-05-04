@@ -30,20 +30,25 @@ export function useTrackedEffect(
     });
   }
 
-  const nodeId = nodeIdRef.current;
-
   // Extract .val from each dep so React's useEffect tracks them
   const depValues = deps.map(d => d.val);
 
   useEffect(() => {
-    graphRef.current.notifyEffect(nodeId);
+    graphRef.current.notifyEffect(nodeIdRef.current!);
     const cleanup = fn();
     return cleanup ?? undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, depValues);
 
-  // Cleanup on unmount
+  // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
+    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      nodeIdRef.current = graphRef.current.registerNode({
+        name,
+        type: 'effect',
+        deps: deps.map(d => d.nodeId),
+      });
+    }
     return () => {
       if (nodeIdRef.current) {
         graphRef.current.disposeNode(nodeIdRef.current);

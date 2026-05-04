@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckoutForm } from './CheckoutForm';
-import { graph } from '@veriscope/graph';
+import { graph, coverage } from '@veriscope/graph';
 import { mountDevtools } from '@veriscope/devtools';
 
 export function App() {
@@ -9,9 +9,11 @@ export function App() {
 
   React.useEffect(() => {
     if (devtoolsRef.current && !handleRef.current) {
+      graph.enableCoverage();
       graph.startRecording();
       handleRef.current = mountDevtools(devtoolsRef.current, graph, {
         height: '360px',
+        coverage,
       });
     }
     return () => {

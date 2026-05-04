@@ -38,8 +38,6 @@ export function useDerived<T>(
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
   }
 
-  const nodeId = nodeIdRef.current;
-
   // Recompute when deps change (read .val to get React to track re-renders)
   const depValues = deps.map(d => d.val);
   const newValue = useMemo(() => computeFn(), depValues);
@@ -49,15 +47,23 @@ export function useDerived<T>(
     const old = prevRef.current;
     prevRef.current = newValue;
     valueRef.current = newValue;
-    graphRef.current.notifyChange(nodeId, old, newValue);
+    graphRef.current.notifyChange(nodeIdRef.current!, old, newValue);
     // Notify external store subscribers
     for (const sub of subscribersRef.current) sub();
   } else {
     valueRef.current = newValue;
   }
 
-  // Cleanup on unmount
+  // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
+    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      nodeIdRef.current = graphRef.current.registerNode({
+        name,
+        type: 'derived',
+        deps: deps.map(d => d.nodeId),
+      });
+      graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
+    }
     return () => {
       if (nodeIdRef.current) {
         graphRef.current.disposeNode(nodeIdRef.current);
@@ -65,12 +71,16 @@ export function useDerived<T>(
     };
   }, []);
 
-  // Build stable signal object
+  // Build stable signal object with getter-based nodeId to track re-registrations
   const signalRef = useRef<ReadonlySignal<T> | null>(null);
   if (signalRef.current === null) {
-    const sig: any = { nodeId, name };
+    const sig: any = { name };
     Object.defineProperty(sig, 'val', {
       get() { return valueRef.current; },
+      enumerable: true,
+    });
+    Object.defineProperty(sig, 'nodeId', {
+      get() { return nodeIdRef.current; },
       enumerable: true,
     });
     signalRef.current = sig as ReadonlySignal<T>;
