@@ -32,26 +32,74 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       .map(id => graph.getNode(id))
       .filter((n): n is NonNullable<typeof n> => n != null);
 
-    // 3. Filter to boolean-valued roots (for truth table enumeration)
+    // 3a. Separate boolean and non-boolean roots
     const boolRoots = rootNodes.filter(n => {
       if (!n.getValue) return false;
       const v = n.getValue();
       return typeof v === 'boolean';
     });
 
-    if (boolRoots.length > 0 && boolRoots.length <= 12) {
-      // 4. Enumerate all boolean combinations
-      const totalCombos = 1 << boolRoots.length;
+    const nonBoolRoots = rootNodes.filter(n => {
+      if (!n.getValue) return false;
+      const v = n.getValue();
+      return typeof v !== 'boolean';
+    });
 
+    // 3b. Detect patterns in the assertion to determine non-boolean values to try
+    const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+    const fnSource = userCheckFn.toString();
+    const nonNullSignals = new Set<string>();
+    const nullableSignals = new Set<string>();
+
+    for (const m of fnSource.matchAll(/(\w+)\.val\s*!==\s*null\b/g)) {
+      nonNullSignals.add(m[1]);
+    }
+    for (const m of fnSource.matchAll(/(\w+)\.val\s*===\s*null\b/g)) {
+      nullableSignals.add(m[1]);
+    }
+
+    const totalCombos = Math.max(1, (1 << boolRoots.length) * (nonBoolRoots.length > 0 ? 2 : 1));
+
+    if ((boolRoots.length > 0 || nonBoolRoots.length > 0) && rootNodes.length <= 15) {
+      // 4. Enumerate combinations of booleans × non-boolean value variants
       for (let i = 0; i < totalCombos && steps < budget; i++) {
-        const combo = boolRoots.map((_, j) => !!(i & (1 << j)));
+        const boolIdx = i % (1 << boolRoots.length);
+        const nonBoolIdx = Math.floor(i / (1 << boolRoots.length));
+        const boolCombo = boolRoots.map((_, j) => !!(boolIdx & (1 << j)));
 
         graph.openTick();
+
+        // Set boolean roots
         boolRoots.forEach((node, j) => {
           if (node.setValue) {
-            node.setValue(combo[j]);
+            node.setValue(boolCombo[j]);
           }
         });
+
+        // Set non-boolean roots
+        nonBoolRoots.forEach((node) => {
+          if (node.setValue && node.type === 'signal') {
+            const currentVal = node.getValue?.();
+            let valueToSet: any;
+
+            if (nonNullSignals.has(node.name)) {
+              // Signal is checked for !== null: try non-null value
+              valueToSet = nonBoolIdx === 0 ?
+                (typeof currentVal === 'string' ? 'error' : 1) :
+                (typeof currentVal === 'string' ? 'test' : 42);
+            } else if (nullableSignals.has(node.name)) {
+              // Signal is checked for === null: try null
+              valueToSet = null;
+            } else {
+              // Generic non-boolean: alternate between null/initial and non-null
+              valueToSet = nonBoolIdx === 0 ? currentVal :
+                (typeof currentVal === 'string' ? 'value' : 1);
+            }
+
+            node.setValue(valueToSet);
+          }
+        });
+
         await flush();
 
         // Check assertions
@@ -59,17 +107,29 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         graph.closeTick();
 
         if (v.length > 0) {
+          const signalValues: Record<string, any> = {};
+          boolRoots.forEach((n, j) => {
+            signalValues[n.name] = boolCombo[j];
+          });
+          nonBoolRoots.forEach((n) => {
+            signalValues[n.name] = n.getValue?.();
+          });
+
           for (const violation of v) {
             violations.push({
               assertionName: violation.name,
               tick: graph.currentTick,
-              signalValues: Object.fromEntries(
-                boolRoots.map((n, j) => [n.name, combo[j]])
-              ),
-              sequence: combo.map((val, j) => ({
-                signal: boolRoots[j].name,
-                value: val,
-              })),
+              signalValues,
+              sequence: [
+                ...boolCombo.map((val, j) => ({
+                  signal: boolRoots[j].name,
+                  value: val,
+                })),
+                ...nonBoolRoots.map((n) => ({
+                  signal: n.name,
+                  value: n.getValue?.(),
+                })),
+              ],
             });
           }
         }
@@ -79,8 +139,8 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
 
         steps++;
       }
-    } else if (boolRoots.length === 0) {
-      // No boolean roots found — just check assertion at current state
+    } else if (boolRoots.length === 0 && nonBoolRoots.length === 0) {
+      // No roots found — just check assertion at current state
       graph.openTick();
       await flush();
       const v = graph.checkAssertions();
@@ -313,28 +373,63 @@ async function adversarialPass(
         .map(id => graph.getNode(id))
         .filter((n): n is NonNullable<typeof n> => n != null && n.setValue != null);
 
-      // Try to drive toward violation: analyze the check function source
+      // Try to drive toward violation using parsed expression structure
       const source = fnToParse.toString();
       const targetValues = new Map<string, any>();
 
-      // For !(a && b) style: try a=true, b=true (to break the assertion)
+      // Build a map of signal comparisons from the parsed result
+      // e.g. error !== null → drive error to a non-null value
+      const comparisonValues = new Map<string, any>();
+      for (const comp of parsed.comparisons) {
+        if ((comp.op === '!==' || comp.op === '!=') && comp.value === 'null') {
+          // Signal !== null: to make this true, drive to a non-null value
+          const node = nodeByName.get(comp.signal);
+          const currentVal = node?.getValue?.();
+          comparisonValues.set(comp.signal,
+            typeof currentVal === 'string' || currentVal === null ? 'error' :
+            typeof currentVal === 'number' ? 1 : true
+          );
+        } else if ((comp.op === '===' || comp.op === '==') && comp.value === 'null') {
+          // Signal === null: to make this true, drive to null
+          comparisonValues.set(comp.signal, null);
+        }
+      }
+
+      // For !(a && b) style: try to make inner expression true (to violate negation)
       const negAndMatch = source.match(/!\s*\(([^)]+)\)/);
       if (negAndMatch) {
         const inner = negAndMatch[1];
-        for (const m of inner.matchAll(/(\w+)(?:\.val)?/g)) {
+        // Extract signal.val references first
+        for (const m of inner.matchAll(/(\w+)\.val\b/g)) {
           const name = m[1];
           if (nodeByName.has(name)) {
-            targetValues.set(name, true);
+            targetValues.set(name, comparisonValues.get(name) ?? true);
+          }
+        }
+        // If no .val refs found, try plain identifiers (headless test mode)
+        if (targetValues.size === 0) {
+          for (const m of inner.matchAll(/\b(\w+)\b/g)) {
+            const name = m[1];
+            if (nodeByName.has(name)) {
+              targetValues.set(name, comparisonValues.get(name) ?? true);
+            }
           }
         }
       }
 
-      // For (a && !b) style: try to make a=true and b=false to satisfy the negation condition
-      // Generic: parse all .val references and try each combination that would break it
+      // Fallback: use parsed signals with comparison-aware values
       if (targetValues.size === 0) {
-        // Fallback: try setting all signals in cone to true, then all to false
+        for (const sigName of parsed.signals) {
+          if (nodeByName.has(sigName)) {
+            targetValues.set(sigName, comparisonValues.get(sigName) ?? true);
+          }
+        }
+      }
+
+      // Last resort: try setting all signals in cone to true
+      if (targetValues.size === 0) {
         for (const node of coneNodes) {
-          targetValues.set(node.name, true);
+          targetValues.set(node.name, comparisonValues.get(node.name) ?? true);
         }
       }
 
