@@ -33,7 +33,11 @@ export function assertNever(
   targetGraph: CircuitGraph = graph,
   deps?: Array<{ nodeId: string }>,
 ): string {
-  return assertAlways(() => !checkFn(), name, targetGraph, deps);
+  const nodeId = assertAlways(() => !checkFn(), name, targetGraph, deps);
+  // Store the original user checkFn so explore() can parse the actual signal reads
+  // (assertAlways stores `() => !checkFn()` which hides the .val references)
+  targetGraph.setAssertionUserCheckFn(nodeId, checkFn);
+  return nodeId;
 }
 
 interface AssertAfterOptions {
@@ -118,6 +122,8 @@ export function assertAfter(
   };
 
   targetGraph.setAssertionFn(nodeId, assertionCheck, 'after');
+  // Store the original user checkFn so explore() can parse it
+  targetGraph.setAssertionUserCheckFn(nodeId, checkFn);
 
   // Subscribe to graph events to detect the edge
   targetGraph.subscribe((event) => {

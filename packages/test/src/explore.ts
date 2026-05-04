@@ -135,8 +135,12 @@ async function resolveEventuallyAssertions(
     // An 'after' assertion returns true vacuously when not armed, and true when still waiting.
     // We detect pending state by checking if the check passes AND if there was a recent armed event.
     if (assertion.checkFn()) {
+      // For assertAfter, retrieve the original user checkFn from node metadata for parsing
+      // (the checkFn on the assertion is the wrapper, not the user's original property check)
+      const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) || assertion.checkFn;
+
       // Try to parse the check function and drive resolution
-      const parsed = parseCheckFn(assertion.checkFn);
+      const parsed = parseCheckFn(userCheckFn);
 
       if (parsed) {
         // Strategy 1: Drive signals based on parsed expression
@@ -298,7 +302,9 @@ async function adversarialPass(
 
     if (assertion.kind === 'always') {
       // Parse the check function to find what would violate it
-      const parsed = parseComputeFn(assertion.checkFn);
+      // Use originalCheckFn if available (assertNever wraps the user's fn)
+      const fnToParse = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+      const parsed = parseComputeFn(fnToParse);
       if (!parsed) continue;
 
       // Find signals in the assertion's backward cone
@@ -308,7 +314,7 @@ async function adversarialPass(
         .filter((n): n is NonNullable<typeof n> => n != null && n.setValue != null);
 
       // Try to drive toward violation: analyze the check function source
-      const source = assertion.checkFn.toString();
+      const source = fnToParse.toString();
       const targetValues = new Map<string, any>();
 
       // For !(a && b) style: try a=true, b=true (to break the assertion)

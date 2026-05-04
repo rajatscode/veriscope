@@ -79,6 +79,19 @@ export class CircuitGraph {
     }
   }
 
+  setAssertionUserCheckFn(id: string, userCheckFn: () => boolean): void {
+    const node = this.nodes.get(id);
+    if (node) {
+      if (!node.metadata) node.metadata = {};
+      node.metadata.userCheckFn = userCheckFn;
+    }
+  }
+
+  getAssertionUserCheckFn(id: string): (() => boolean) | undefined {
+    const node = this.nodes.get(id);
+    return node?.metadata?.userCheckFn;
+  }
+
   disposeNode(id: string): void {
     this.nodes.delete(id);
     this.edges = this.edges.filter(e => e.from !== id && e.to !== id);
@@ -241,7 +254,7 @@ export class CircuitGraph {
     return this.nodes.get(id);
   }
 
-  getAssertions(): Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[] }> {
+  getAssertions(): Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[]; originalCheckFn?: () => boolean }> {
     return [...this.nodes.values()]
       .filter(n => n.type === 'assertion' && n.assertionFn)
       .map(n => ({
@@ -250,6 +263,7 @@ export class CircuitGraph {
         kind: n.assertionKind ?? 'always',
         checkFn: n.assertionFn!,
         deps: n.deps,
+        originalCheckFn: n.metadata?.userCheckFn,
       }));
   }
 
