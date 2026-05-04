@@ -7,6 +7,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     // Don't pre-bundle workspace packages — ensures singleton graph instance
-    exclude: ['@veriscope/graph', '@veriscope/react', '@veriscope/devtools'],
+    exclude: ['@veriscope/graph', '@veriscope/react', '@veriscope/devtools', '@veriscope/test'],
   },
 });

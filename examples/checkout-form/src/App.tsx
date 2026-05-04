@@ -2,6 +2,8 @@ import React from 'react';
 import { CheckoutForm } from './CheckoutForm';
 import { graph, coverage } from '@veriscope/graph';
 import { mountDevtools } from '@veriscope/devtools';
+import { explore } from '@veriscope/test';
+import '@veriscope/devtools/bridge';
 
 export function App() {
   const devtoolsRef = React.useRef<HTMLDivElement>(null);
@@ -14,6 +16,7 @@ export function App() {
       handleRef.current = mountDevtools(devtoolsRef.current, graph, {
         height: '360px',
         coverage,
+        explore,
       });
     }
     return () => {

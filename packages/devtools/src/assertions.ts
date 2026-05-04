@@ -1,6 +1,7 @@
 // assertions.ts — Assertion monitor panel: live pass/fail status for all assertions
 
 import type { CircuitGraph, GraphEvent } from '@veriscope/graph';
+import type { ExploreResult } from './index.js';
 
 interface AssertionEntry {
   nodeId: string;
@@ -12,15 +13,21 @@ interface AssertionEntry {
   passCount: number;
 }
 
+interface AssertionsPanelOptions {
+  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+}
+
 export function createAssertionsPanel(
   container: HTMLElement,
   graph: CircuitGraph,
+  options?: AssertionsPanelOptions,
 ): { dispose: () => void; refresh: () => void } {
   container.style.cssText = 'height:100%; overflow-y:auto; padding:12px; font-family:"SF Mono","Fira Code",monospace; font-size:0.8rem;';
 
   const entries = new Map<string, AssertionEntry>();
   let unsubscribe: (() => void) | null = null;
   let disposed = false;
+  let lastExploreResult: ExploreResult | null = null;
 
   function buildEntries() {
     const assertions = graph.getAssertions();
@@ -78,11 +85,30 @@ export function createAssertionsPanel(
     title.textContent = 'Assertions';
 
     const checkBtn = document.createElement('button');
-    checkBtn.textContent = 'Check All';
+    checkBtn.textContent = options?.explore ? 'Explore' : 'Check All';
     checkBtn.style.cssText = 'background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;';
-    checkBtn.addEventListener('click', () => {
-      graph.checkAssertions();
-      render();
+    checkBtn.addEventListener('click', async () => {
+      if (options?.explore) {
+        checkBtn.textContent = 'Exploring...';
+        checkBtn.style.opacity = '0.6';
+        checkBtn.style.pointerEvents = 'none';
+        try {
+          lastExploreResult = await options.explore(graph, {
+            budget: 1000,
+            flush: async () => { await new Promise(r => setTimeout(r, 0)); },
+          });
+          buildEntries();
+          render();
+        } catch (err) {
+          console.error('[Veriscope] explore() failed:', err);
+          checkBtn.textContent = 'Explore';
+          checkBtn.style.opacity = '1';
+          checkBtn.style.pointerEvents = '';
+        }
+      } else {
+        graph.checkAssertions();
+        render();
+      }
     });
 
     header.appendChild(title);
@@ -97,7 +123,7 @@ export function createAssertionsPanel(
     const unknown = allEntries.filter(e => e.status === 'unknown').length;
 
     const summary = document.createElement('div');
-    summary.style.cssText = 'display:flex; gap:12px; margin-bottom:16px; font-size:0.75rem;';
+    summary.style.cssText = 'display:flex; gap:12px; margin-bottom:16px; font-size:0.75rem; flex-wrap:wrap;';
     summary.innerHTML = `
       <span style="color:#72f1b8">${passed} passed</span>
       <span style="color:#ff5d8f">${failed} failed</span>
@@ -105,6 +131,31 @@ export function createAssertionsPanel(
       <span style="color:#666">${unknown} unchecked</span>
     `;
     container.appendChild(summary);
+
+    // Explore results (if available)
+    if (lastExploreResult) {
+      const resultBox = document.createElement('div');
+      resultBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
+      const v = lastExploreResult.violations;
+      const s = lastExploreResult.steps;
+      resultBox.innerHTML = `
+        <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Exploration Results</div>
+        <div style="color:#8b949e;">Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
+      `;
+      if (v.length > 0) {
+        const list = document.createElement('div');
+        list.style.cssText = 'margin-top:6px;';
+        for (const viol of v) {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:4px 6px; margin-top:3px; background:rgba(255,93,143,0.08); border:1px solid rgba(255,93,143,0.2); border-radius:3px; font-size:0.68rem;';
+          const vals = Object.entries(viol.signalValues).map(([k, v]) => `${k}=${v}`).join(', ');
+          item.innerHTML = `<span style="color:#ff5d8f;">${viol.assertionName}</span> <span style="color:#666;">tick ${viol.tick}</span>${vals ? ` <span style="color:#8b949e;">[${vals}]</span>` : ''}`;
+          list.appendChild(item);
+        }
+        resultBox.appendChild(list);
+      }
+      container.appendChild(resultBox);
+    }
 
     if (allEntries.length === 0) {
       const empty = document.createElement('div');

@@ -11,9 +11,17 @@ import { createCoveragePanel } from './coverage.js';
 
 export type { TabId } from './layout.js';
 
+export interface ExploreResult {
+  violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
+  coverage: { toggle: number; transitions: number; cross: number };
+  steps: number;
+}
+
 export interface DevtoolsOptions {
   /** CoverageCollector instance (optional — coverage tab will show empty state without it) */
   coverage?: CoverageCollector;
+  /** explore() function from @veriscope/test (optional — enables state space exploration in assertions tab) */
+  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
   /** Initial active tab */
   initialTab?: 'waveform' | 'graph' | 'assertions' | 'coverage';
   /** Height of the devtools panel (default: '360px') */
@@ -72,7 +80,7 @@ export function mountDevtools(
       disposers.push(visualizer.dispose);
     }
     if (tab === 'assertions' && !assertions) {
-      assertions = createAssertionsPanel(assertionsContainer, graph);
+      assertions = createAssertionsPanel(assertionsContainer, graph, { explore: options?.explore });
       disposers.push(assertions.dispose);
     }
     if (tab === 'coverage' && !coveragePanel) {
