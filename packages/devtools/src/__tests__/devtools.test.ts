@@ -229,6 +229,96 @@ beforeEach(() => {
 });
 
 describe('mountDevtools', () => {
+  it('exercises Circuit, Waveform, Live Assertions, Autotest, and Mutants from package artifacts', async () => {
+    const graph = new CircuitGraph();
+    graph.enableCoverage();
+    graph.startRecording();
+    let ready = false;
+    const readyId = graph.registerNode({ name: 'app.ready', type: 'signal' });
+    graph.setNodeValue(readyId, () => ready);
+    graph.setNodeSetter(readyId, value => {
+      ready = value;
+    });
+    const derivedId = graph.registerNode({
+      name: 'app.canStart',
+      type: 'derived',
+      deps: [readyId],
+      computeFn: () => ready,
+    });
+    const assertionId = graph.registerNode({ name: 'can-start-visible', type: 'assertion', deps: [derivedId] });
+    graph.setAssertionFn(assertionId, () => true, 'always');
+    graph.driveNodeValue(readyId, true);
+    const op = graph.beginOperation('loadConfig', { outcomes: ['resolved', 'timeout'] });
+    graph.resolveOperation(op, { ok: true });
+
+    const autotest = vi.fn(async () => operationAutotestResult());
+    const mutate = vi.fn(async (options?: { mode?: 'semantic' | 'broad'; onProgress?: (progress: any) => void | Promise<void> }) => {
+      await options?.onProgress?.({
+        total: 1,
+        completed: 1,
+        generatedMutants: 2,
+        skipped: 1,
+        currentMutation: 'skip-effect:analytics',
+        killed: 0,
+        survived: 0,
+        invalid: 0,
+        equivalent: 1,
+        budgetPerMutation: 100,
+        autotestRuns: 2,
+        autotestSteps: 12,
+      });
+      return {
+        ...mutationResult(),
+        total: 1,
+        killed: 0,
+        killedMutations: [],
+        survived: [],
+        equivalent: [{
+          mutation: 'skip-effect:analytics',
+          description: 'Skip analytics effect',
+          reason: 'no generated scenario, coverage, or assertion outcome changed relative to the baseline run',
+        }],
+        score: 100,
+        autotestRuns: 2,
+      };
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit', coverage, autotest, mutate });
+
+    expect(host.textContent).toContain('Circuit');
+    expect(canvasText).toContain('app.ready');
+    expect(canvasText).toContain('app.canStart');
+
+    buttonByText(host, 'Waveform').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Waveform');
+    expect(canvasOps.some(op => op.op === 'lineTo')).toBe(true);
+
+    buttonByText(host, 'Live Assertions').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Operations (1)');
+    expect(host.textContent).toContain('loadConfig');
+
+    buttonByText(host, 'Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    expect(host.textContent).toContain('operation-outcome 1');
+    expect(host.textContent).toContain('operation events: submit:pending, submit:resolved');
+
+    buttonByText(host, 'Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Broad Sweep').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Broad Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'broad' }));
+    expect(host.textContent).toContain('Equivalent: 1');
+    expect(host.textContent).toContain('skip-effect:analytics');
+
+    graph.disableCoverage();
+    graph.stopRecording();
+    handle.dispose();
+  });
+
   it('mounts the product tabs and redraws Circuit on graph events', () => {
     const graph = new CircuitGraph();
     graph.registerNode({ name: 'first', type: 'signal' });
