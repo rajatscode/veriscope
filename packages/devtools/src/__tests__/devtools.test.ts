@@ -130,6 +130,7 @@ function mutationResult(): MutateResult {
     survived: [{ mutation: 'swap-edge:a:b', description: 'Swap edge a/b' }],
     invalid: [],
     equivalent: [],
+    unobserved: [],
     score: 50,
     budgetPerMutation: 1000,
     autotestRuns: 2,
@@ -145,12 +146,12 @@ function mutationResultWithSkipped(): MutateResult {
       {
         mutation: 'sever-edge:input->view',
         description: 'Sever dependency from input to view',
-        reason: 'available in broad mutation mode; excluded from the default semantic score',
+        reason: 'available in Broad Sweep; excluded from Semantic Score',
       },
       {
         mutation: 'swap-edge:input<->clock',
         description: 'Swap signal input to read clock value',
-        reason: 'available in broad mutation mode; excluded from the default semantic score',
+        reason: 'available in Broad Sweep; excluded from Semantic Score',
       },
       {
         mutation: 'remove-assertion:invariant',
@@ -158,6 +159,18 @@ function mutationResultWithSkipped(): MutateResult {
         reason: 'meta-mutations are disabled',
       },
     ],
+  };
+}
+
+function mutationResultWithUnobserved(): MutateResult {
+  return {
+    ...mutationResult(),
+    generatedMutants: 4,
+    unobserved: [{
+      mutation: 'negate:hiddenFlag',
+      description: 'Negate hiddenFlag',
+      reason: 'no path to any declared verification sink',
+    }],
   };
 }
 
@@ -263,6 +276,7 @@ describe('mountDevtools', () => {
         survived: 0,
         invalid: 0,
         equivalent: 1,
+        unobserved: 0,
         budgetPerMutation: 100,
         autotestRuns: 2,
         autotestSteps: 12,
@@ -278,6 +292,7 @@ describe('mountDevtools', () => {
           description: 'Skip analytics effect',
           reason: 'no generated scenario, coverage, or assertion outcome changed relative to the baseline run',
         }],
+        unobserved: [],
         score: 100,
         autotestRuns: 2,
       };
@@ -845,7 +860,7 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Autotest runs: 2');
     expect(host.textContent).toContain('Autotest steps: 73');
     expect(host.textContent).toContain('Rerun Semantic Mutants');
-    expect(host.textContent).toContain('Semantic mode scores assertion-reachable behavior mutants.');
+    expect(host.textContent).toContain('Semantic Score runs observable semantic mutants.');
     expect(host.textContent).toContain('negate:canSubmit');
     expect(host.textContent).toContain('swap-edge:a:b');
 
@@ -866,7 +881,7 @@ describe('mountDevtools', () => {
     await flushPromises();
 
     expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'broad' }));
-    expect(host.textContent).toContain('Broad mode includes structural and effect candidates');
+    expect(host.textContent).toContain('Broad Sweep adds observable structural and effect candidates');
     expect(host.textContent).toContain('Rerun Broad Mutants');
 
     buttonByText(host, 'Semantic Score').dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -891,8 +906,8 @@ describe('mountDevtools', () => {
     await flushPromises();
 
     expect(host.textContent).toContain('Skipped candidates (3)');
-    expect(host.textContent).toContain('Switch to Broad Sweep');
-    expect(host.textContent).toContain('available in broad mutation mode; excluded from the default semantic score · 2');
+    expect(host.textContent).toContain('outside the selected operator mode');
+    expect(host.textContent).toContain('available in Broad Sweep; excluded from Semantic Score · 2');
 
     buttonByText(host, 'Inspect').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('sever-edge:input->view');
@@ -903,10 +918,30 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('swap-edge:input<->clock');
 
     buttonByText(host, 'Hide').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(host.textContent).not.toContain('Switch to Broad Sweep');
+    expect(host.textContent).not.toContain('outside the selected operator mode');
     handle.refresh();
     expect(host.textContent).toContain('Skipped candidates (3)');
-    expect(host.textContent).not.toContain('Switch to Broad Sweep');
+    expect(host.textContent).not.toContain('outside the selected operator mode');
+
+    handle.dispose();
+  });
+
+  it('shows unobserved mutations as missing oracles instead of survivors', async () => {
+    const graph = new CircuitGraph();
+    const mutate = vi.fn(async () => mutationResultWithUnobserved());
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
+
+    buttonByText(host, 'Run Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(host.textContent).toContain('Unobserved: 1');
+    expect(host.textContent).toContain('Unobserved / Missing Oracle (1)');
+    expect(host.textContent).toContain('negate:hiddenFlag');
+    expect(host.textContent).toContain('no path to any declared verification sink');
+    expect(host.textContent).toContain('not counted as survivors');
 
     handle.dispose();
   });
@@ -965,6 +1000,7 @@ describe('mountDevtools', () => {
         completed: 1,
         generatedMutants: 3,
         skipped: 1,
+        unobserved: 1,
         currentMutation: 'negate:ready',
         killed: 1,
         survived: 0,
@@ -987,8 +1023,9 @@ describe('mountDevtools', () => {
     await flushPromises();
     await flushPromises();
 
-    expect(host.textContent).toContain('Progress: 1/2 scored mutants');
+    expect(host.textContent).toContain('Progress: 1/2 observable mutants');
     expect(host.textContent).toContain('Generated 3');
+    expect(host.textContent).toContain('Unobserved 1');
     expect(host.textContent).toContain('Skipped 1');
     expect(host.textContent).toContain('Now: negate:ready');
     expect(host.textContent).toContain('Autotest runs: 1 · Steps: 9');

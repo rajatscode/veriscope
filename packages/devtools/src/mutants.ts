@@ -17,6 +17,7 @@ interface MutationRunStatus {
   selectedMutants?: number;
   completedMutants?: number;
   skippedMutants?: number;
+  unobservedMutants?: number;
   currentMutation?: string;
   killed?: number;
   survived?: number;
@@ -130,6 +131,7 @@ export function createMutantsPanel(
             selectedMutants: progress.total,
             completedMutants: progress.completed,
             skippedMutants: progress.skipped,
+            unobservedMutants: progress.unobserved,
             currentMutation: progress.currentMutation,
             killed: progress.killed,
             survived: progress.survived,
@@ -159,6 +161,7 @@ export function createMutantsPanel(
         selectedMutants: nextResult.total,
         completedMutants: nextResult.total,
         skippedMutants: nextResult.skipped?.length ?? 0,
+        unobservedMutants: nextResult.unobserved?.length ?? 0,
         killed: nextResult.killed,
         survived: nextResult.survived.length,
         invalid: nextResult.invalid?.length ?? 0,
@@ -206,6 +209,7 @@ export function createMutantsPanel(
       const completed = status.completedMutants ?? 0;
       const pct = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
       const skipped = status.skippedMutants === undefined ? 'n/a' : String(status.skippedMutants);
+      const unobserved = status.unobservedMutants === undefined ? 'n/a' : String(status.unobservedMutants);
       const runs = status.autotestRuns === undefined ? '0' : String(status.autotestRuns);
       const steps = status.autotestSteps === undefined ? '0' : String(status.autotestSteps);
       box.innerHTML = `
@@ -215,7 +219,7 @@ export function createMutantsPanel(
         <div style="margin:6px 0 4px; height:6px; background:#21262d; border-radius:999px; overflow:hidden;">
           <div style="height:100%; width:${pct.toFixed(1)}%; background:#f8d66d;"></div>
         </div>
-        <div>Progress: ${escapeHtml(completed)}/${escapeHtml(total || '?')} scored mutants · Generated ${escapeHtml(status.generatedMutants ?? 'n/a')} · Skipped ${escapeHtml(skipped)}</div>
+        <div>Progress: ${escapeHtml(completed)}/${escapeHtml(total || '?')} observable mutants · Generated ${escapeHtml(status.generatedMutants ?? 'n/a')} · Unobserved ${escapeHtml(unobserved)} · Skipped ${escapeHtml(skipped)}</div>
         <div>Killed ${escapeHtml(status.killed ?? 0)} · Survived ${escapeHtml(status.survived ?? 0)} · Invalid ${escapeHtml(status.invalid ?? 0)} · Equivalent ${escapeHtml(status.equivalent ?? 0)}</div>
         <div>Autotest runs: ${escapeHtml(runs)} · Steps: ${escapeHtml(steps)} · Budget per mutant: ${escapeHtml(status.budgetPerMutation ?? 'n/a')}</div>
         <div>Autotest runs include the baseline behavior run plus each selected mutant.</div>
@@ -230,13 +234,14 @@ export function createMutantsPanel(
     const generated = status.generatedMutants === undefined ? 'n/a' : String(status.generatedMutants);
     const selected = status.selectedMutants === undefined ? 'n/a' : String(status.selectedMutants);
     const skipped = status.skippedMutants === undefined ? 'n/a' : String(status.skippedMutants);
+    const unobserved = status.unobservedMutants === undefined ? 'n/a' : String(status.unobservedMutants);
     const budget = status.budgetPerMutation === undefined ? 'n/a' : String(status.budgetPerMutation);
     const runs = status.autotestRuns === undefined ? 'n/a' : String(status.autotestRuns);
     const steps = status.autotestSteps === undefined ? 'n/a' : String(status.autotestSteps);
     box.innerHTML = `
       <div style="font-weight:600;">Last run: #${status.number} ${status.status}</div>
       <div>Started: ${escapeHtml(formatClock(status.startedAt))} · Finished: ${escapeHtml(finished)} · Duration: ${escapeHtml(formatDuration(status.durationMs))}</div>
-      <div>Generated mutants: ${escapeHtml(generated)} · Scored: ${escapeHtml(selected)} · Skipped: ${escapeHtml(skipped)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
+      <div>Generated mutants: ${escapeHtml(generated)} · Observable/scored: ${escapeHtml(selected)} · Unobserved: ${escapeHtml(unobserved)} · Skipped: ${escapeHtml(skipped)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
       <div>Autotest runs: ${escapeHtml(runs)} · Budget per mutant: ${escapeHtml(budget)} · Total autotest steps: ${escapeHtml(steps)}</div>
       <div>Autotest runs include one baseline run used for equivalent-mutant classification.</div>
     `;
@@ -314,7 +319,7 @@ export function createMutantsPanel(
 
     const note = document.createElement('div');
     note.style.cssText = 'margin-top:6px; line-height:1.45; font-size:0.68rem;';
-    note.textContent = 'Skipped candidates are generated mutations outside the current scored mode. Switch to Broad Sweep to run structural and effect candidates; semantic mode keeps the default score focused on assertion-reachable behavior mutants.';
+    note.textContent = 'Skipped candidates are outside the selected operator mode or disabled meta-mutations. Candidates in the selected mode that have no verification sink are shown separately as Unobserved.';
     box.appendChild(note);
 
     const byReason = new Map<string, Array<{ mutation: string; description: string; reason: string }>>();
@@ -395,8 +400,8 @@ export function createMutantsPanel(
     const modeWrap = document.createElement('div');
     modeWrap.style.cssText = 'display:flex; border:1px solid #30363d; border-radius:4px; overflow:hidden;';
     for (const [mode, label, titleText] of [
-      ['semantic', 'Semantic Score', 'Score semantic, assertion-reachable mutants only'],
-      ['broad', 'Broad Sweep', 'Include broad structural/effect mutation candidates'],
+      ['semantic', 'Semantic Score', 'Score observable semantic mutants; report no-oracle candidates separately'],
+      ['broad', 'Broad Sweep', 'Include observable structural/effect candidates; report no-oracle candidates separately'],
     ] as Array<[MutationMode, string, string]>) {
       const modeBtn = document.createElement('button');
       modeBtn.textContent = label;
@@ -457,7 +462,7 @@ export function createMutantsPanel(
     if (!result) {
       const hint = document.createElement('div');
       hint.style.cssText = 'color:#666; padding:20px; text-align:center;';
-      hint.textContent = running ? 'Applying generated mutations and running full autotests per mutant...' : 'Run mutation testing to see killed and surviving generated mutations.';
+      hint.textContent = running ? 'Applying generated mutations and running full autotests per mutant...' : 'Run mutation testing to see killed, surviving, and unobserved generated mutations.';
       container.appendChild(hint);
       return;
     }
@@ -468,8 +473,9 @@ export function createMutantsPanel(
       <span style="color:#c9d1d9;">Score: <strong style="color:${result.score >= 80 ? '#72f1b8' : result.score >= 50 ? '#f8d66d' : '#ff5d8f'}">${percent(result.score)}</strong></span>
       <span style="color:#72f1b8;">Killed: ${result.killed}</span>
       <span style="color:#ff5d8f;">Survived: ${result.survived.length}</span>
-      <span style="color:#8b949e;">Total: ${result.total}</span>
+      <span style="color:#8b949e;">Observable: ${result.total}</span>
       ${result.generatedMutants !== undefined ? `<span style="color:#8b949e;">Generated: ${escapeHtml(result.generatedMutants)}</span>` : ''}
+      ${result.unobserved !== undefined ? `<span style="color:#f8d66d;">Unobserved: ${escapeHtml(result.unobserved.length)}</span>` : ''}
       ${result.skipped !== undefined ? `<span style="color:#8b949e;">Skipped: ${escapeHtml(result.skipped.length)}</span>` : ''}
       <span style="color:#8b949e;">Invalid: ${result.invalid?.length ?? 0}</span>
       <span style="color:#8b949e;">Equivalent: ${result.equivalent?.length ?? 0}</span>
@@ -482,12 +488,15 @@ export function createMutantsPanel(
     const rerunNote = document.createElement('div');
     rerunNote.style.cssText = 'color:#8b949e; margin-top:6px; font-size:0.7rem;';
     rerunNote.textContent = mutationMode === 'semantic'
-      ? 'Semantic mode scores assertion-reachable behavior mutants. Broad candidates are summarized below and can be run with Broad mode.'
-      : 'Broad mode includes structural and effect candidates; use it to inspect graph-topology sensitivity rather than the default assertion-quality score.';
+      ? 'Semantic Score runs observable semantic mutants. Mutants with no path to a declared verification sink are reported as Unobserved, not counted as survivors.'
+      : 'Broad Sweep adds observable structural and effect candidates. No-oracle candidates are reported as Unobserved so missing verification sinks stay visible without polluting the score.';
     container.appendChild(rerunNote);
 
     container.appendChild(renderList('Killed', result.killedMutations, '#72f1b8'));
     container.appendChild(renderList('Survived', result.survived, '#ff5d8f'));
+    if (result.unobserved && result.unobserved.length > 0) {
+      container.appendChild(renderList('Unobserved / Missing Oracle', result.unobserved, '#f8d66d'));
+    }
     if (result.skipped && result.skipped.length > 0) {
       container.appendChild(renderSkippedSummary(result.skipped));
     }

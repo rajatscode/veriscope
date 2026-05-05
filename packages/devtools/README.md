@@ -223,7 +223,7 @@ Generated-case autotest monitor. "Run Autotest" drives `runAutotest()` when prov
 
 ### Mutants Panel
 
-Mutation testing surface for generated graph mutations. Pass a callback backed by `@veriscope/mutate` to enable the button; the panel supports Semantic Score and Broad Sweep modes, shows live progress from `onProgress`, and reports total, killed, survived, invalid, equivalent, skipped, autotest runs, and score after the runner completes.
+Mutation testing surface for generated graph mutations. Pass a callback backed by `@veriscope/mutate` to enable the button; the panel supports Semantic Score and Broad Sweep modes, shows live progress from `onProgress`, and reports generated, observable/scored, killed, survived, unobserved/missing-oracle, invalid, equivalent, skipped, autotest runs, and score after the runner completes.
 
 ---
 
@@ -286,4 +286,4 @@ Generated-case autotest monitor. Runs exploration/autotest when supplied, shows 
 
 ### Mutants
 
-Mutation testing monitor. Runs an app-provided mutation callback and reports killed and surviving generated mutations.
+Mutation testing monitor. Runs an app-provided mutation callback and reports observable killed/surviving mutations plus unobserved missing-oracle candidates.

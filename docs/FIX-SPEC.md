@@ -114,6 +114,8 @@ Required behavior:
 - rerun generated and manual scenarios for each mutant;
 - kill a mutant only when an assertion, coverage oracle, or scenario oracle
   detects a behavioral difference;
+- report selected-mode candidates with no path to a declared verification sink
+  as unobserved/missing-oracle gaps, not survived mutants;
 - classify invalid or equivalent mutants separately from survived mutants;
 - report the scenario that killed each mutant.
 

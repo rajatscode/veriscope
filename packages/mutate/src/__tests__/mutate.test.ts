@@ -249,7 +249,7 @@ describe('mutate', () => {
     expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:a')).toBe(true);
   });
 
-  it('reports progress and skips broad structural mutants in the default scored set', async () => {
+  it('reports progress and keeps broad structural mutants out of Semantic Score', async () => {
     const factory = () => {
       const g = new CircuitGraph();
       let ready = true;
@@ -272,7 +272,7 @@ describe('mutate', () => {
       g.propagate();
       return g;
     };
-    const progress: Array<{ completed: number; total: number; skipped: number; currentMutation?: string }> = [];
+    const progress: Array<{ completed: number; total: number; skipped: number; unobserved: number; currentMutation?: string }> = [];
 
     const result = await mutate(factory, {
       budget: 20,
@@ -281,6 +281,7 @@ describe('mutate', () => {
           completed: p.completed,
           total: p.total,
           skipped: p.skipped,
+          unobserved: p.unobserved,
           currentMutation: p.currentMutation,
         });
       },
@@ -289,8 +290,65 @@ describe('mutate', () => {
     expect(result.generatedMutants).toBeGreaterThan(result.total);
     expect(result.skipped.some(mutation => mutation.mutation.startsWith('sever-edge:'))).toBe(true);
     expect(result.survived.every(mutation => !mutation.mutation.startsWith('sever-edge:'))).toBe(true);
-    expect(progress[0]).toMatchObject({ completed: 0, total: result.total, skipped: result.skipped.length });
+    expect(progress[0]).toMatchObject({ completed: 0, total: result.total, skipped: result.skipped.length, unobserved: result.unobserved.length });
     expect(progress.at(-1)).toMatchObject({ completed: result.total, total: result.total });
+  });
+
+  it('reports selected-mode mutants with no verification sink as unobserved, not survived', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let observed = true;
+      let hidden = false;
+      const observedId = g.registerNode({ name: 'observed', type: 'signal', stablePath: 'observed' });
+      g.setNodeValue(observedId, () => observed);
+      g.setNodeSetter(observedId, (v: boolean) => {
+        observed = v;
+      });
+      const hiddenId = g.registerNode({ name: 'hidden', type: 'signal', stablePath: 'hidden' });
+      g.setNodeValue(hiddenId, () => hidden);
+      g.setNodeSetter(hiddenId, (v: boolean) => {
+        hidden = v;
+      });
+
+      const assertId = g.registerNode({ name: 'observed-required', type: 'assertion', deps: [observedId] });
+      g.setAssertionFn(assertId, () => observed === true, 'always');
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 20, operators: ['negate'] });
+
+    expect(result.total).toBe(1);
+    expect(result.unobserved).toEqual([{
+      mutation: 'negate:hidden',
+      description: 'Negate boolean signal hidden',
+      reason: 'no path to any declared verification sink',
+    }]);
+    expect(result.survived.some(mutation => mutation.mutation === 'negate:hidden')).toBe(false);
+    expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:observed')).toBe(true);
+  });
+
+  it('treats explicit finite domain metadata as a verification sink', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let hidden = false;
+      const hiddenId = g.registerNode({
+        name: 'hidden',
+        type: 'signal',
+        stablePath: 'hidden',
+        metadata: { domains: { hidden: [false, true] } },
+      });
+      g.setNodeValue(hiddenId, () => hidden);
+      g.setNodeSetter(hiddenId, (v: boolean) => {
+        hidden = v;
+      });
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 20, operators: ['negate'] });
+
+    expect(result.total).toBe(1);
+    expect(result.unobserved).toHaveLength(0);
+    expect(result.survived.some(mutation => mutation.mutation === 'negate:hidden')).toBe(true);
   });
 
   it('reports survived mutations for weak assertions', async () => {
@@ -340,7 +398,7 @@ describe('mutate', () => {
     expect(result.killedMutations.some(m => m.mutation.startsWith('remove-assertion:'))).toBe(false);
   });
 
-  it('classifies unchanged broad structural mutants as equivalent', async () => {
+  it('classifies unchanged observable broad structural mutants as equivalent', async () => {
     const factory = () => {
       const g = new CircuitGraph();
       let visible = true;
@@ -362,9 +420,9 @@ describe('mutate', () => {
         stablePath: 'hiddenDerived',
         computeFn: () => hidden,
       });
-      const assertId = g.registerNode({ name: 'visible-observed', type: 'assertion', deps: [visibleId] });
+      const effectId = g.registerNode({ name: 'analytics-effect', type: 'effect', stablePath: 'analytics-effect' });
+      const assertId = g.registerNode({ name: 'visible-observed', type: 'assertion', deps: [visibleId, effectId] });
       g.setAssertionFn(assertId, () => true, 'always');
-      g.registerNode({ name: 'analytics-effect', type: 'effect', stablePath: 'analytics-effect' });
       g.propagate();
       // Keep the hidden derived node outside the assertion cone but still
       // present for broad structural operators.
@@ -375,7 +433,7 @@ describe('mutate', () => {
     const result = await mutate(factory, { budget: 20, operators: 'all' });
 
     expect(result.equivalent.some(mutation => mutation.mutation === 'skip-effect:analytics-effect')).toBe(true);
-    expect(result.skipped.some(mutation => mutation.reason === 'outside every assertion backward cone')).toBe(false);
+    expect(result.unobserved.some(mutation => mutation.reason === 'no path to any declared verification sink')).toBe(true);
     expect(result.autotestRuns).toBe(result.total + 1);
   });
 

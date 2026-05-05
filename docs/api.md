@@ -794,7 +794,7 @@ function exploreViaInteractions(
 
 ### `mutate(factory, options?)` (`@veriscope/mutate`)
 
-Run mutation testing on a reactive graph to measure assertion quality.
+Run mutation testing on a reactive graph to measure declared verification surface quality.
 
 ```ts
 function mutate(
@@ -804,10 +804,27 @@ function mutate(
 
 interface MutateOptions {
   budget?: number;                // default: 500 per mutant
-  operators?: 'all' | string[];   // default: semantic scored set; 'all' enables broad mode
+  operators?: 'all' | string[];   // default: observable semantic scored set; 'all' enables broad mode
   includeMetaMutations?: boolean;
   onProgress?: (progress: MutateProgress) => void | Promise<void>;
   yieldEvery?: number;
+}
+
+interface MutateProgress {
+  total: number;          // observable selected mutants
+  completed: number;
+  generatedMutants: number;
+  skipped: number;
+  unobserved: number;
+  currentMutation?: string;
+  killed: number;
+  survived: number;
+  invalid: number;
+  equivalent: number;
+  budgetPerMutation: number;
+  autotestRuns: number;
+  autotestSteps: number;
+  seed?: string | number;
 }
 
 interface MutateResult {
@@ -817,7 +834,8 @@ interface MutateResult {
   survived: Array<{ mutation: string; description: string }>;
   invalid: Array<{ mutation: string; description: string; error: string }>;
   equivalent: Array<{ mutation: string; description: string; reason: string }>;
-  score: number;  // 0-100 kill rate over scored mutants
+  unobserved: Array<{ mutation: string; description: string; reason: string }>;
+  score: number;  // 0-100 kill rate over observable scored mutants
   budgetPerMutation: number;
   autotestRuns: number;   // baseline + selected mutants
   autotestSteps: number;
@@ -831,9 +849,10 @@ interface MutateResult {
 
 1. Creates a reference graph from `factory` to enumerate mutations via `generateMutations`
 2. Runs one baseline autotest for behavior-signature comparison
-3. For each selected mutation, creates a fresh graph, applies the mutation, runs `runAutotest()`
-4. If any assertion fires, the mutation is **killed**; invalid and broad equivalent mutants are classified separately from survived mutants
-5. Score = `killed / (total - invalid - equivalent) * 100`
+3. Classifies selected-mode candidates with no path to any declared verification sink as **unobserved**, not survived
+4. For each observable selected mutation, creates a fresh graph, applies the mutation, runs `runAutotest()`
+5. If any assertion fires, the mutation is **killed**; invalid and broad equivalent mutants are classified separately from observable survived mutants
+6. Score = `killed / (observable total - invalid - equivalent) * 100`
 
 ### `generateMutations(graph)` (`@veriscope/mutate`)
 
@@ -925,7 +944,7 @@ Generated-case autotest surface. When provided, `runAutotest()` drives determini
 
 #### Mutants
 
-Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to run semantic or broad generated mutations, rerun autotest, show live progress, and report killed, survived, skipped, invalid, and equivalent mutations.
+Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to run semantic or broad generated mutations, rerun autotest, show live progress, and report observable killed/survived mutations, unobserved/missing-oracle candidates, skipped filters, invalid mutants, and equivalent mutants.
 
 ### Panel Constructors
 

@@ -4,7 +4,7 @@ import type { CircuitGraph } from '@veriscope/graph';
 import { runAutotest } from '@veriscope/test';
 import type { AutotestResult } from '@veriscope/test';
 import { generateMutations } from './operators.js';
-import type { MutateOptions, MutateProgress, MutateResult, Mutation, SkippedMutation } from './types.js';
+import type { MutateOptions, MutateProgress, MutateResult, Mutation, SkippedMutation, UnobservedMutation } from './types.js';
 
 const DEFAULT_SCORING_OPERATORS = new Set(['negate', 'constant-fold', 'invert-comparison']);
 
@@ -24,7 +24,7 @@ export async function mutate(
   // Get mutation list from a reference graph
   const refGraph = factory();
   const candidates = generateMutations(refGraph);
-  const { selected: mutations, skipped } = selectMutations(refGraph, candidates, options);
+  const { selected: mutations, skipped, unobserved } = selectMutations(refGraph, candidates, options);
   const baseline = await runAutotest(refGraph, {
     budget: budgetPerMutation,
     name: 'mutation-baseline',
@@ -48,6 +48,7 @@ export async function mutate(
       completed,
       generatedMutants: candidates.length,
       skipped: skipped.length,
+      unobserved: unobserved.length,
       currentMutation,
       killed,
       survived: survived.length,
@@ -120,6 +121,7 @@ export async function mutate(
     survived,
     invalid,
     equivalent,
+    unobserved,
     score: scoredTotal > 0 ? (killed / scoredTotal) * 100 : 100,
     budgetPerMutation,
     autotestRuns,
@@ -133,12 +135,12 @@ function selectMutations(
   graph: CircuitGraph,
   candidates: Mutation[],
   options: MutateOptions,
-): { selected: Mutation[]; skipped: SkippedMutation[] } {
-  const assertionCone = assertionReachableNodeIds(graph);
+): { selected: Mutation[]; skipped: SkippedMutation[]; unobserved: UnobservedMutation[] } {
+  const verificationCone = verificationReachableNodeIds(graph);
   const selected: Mutation[] = [];
   const skipped: SkippedMutation[] = [];
+  const unobserved: UnobservedMutation[] = [];
   const explicitOperators = options.operators !== undefined;
-  const broadAll = options.operators === 'all';
   const allowedOperators = Array.isArray(options.operators) ? new Set(options.operators) : null;
 
   for (const mutation of candidates) {
@@ -149,11 +151,9 @@ function selectMutations(
     if (allowedOperators && !allowedOperators.has(operator)) {
       reason = `operator ${operator} was not requested`;
     } else if (!explicitOperators && !DEFAULT_SCORING_OPERATORS.has(operator)) {
-      reason = `available in broad mutation mode; excluded from the default semantic score`;
+      reason = `available in Broad Sweep; excluded from Semantic Score`;
     } else if (!options.includeMetaMutations && category === 'meta') {
       reason = 'meta-mutations are disabled';
-    } else if (!broadAll && assertionCone.size > 0 && category !== 'meta' && !mutationTargetsAssertionCone(mutation, assertionCone)) {
-      reason = 'outside every assertion backward cone';
     }
 
     if (reason) {
@@ -162,12 +162,18 @@ function selectMutations(
         description: mutation.description,
         reason,
       });
+    } else if (category !== 'meta' && !mutationTargetsVerificationSink(mutation, verificationCone)) {
+      unobserved.push({
+        mutation: mutation.name,
+        description: mutation.description,
+        reason: 'no path to any declared verification sink',
+      });
     } else {
       selected.push(mutation);
     }
   }
 
-  return { selected, skipped };
+  return { selected, skipped, unobserved };
 }
 
 function shouldClassifyEquivalent(mutation: Mutation): boolean {
@@ -255,18 +261,18 @@ function categoryFor(operator: string): NonNullable<Mutation['category']> {
   return 'semantic';
 }
 
-function mutationTargetsAssertionCone(mutation: Mutation, assertionCone: Set<string>): boolean {
+function mutationTargetsVerificationSink(mutation: Mutation, verificationCone: Set<string>): boolean {
   const targetIds = mutation.targetIds ?? [];
   if (targetIds.length === 0) return true;
-  return targetIds.some(id => assertionCone.has(id));
+  return targetIds.some(id => verificationCone.has(id));
 }
 
-function assertionReachableNodeIds(graph: CircuitGraph): Set<string> {
+function verificationReachableNodeIds(graph: CircuitGraph): Set<string> {
   const result = new Set<string>();
   const edges = graph.getEdges();
-  for (const assertion of graph.getAssertions()) {
-    result.add(assertion.id);
-    const queue = [assertion.id];
+  const enqueueCone = (rootId: string) => {
+    result.add(rootId);
+    const queue = [rootId];
     while (queue.length > 0) {
       const current = queue.shift()!;
       for (const edge of edges) {
@@ -275,8 +281,43 @@ function assertionReachableNodeIds(graph: CircuitGraph): Set<string> {
         queue.push(edge.from);
       }
     }
+  };
+
+  for (const assertion of graph.getAssertions()) {
+    enqueueCone(assertion.id);
+    for (const dep of [
+      ...assertion.deps,
+      ...(assertion.metadata?.checkDeps ?? []),
+      ...(assertion.metadata?.triggerDeps ?? []),
+    ]) {
+      enqueueCone(dep);
+    }
   }
+
+  for (const node of graph.getNodes()) {
+    const states = node.metadata?.states;
+    if (
+      (Array.isArray(states) && states.length > 0)
+      || hasFiniteDomainMetadata(node.metadata?.domains)
+      || node.metadata?.coverageSink === true
+    ) {
+      enqueueCone(node.id);
+    }
+  }
+
+  for (const model of graph.getOperationModels()) {
+    for (const dep of [...(model.triggerDeps ?? []), ...(model.outputDeps ?? [])]) {
+      enqueueCone(dep);
+    }
+  }
+
   return result;
+}
+
+function hasFiniteDomainMetadata(domains: unknown): boolean {
+  if (Array.isArray(domains)) return domains.length > 0;
+  if (!domains || typeof domains !== 'object') return false;
+  return Object.values(domains).some(value => Array.isArray(value) && value.length > 0);
 }
 
 async function yieldToHost(): Promise<void> {

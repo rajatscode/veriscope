@@ -17,6 +17,12 @@ export interface SkippedMutation {
   reason: string;
 }
 
+export interface UnobservedMutation {
+  mutation: string;
+  description: string;
+  reason: string;
+}
+
 export interface MutateProgress {
   /** Number of mutants selected for scoring in this run. */
   total: number;
@@ -26,6 +32,8 @@ export interface MutateProgress {
   generatedMutants: number;
   /** Number of generated candidates skipped before scoring. */
   skipped: number;
+  /** Number of selected-mode candidates with no path to a declared verification sink. */
+  unobserved: number;
   currentMutation?: string;
   killed: number;
   survived: number;
@@ -41,9 +49,10 @@ export interface MutateOptions {
   /** Autotest exploration budget used for each mutation. Default: 500. */
   budget?: number;
   /**
-   * Which operators to apply. When omitted, Veriscope scores semantic,
-   * assertion-reachable operators only. Pass 'all' to include broad structural
-   * operators such as sever-edge and swap-edge.
+   * Which operators to apply. When omitted, Veriscope scores observable
+   * semantic operators only. Pass 'all' to include broad structural/effect
+   * operators; candidates with no path to a verification sink are reported as
+   * unobserved rather than scored.
    */
   operators?: 'all' | string[];
   /** Include meta-mutations such as remove-assertion. Default: false. */
@@ -66,6 +75,7 @@ export interface MutateResult {
   survived: Array<{ mutation: string; description: string }>;
   invalid: Array<{ mutation: string; description: string; error: string }>;
   equivalent: Array<{ mutation: string; description: string; reason: string }>;
+  unobserved: UnobservedMutation[];
   score: number; // 0-100
   /** Autotest budget used for every generated mutant. */
   budgetPerMutation: number;

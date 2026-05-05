@@ -97,6 +97,7 @@ export interface MutateResult {
   survived: Array<{ mutation: string; description: string }>;
   invalid?: Array<{ mutation: string; description: string; error: string }>;
   equivalent?: Array<{ mutation: string; description: string; reason: string }>;
+  unobserved?: Array<{ mutation: string; description: string; reason: string }>;
   score: number;
   budgetPerMutation?: number;
   autotestRuns?: number;
@@ -112,6 +113,7 @@ export interface MutateProgress {
   completed: number;
   generatedMutants: number;
   skipped: number;
+  unobserved: number;
   currentMutation?: string;
   killed: number;
   survived: number;
@@ -124,7 +126,7 @@ export interface MutateProgress {
 }
 
 export interface DevtoolsOptions {
-  /** CoverageCollector instance. Runtime coverage is shown inside the Autotest tab. */
+  /** CoverageCollector instance. Runtime coverage is shown inside the Live Assertions tab. */
   coverage?: CoverageCollector;
   /** runAutotest() from @veriscope/test. Enables the Autotest tab. */
   autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string; onProgress?: (progress: AutotestProgress) => void | Promise<void> }) => Promise<AutotestResult>;
