@@ -60,6 +60,10 @@ export interface OperationSpan {
   status: OperationStatus;
   startedAtTick: number;
   completedAtTick?: number;
+  inputDeps?: string[];
+  inputDepPaths?: string[];
+  outputDeps?: string[];
+  outputDepPaths?: string[];
   metadata?: Record<string, any>;
   events: GraphEvent[];
   parentId?: string;
@@ -83,6 +87,7 @@ export interface OperationModel {
 }
 
 export interface GraphEvent {
+  seq?: number;
   type:
     | 'node-created'
     | 'node-disposed'

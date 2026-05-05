@@ -301,7 +301,7 @@ export class CircuitGraph {
   }
 
   private pushEvent(event: GraphEvent): void {
-    this.eventSeq++;
+    event.seq = this.eventSeq++;
     if (this.eventsFull) {
       this.events[this.eventWriteIdx] = event;
     } else {
@@ -525,6 +525,8 @@ export class CircuitGraph {
       name,
       status: 'pending',
       startedAtTick: this._currentTick,
+      inputDeps: arrayMetadata(metadata, 'inputDeps') ?? arrayMetadata(metadata, 'triggerDeps'),
+      outputDeps: arrayMetadata(metadata, 'outputDeps'),
       metadata,
       events: [],
       parentId: this.currentOperationId(),
@@ -655,6 +657,7 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type,
       nodeId: `operation:${span.id}`,
+      stablePath: `operation:${span.name}/${span.id}`,
       tick: this._currentTick,
       operationId: span.id,
       operationName: span.name,
@@ -777,12 +780,12 @@ export class CircuitGraph {
         from: nodePath(edge.from),
         to: nodePath(edge.to),
       })),
-      events: this.getRecentEvents(EVENT_BUFFER_SIZE),
+      events: this.getRecentEvents(EVENT_BUFFER_SIZE).map(event => this.snapshotEvent(event)),
       waveforms: Object.fromEntries(
         [...this.waveforms.entries()].map(([id, points]) => [nodePath(id), points.map(p => ({ ...p }))]),
       ),
       disposedNodes: [...this.disposedNodes.values()].map(n => this.snapshotNode(n, nodePath)),
-      operations: this.getOperations(),
+      operations: this.snapshotOperations(nodePath),
       operationModels: this.getOperationModels().map(model => ({
         id: model.id,
         name: model.name,
@@ -807,6 +810,25 @@ export class CircuitGraph {
       assertionMetadata: n.assertionMetadata,
       createdAtTick: n.createdAtTick,
       disposedAtTick: n.disposedAtTick,
+    };
+  }
+
+  private snapshotOperations(nodePath: (id: string) => string): OperationSpan[] {
+    return this.getOperations().map(op => ({
+      ...op,
+      inputDepPaths: op.inputDeps?.map(nodePath),
+      outputDepPaths: op.outputDeps?.map(nodePath),
+      metadata: this.serializableMetadata(op.metadata),
+      events: op.events.map(event => this.snapshotEvent(event)),
+    }));
+  }
+
+  private snapshotEvent(event: GraphEvent): GraphEvent {
+    return {
+      ...event,
+      stablePath: event.stablePath
+        ?? (event.operationId ? `operation:${event.operationName}/${event.operationId}` : undefined),
+      metadata: this.serializableMetadata(event.metadata),
     };
   }
 
@@ -837,7 +859,12 @@ export class CircuitGraph {
       } else {
         const aNode = aNodeMap.get(name)!;
         const bNode = bNodeMap.get(name)!;
-        if (aNode.type !== bNode.type) {
+        if (
+          aNode.type !== bNode.type
+          || stableJson(aNode.depPaths ?? aNode.deps) !== stableJson(bNode.depPaths ?? bNode.deps)
+          || stableJson(aNode.metadata) !== stableJson(bNode.metadata)
+          || stableJson(aNode.assertionMetadata) !== stableJson(bNode.assertionMetadata)
+        ) {
           changedNodes.push({ id: name, before: aNode, after: bNode });
         }
       }
@@ -1013,6 +1040,27 @@ function uniqueOperationStatuses(statuses: OperationStatus[]): OperationStatus[]
     if (!result.includes(status)) result.push(status);
   }
   return result;
+}
+
+function arrayMetadata(metadata: Record<string, any> | undefined, key: string): string[] | undefined {
+  const value = metadata?.[key];
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((entry): entry is string => typeof entry === 'string');
+  return strings.length > 0 ? [...strings] : undefined;
+}
+
+function stableJson(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, val]) => [key, sortJson(val)]);
+  return Object.fromEntries(entries);
 }
 
 /** Default singleton instance for convenience. */

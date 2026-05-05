@@ -96,6 +96,19 @@ describe('CircuitGraph', () => {
     expect(diff.removedNodes).toContain('b');
   });
 
+  it('diffs node metadata and dependency changes by stable path', () => {
+    const g1 = new CircuitGraph();
+    g1.registerNode({ name: 'field', type: 'signal', stablePath: 'Form/field', metadata: { states: ['idle'] } });
+
+    const g2 = new CircuitGraph();
+    g2.registerNode({ name: 'field', type: 'signal', stablePath: 'Form/field', metadata: { states: ['idle', 'dirty'] } });
+
+    const diff = CircuitGraph.diffGraphs(g1.snapshot(), g2.snapshot());
+
+    expect(diff.changedNodes).toHaveLength(1);
+    expect(diff.changedNodes[0].id).toBe('Form/field');
+  });
+
   it('tracks ticks in test mode', () => {
     const g = new CircuitGraph();
     g.enterTestMode();
@@ -104,6 +117,7 @@ describe('CircuitGraph', () => {
     g.notifyChange(a, 0, 1);
     g.closeTick();
     expect(g.currentTick).toBe(1);
+    expect(g.getRecentEvents(1)[0].seq).toBe(1);
   });
 
   it('batches synchronous changes into one auto-managed tick outside test mode', async () => {
@@ -400,7 +414,33 @@ describe('CircuitGraph', () => {
     expect(span.completedAtTick).toBe(1);
     expect(span.status).toBe('resolved');
     expect(span.events.some(e => e.type === 'signal-change' && e.operationId === op)).toBe(true);
-    expect(g.snapshot().operations?.[0].events.some(e => e.operationId === op)).toBe(true);
+    const snap = g.snapshot();
+    expect(snap.operations?.[0].inputDepPaths).toBeUndefined();
+    expect(snap.operations?.[0].outputDepPaths).toBeUndefined();
+    expect(snap.operations?.[0].events.some(e => e.operationId === op && e.stablePath?.startsWith('operation:submit/'))).toBe(true);
+  });
+
+  it('snapshots operation dependency paths and event sequence numbers', () => {
+    const g = new CircuitGraph();
+    const request = g.registerNode({ name: 'request.key', type: 'signal', stablePath: 'Search/requestKey' });
+    const result = g.registerNode({ name: 'result', type: 'signal', stablePath: 'Search/result' });
+
+    const op = g.beginOperation('search', {
+      outcomes: ['resolved', 'rejected'],
+      inputDeps: [request],
+      outputDeps: [result],
+      request: { query: 'abc' },
+      onResponse: () => 'not serializable',
+    });
+    g.resolveOperation(op, { rows: [] });
+
+    const snap = g.snapshot({ route: '/search' });
+
+    expect(snap.captureContext?.route).toBe('/search');
+    expect(snap.events?.every(event => typeof event.seq === 'number')).toBe(true);
+    expect(snap.operations?.[0].inputDepPaths).toEqual(['Search/requestKey']);
+    expect(snap.operations?.[0].outputDepPaths).toEqual(['Search/result']);
+    expect(snap.operations?.[0].metadata).not.toHaveProperty('onResponse');
   });
 
   it('keeps async response-side graph events linked to their operation', async () => {

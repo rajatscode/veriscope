@@ -65,6 +65,23 @@ describe('useDerived', () => {
     expect(node?.deps).toContain(yResult.current.nodeId);
   });
 
+  it('passes stable path and scope metadata through for derived nodes', () => {
+    const { result } = renderHook(() => {
+      const sig = useSignal(3, 'x', { graph, stablePath: 'Widget:x' });
+      const derived = useDerived(() => sig.val * 2, [sig], 'doubled', {
+        graph,
+        stablePath: 'Widget:doubled',
+        scope: 'Widget',
+      });
+      return { derived };
+    });
+
+    const node = graph.getNode(result.current.derived.nodeId);
+
+    expect(node?.stablePath).toBe('Widget:doubled');
+    expect(node?.metadata?.scope).toBe('Widget');
+  });
+
   it('registers computeFn so graph driving propagates derived values', () => {
     const events: any[] = [];
     graph.subscribe(e => events.push(e));

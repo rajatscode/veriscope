@@ -110,6 +110,23 @@ describe('useSignal', () => {
     expect(node?.metadata?.states).toEqual(['red', 'green', 'blue']);
   });
 
+  it('passes stable path and scope metadata through to graph snapshots', () => {
+    const { result } = renderHook(() =>
+      useSignal(1, 'value', {
+        graph,
+        stablePath: 'List/Row:42/value',
+        scope: 'List/Row:42',
+      })
+    );
+
+    const node = graph.getNode(result.current.nodeId);
+    const snap = graph.snapshot();
+
+    expect(node?.stablePath).toBe('List/Row:42/value');
+    expect(node?.metadata?.scope).toBe('List/Row:42');
+    expect(snap.nodes[0].stablePath).toBe('List/Row:42/value');
+  });
+
   it('cleans up node on unmount', () => {
     const { result, unmount } = renderHook(() => useSignal(1, 'signal', { graph }));
     const nodeId = result.current.nodeId;

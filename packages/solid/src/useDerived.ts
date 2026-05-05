@@ -3,6 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { CircuitGraph, ReadonlySignal, Signal } from '@veriscope/graph';
 
 interface UseDerivedOptions {
+  stablePath?: string;
+  scope?: string;
   graph?: CircuitGraph;
 }
 
@@ -31,6 +33,8 @@ export function useDerived<T>(
     name,
     type: 'derived',
     deps: deps.map(d => d.nodeId),
+    stablePath: options?.stablePath,
+    metadata: options?.scope ? { scope: options.scope } : undefined,
     computeFn: computeForGraph,
   });
 

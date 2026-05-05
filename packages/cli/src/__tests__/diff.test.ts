@@ -106,6 +106,9 @@ describe('CLI diff', () => {
   it('validates snapshot schema before diffing', () => {
     expect(() => validateSnapshot({ nodes: [] })).toThrow(/edges array/);
     expect(() => validateSnapshot({ schemaVersion: 999, nodes: [], edges: [] })).toThrow(/unsupported schemaVersion/);
+    expect(() => validateSnapshot({ nodes: [{ name: 'x', type: 'signal', deps: [] }], edges: [] })).toThrow(/stable string id/);
+    expect(() => validateSnapshot({ nodes: [], edges: [], events: [{ type: 'signal-change', nodeId: 'x' }] })).toThrow(/numeric tick/);
+    expect(() => validateSnapshot({ nodes: [], edges: [], operationModels: [{ id: 'op', name: 'op' }] })).toThrow(/outcomes array/);
   });
 
   it('writes schema v1 snapshots with capture context', () => {
@@ -113,6 +116,7 @@ describe('CLI diff', () => {
     try {
       const g = new CircuitGraph();
       g.registerNode({ name: 'x', type: 'signal' });
+      g.registerOperationModel({ name: 'load', outcomes: ['resolved', 'rejected'] });
       const path = join(tmp, 'nested', 'snapshot.json');
 
       const snapshot = writeSnapshot(g, path, { harness: 'unit' });
@@ -122,8 +126,20 @@ describe('CLI diff', () => {
       expect(loaded.schemaVersion).toBe(1);
       expect(loaded.captureContext?.harness).toBe('unit');
       expect(formatSnapshotSummary(loaded)).toContain('Nodes: 1');
+      expect(formatSnapshotSummary(loaded)).toContain('Operation models: 1');
     } finally {
       rmSync(tmp, { recursive: true });
     }
+  });
+
+  it('validates operation spans in shared snapshots', () => {
+    const g = new CircuitGraph();
+    const op = g.beginOperation('save', { outcomes: ['resolved'], inputDeps: [] });
+    g.resolveOperation(op, { ok: true });
+
+    const snap = validateSnapshot(g.snapshot(), 'operation snapshot');
+
+    expect(snap.operations?.[0].name).toBe('save');
+    expect(snap.operations?.[0].events[0].stablePath).toContain('operation:save/');
   });
 });

@@ -3,6 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { CircuitGraph, Signal, ReadonlySignal } from '@veriscope/graph';
 
 interface UseEdgeEffectOptions {
+  stablePath?: string;
+  scope?: string;
   graph?: CircuitGraph;
 }
 
@@ -26,6 +28,8 @@ export function useEdgeEffect(
     name,
     type: 'effect',
     deps: [signal.nodeId],
+    stablePath: options?.stablePath,
+    metadata: options?.scope ? { scope: options.scope } : undefined,
   });
 
   let prev: any = signal.val;

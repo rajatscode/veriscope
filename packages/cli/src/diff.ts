@@ -32,11 +32,23 @@ export function validateSnapshot(value: unknown, source = 'snapshot'): GraphSnap
     if (typeof node.name !== 'string') {
       throw new Error(`${source} node[${idx}] is missing a string name`);
     }
+    if (typeof node.id !== 'string') {
+      throw new Error(`${source} node[${idx}] is missing a stable string id`);
+    }
+    if (node.stablePath !== undefined && typeof node.stablePath !== 'string') {
+      throw new Error(`${source} node[${idx}] stablePath must be a string`);
+    }
+    if (node.runtimeId !== undefined && typeof node.runtimeId !== 'string') {
+      throw new Error(`${source} node[${idx}] runtimeId must be a string`);
+    }
     if (typeof node.type !== 'string') {
       throw new Error(`${source} node[${idx}] is missing a string type`);
     }
     if (!Array.isArray(node.deps)) {
       throw new Error(`${source} node[${idx}] is missing a deps array`);
+    }
+    if (node.depPaths !== undefined && !Array.isArray(node.depPaths)) {
+      throw new Error(`${source} node[${idx}] depPaths must be an array when present`);
     }
   }
 
@@ -46,6 +58,66 @@ export function validateSnapshot(value: unknown, source = 'snapshot'): GraphSnap
     }
     if (typeof edge.from !== 'string' || typeof edge.to !== 'string') {
       throw new Error(`${source} edge[${idx}] must have string from/to fields`);
+    }
+  }
+
+  if (snapshot.events !== undefined) {
+    if (!Array.isArray(snapshot.events)) {
+      throw new Error(`${source} events must be an array when present`);
+    }
+    for (const [idx, event] of snapshot.events.entries()) {
+      if (!event || typeof event !== 'object') {
+        throw new Error(`${source} event[${idx}] is not an object`);
+      }
+      if (typeof event.type !== 'string') {
+        throw new Error(`${source} event[${idx}] is missing a string type`);
+      }
+      if (typeof event.nodeId !== 'string') {
+        throw new Error(`${source} event[${idx}] is missing a string nodeId`);
+      }
+      if (typeof event.tick !== 'number') {
+        throw new Error(`${source} event[${idx}] is missing a numeric tick`);
+      }
+      if (event.seq !== undefined && typeof event.seq !== 'number') {
+        throw new Error(`${source} event[${idx}] seq must be numeric`);
+      }
+    }
+  }
+
+  if (snapshot.operations !== undefined) {
+    if (!Array.isArray(snapshot.operations)) {
+      throw new Error(`${source} operations must be an array when present`);
+    }
+    for (const [idx, op] of snapshot.operations.entries()) {
+      if (!op || typeof op !== 'object') {
+        throw new Error(`${source} operation[${idx}] is not an object`);
+      }
+      if (typeof op.id !== 'string' || typeof op.name !== 'string' || typeof op.status !== 'string') {
+        throw new Error(`${source} operation[${idx}] must have string id/name/status`);
+      }
+      if (typeof op.startedAtTick !== 'number') {
+        throw new Error(`${source} operation[${idx}] is missing startedAtTick`);
+      }
+      if (!Array.isArray(op.events)) {
+        throw new Error(`${source} operation[${idx}] is missing events array`);
+      }
+    }
+  }
+
+  if (snapshot.operationModels !== undefined) {
+    if (!Array.isArray(snapshot.operationModels)) {
+      throw new Error(`${source} operationModels must be an array when present`);
+    }
+    for (const [idx, model] of snapshot.operationModels.entries()) {
+      if (!model || typeof model !== 'object') {
+        throw new Error(`${source} operationModel[${idx}] is not an object`);
+      }
+      if (typeof model.id !== 'string' || typeof model.name !== 'string') {
+        throw new Error(`${source} operationModel[${idx}] must have string id/name`);
+      }
+      if (!Array.isArray(model.outcomes)) {
+        throw new Error(`${source} operationModel[${idx}] is missing outcomes array`);
+      }
     }
   }
 
@@ -104,6 +176,7 @@ export function formatSnapshotSummary(snapshot: GraphSnapshot): string {
     `Events: ${snapshot.events?.length ?? 0}`,
     `Waveforms: ${waveformCount}`,
     `Operations: ${snapshot.operations?.length ?? 0}`,
+    `Operation models: ${snapshot.operationModels?.length ?? 0}`,
   ];
 
   if (snapshot.disposedNodes && snapshot.disposedNodes.length > 0) {

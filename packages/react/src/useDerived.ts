@@ -3,6 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { ReadonlySignal, Signal, CircuitGraph } from '@veriscope/graph';
 
 interface UseDerivedOptions {
+  stablePath?: string;
+  scope?: string;
   graph?: CircuitGraph;
 }
 
@@ -34,10 +36,13 @@ export function useDerived<T>(
 
   // Register in graph once
   if (nodeIdRef.current === null) {
+    const metadata = options?.scope ? { scope: options.scope } : undefined;
     nodeIdRef.current = graphRef.current.registerNode({
       name,
       type: 'derived',
       deps: deps.map(d => d.nodeId),
+      stablePath: options?.stablePath,
+      metadata,
       computeFn: computeForGraph,
     });
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
@@ -60,10 +65,13 @@ export function useDerived<T>(
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
     if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      const metadata = options?.scope ? { scope: options.scope } : undefined;
       nodeIdRef.current = graphRef.current.registerNode({
         name,
         type: 'derived',
         deps: deps.map(d => d.nodeId),
+        stablePath: options?.stablePath,
+        metadata,
         computeFn: computeForGraph,
       });
       graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);

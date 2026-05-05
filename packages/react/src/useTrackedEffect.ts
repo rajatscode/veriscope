@@ -3,6 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { Signal, ReadonlySignal, CircuitGraph } from '@veriscope/graph';
 
 interface UseTrackedEffectOptions {
+  stablePath?: string;
+  scope?: string;
   graph?: CircuitGraph;
 }
 
@@ -23,10 +25,13 @@ export function useTrackedEffect(
 
   // Register in graph once
   if (nodeIdRef.current === null) {
+    const metadata = options?.scope ? { scope: options.scope } : undefined;
     nodeIdRef.current = graphRef.current.registerNode({
       name,
       type: 'effect',
       deps: deps.map(d => d.nodeId),
+      stablePath: options?.stablePath,
+      metadata,
     });
   }
 
@@ -43,10 +48,13 @@ export function useTrackedEffect(
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
     if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+      const metadata = options?.scope ? { scope: options.scope } : undefined;
       nodeIdRef.current = graphRef.current.registerNode({
         name,
         type: 'effect',
         deps: deps.map(d => d.nodeId),
+        stablePath: options?.stablePath,
+        metadata,
       });
     }
     return () => {

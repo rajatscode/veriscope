@@ -3,6 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { CircuitGraph, Signal, ReadonlySignal } from '@veriscope/graph';
 
 interface UseTrackedEffectOptions {
+  stablePath?: string;
+  scope?: string;
   graph?: CircuitGraph;
 }
 
@@ -22,6 +24,8 @@ export function useTrackedEffect(
     name,
     type: 'effect',
     deps: deps.map(d => d.nodeId),
+    stablePath: options?.stablePath,
+    metadata: options?.scope ? { scope: options.scope } : undefined,
   });
 
   let cleanup: (() => void) | void;
