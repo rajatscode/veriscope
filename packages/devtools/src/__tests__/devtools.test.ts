@@ -124,7 +124,7 @@ beforeEach(() => {
 });
 
 describe('mountDevtools', () => {
-  it('mounts the four product tabs and redraws Circuit on graph events', () => {
+  it('mounts the product tabs and redraws Circuit on graph events', () => {
     const graph = new CircuitGraph();
     graph.registerNode({ name: 'first', type: 'signal' });
 
@@ -134,6 +134,7 @@ describe('mountDevtools', () => {
 
     expect(host.textContent).toContain('Circuit');
     expect(host.textContent).toContain('Waveform');
+    expect(host.textContent).toContain('Live Assertions');
     expect(host.textContent).toContain('Autotest');
     expect(host.textContent).toContain('Mutants');
     expect(canvasText).toContain('first');
@@ -141,6 +142,37 @@ describe('mountDevtools', () => {
     canvasText.length = 0;
     graph.registerNode({ name: 'second', type: 'derived', deps: [] });
     expect(canvasText).toContain('second');
+
+    handle.dispose();
+  });
+
+  it('shows recent Circuit graph activity from signal and derived events', () => {
+    const graph = new CircuitGraph();
+    let ready = false;
+    const readyId = graph.registerNode({ name: 'ready', type: 'signal' });
+    graph.setNodeValue(readyId, () => ready);
+    graph.setNodeSetter(readyId, value => {
+      ready = value;
+    });
+    graph.registerNode({
+      name: 'canStart',
+      type: 'derived',
+      deps: [readyId],
+      computeFn: () => ready,
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
+
+    expect(host.textContent).toContain('Live tick 0 · idle');
+
+    graph.driveNodeValue(readyId, true);
+    handle.refresh();
+
+    expect(host.textContent).toContain('derived-recompute · canStart');
+    expect(host.textContent).toContain('active nodes');
+    expect(host.textContent).toContain('active edges');
 
     handle.dispose();
   });
@@ -221,8 +253,6 @@ describe('mountDevtools', () => {
     const graph = new CircuitGraph();
     const assertionId = graph.registerNode({ name: 'invariant', type: 'assertion' });
     graph.setAssertionFn(assertionId, () => true, 'always');
-    const operationId = graph.beginOperation('loadUser', { outcomes: ['resolved', 'rejected'] });
-    graph.resolveOperation(operationId, { id: 1 });
     const autotest = vi.fn(async () => autotestResult('factory-assertion-id'));
 
     const host = document.createElement('div');
@@ -233,8 +263,6 @@ describe('mountDevtools', () => {
     await flushPromises();
 
     expect(autotest).toHaveBeenCalledWith(graph, expect.objectContaining({ name: 'devtools-autotest' }));
-    expect(host.textContent).toContain('Operations (1)');
-    expect(host.textContent).toContain('loadUser');
     expect(host.textContent).toContain('Autotest Results');
     expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
     expect(host.textContent).toContain('Assertion Results (1 passed, 0 failed)');
@@ -243,6 +271,39 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Failing Cases (0)');
     expect(host.textContent).toContain('scenario-1');
     expect(host.textContent).toContain('1 passed');
+    expect(host.textContent).not.toContain('Operations');
+
+    handle.dispose();
+  });
+
+  it('keeps live assertion checks out of the Autotest tab', async () => {
+    const graph = new CircuitGraph();
+    const assertionId = graph.registerNode({ name: 'live-only', type: 'assertion' });
+    graph.setAssertionFn(assertionId, () => true, 'always');
+    const operationId = graph.beginOperation('loadUser', { outcomes: ['resolved', 'rejected'] });
+    graph.resolveOperation(operationId, { id: 1 });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'live-assertions', coverage });
+
+    buttonByText(host, 'Check Live').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(host.textContent).toContain('Live Assertions');
+    expect(host.textContent).toContain('live-only');
+    expect(host.textContent).toContain('P:1 F:0');
+    expect(host.textContent).toContain('Operations (1)');
+    expect(host.textContent).toContain('loadUser');
+
+    handle.setTab('autotest');
+
+    const autotestEmpty = [...host.querySelectorAll<HTMLElement>('div')]
+      .find(el => el.textContent === 'No autotest runner registered.');
+    expect(autotestEmpty).toBeDefined();
+    const autotestText = autotestEmpty!.parentElement!.textContent ?? '';
+    expect(autotestText).toContain('No autotest runner registered.');
+    expect(autotestText).not.toContain('P:1 F:0');
+    expect(autotestText).not.toContain('Operations (1)');
 
     handle.dispose();
   });
@@ -298,8 +359,6 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('case-pass');
     expect(host.textContent).toContain('Failing Cases (1)');
     expect(host.textContent).toContain('case-fail');
-    expect(host.textContent).toContain('P:1 F:0');
-    expect(host.textContent).toContain('P:0 F:1');
 
     handle.dispose();
   });

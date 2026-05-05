@@ -7,6 +7,7 @@ import { createTabLayout } from './layout.js';
 import { createWaveformPanel } from './waveform.js';
 import { createVisualizerPanel } from './visualizer.js';
 import { createAssertionsPanel } from './assertions.js';
+import { createLiveAssertionsPanel } from './liveAssertions.js';
 import { createMutantsPanel } from './mutants.js';
 
 export type { TabId } from './layout.js';
@@ -69,7 +70,7 @@ export interface DevtoolsOptions {
   /** Mutation runner callback, normally backed by @veriscope/mutate. Enables the Mutants tab. */
   mutate?: () => Promise<MutateResult>;
   /** Initial active tab */
-  initialTab?: 'circuit' | 'waveform' | 'autotest' | 'mutants' | 'graph' | 'assertions' | 'coverage';
+  initialTab?: 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants' | 'graph' | 'assertions' | 'coverage';
   /** Height of the devtools panel (default: '360px') */
   height?: string;
 }
@@ -80,7 +81,7 @@ export interface DevtoolsHandle {
   /** Force refresh all panels */
   refresh: () => void;
   /** Switch to a specific tab */
-  setTab: (tab: 'circuit' | 'waveform' | 'autotest' | 'mutants') => void;
+  setTab: (tab: 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants') => void;
 }
 
 /**
@@ -112,6 +113,10 @@ export function mountDevtools(
   const waveform = createWaveformPanel(waveformContainer, graph);
   disposers.push(waveform.dispose);
 
+  // Live assertions panel
+  const liveAssertionsContainer = layout.contentPanels.get('live-assertions')!;
+  let liveAssertions: ReturnType<typeof createLiveAssertionsPanel> | null = null;
+
   // Autotest panel
   const autotestContainer = layout.contentPanels.get('autotest')!;
   let autotest: ReturnType<typeof createAssertionsPanel> | null = null;
@@ -132,9 +137,14 @@ export function mountDevtools(
       autotest = createAssertionsPanel(autotestContainer, graph, {
         autotest: options?.autotest,
         explore: options?.explore,
-        coverage: options?.coverage,
       });
       disposers.push(autotest.dispose);
+    }
+    if (tab === 'live-assertions' && !liveAssertions) {
+      liveAssertions = createLiveAssertionsPanel(liveAssertionsContainer, graph, {
+        coverage: options?.coverage,
+      });
+      disposers.push(liveAssertions.dispose);
     }
     if (tab === 'mutants' && !mutants) {
       mutants = createMutantsPanel(mutantsContainer, { mutate: options?.mutate });
@@ -148,6 +158,7 @@ export function mountDevtools(
     // Refresh the newly active panel
     if (tab === 'circuit') visualizer?.refresh();
     if (tab === 'waveform') waveform.refresh();
+    if (tab === 'live-assertions') liveAssertions?.refresh();
     if (tab === 'autotest') autotest?.refresh();
     if (tab === 'mutants') mutants?.refresh();
   });
@@ -164,6 +175,7 @@ export function mountDevtools(
     refresh() {
       if (activeTab === 'circuit') visualizer?.refresh();
       if (activeTab === 'waveform') waveform.refresh();
+      if (activeTab === 'live-assertions') liveAssertions?.refresh();
       if (activeTab === 'autotest') autotest?.refresh();
       if (activeTab === 'mutants') mutants?.refresh();
     },
@@ -174,8 +186,9 @@ export function mountDevtools(
   };
 }
 
-function normalizeTab(tab: NonNullable<DevtoolsOptions['initialTab']>): 'circuit' | 'waveform' | 'autotest' | 'mutants' {
+function normalizeTab(tab: NonNullable<DevtoolsOptions['initialTab']>): 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants' {
   if (tab === 'graph') return 'circuit';
-  if (tab === 'assertions' || tab === 'coverage') return 'autotest';
+  if (tab === 'assertions') return 'live-assertions';
+  if (tab === 'coverage') return 'autotest';
   return tab;
 }

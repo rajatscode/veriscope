@@ -1,6 +1,6 @@
-// layout.ts — Tab layout: Circuit | Waveform | Autotest | Mutants
+// layout.ts — Tab layout: Circuit | Waveform | Live Assertions | Autotest | Mutants
 
-export type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
+export type TabId = 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants';
 
 export interface TabDefinition {
   id: TabId;
@@ -10,6 +10,7 @@ export interface TabDefinition {
 const TABS: TabDefinition[] = [
   { id: 'circuit', label: 'Circuit' },
   { id: 'waveform', label: 'Waveform' },
+  { id: 'live-assertions', label: 'Live Assertions' },
   { id: 'autotest', label: 'Autotest' },
   { id: 'mutants', label: 'Mutants' },
 ];

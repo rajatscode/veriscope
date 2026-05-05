@@ -15,6 +15,7 @@ const NODE_H = 50;
 const PADDING = 40;
 const PLAYER_GROUP_THRESHOLD = 80;
 const MIN_DRAW_INTERVAL_MS = 120;
+const ACTIVITY_TTL_MS = 1400;
 const PLAYER_METRIC_RE = /^p\d+\.(score|lines|pendingGarbage|lastSent|lastReceived|stackHeight|alive|ko|piece)$/;
 
 interface LayoutNode {
@@ -39,11 +40,19 @@ interface DisplayModel {
   nodes: DisplayNode[];
   edges: GraphEdge[];
   groupedMembers: number;
+  displayIdByNodeId: Map<string, string>;
 }
 
 interface VisualizerOptions {
   isActive?: () => boolean;
   maxFps?: number;
+}
+
+interface ActivityPulse {
+  expiresAt: number;
+  tick: number;
+  color: string;
+  label: string;
 }
 
 function compactText(value: string, max: number): string {
@@ -61,9 +70,19 @@ function formatNodeValue(value: unknown): string {
   return String(value);
 }
 
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+}
+
 function displayModel(graph: CircuitGraph): DisplayModel {
   const nodes = graph.getNodes();
   const edges = graph.getEdges();
+  const identityMap = new Map(nodes.map(node => [node.id, node.id]));
 
   if (nodes.length < PLAYER_GROUP_THRESHOLD) {
     return {
@@ -75,6 +94,7 @@ function displayModel(graph: CircuitGraph): DisplayModel {
       })),
       edges,
       groupedMembers: 0,
+      displayIdByNodeId: identityMap,
     };
   }
 
@@ -99,6 +119,7 @@ function displayModel(graph: CircuitGraph): DisplayModel {
       })),
       edges,
       groupedMembers: 0,
+      displayIdByNodeId: identityMap,
     };
   }
 
@@ -108,6 +129,7 @@ function displayModel(graph: CircuitGraph): DisplayModel {
 
   for (const node of nodes) {
     if (groupedNodeIds.has(node.id)) continue;
+    groupIdByNode.set(node.id, node.id);
     displayNodes.push({
       id: node.id,
       name: node.name,
@@ -141,7 +163,7 @@ function displayModel(graph: CircuitGraph): DisplayModel {
     displayEdges.push({ from, to });
   }
 
-  return { nodes: displayNodes, edges: displayEdges, groupedMembers };
+  return { nodes: displayNodes, edges: displayEdges, groupedMembers, displayIdByNodeId: groupIdByNode };
 }
 
 function unique<T>(values: T[]): T[] {
@@ -270,12 +292,17 @@ export function createVisualizerPanel(
   let disposed = false;
   let layoutResult: LayoutNode[] = [];
   let displayEdges: GraphEdge[] = [];
+  let displayIdByNodeId = new Map<string, string>();
   let groupedMembers = 0;
   let layoutDirty = true;
   let frameRequested = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let fadeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastDrawAt = 0;
   let pendingWhileInactive = false;
+  let lastEventLabel = 'idle';
+  const nodeActivity = new Map<string, ActivityPulse>();
+  const edgeActivity = new Map<string, ActivityPulse>();
   const minDrawInterval = Math.max(16, Math.floor(1000 / (options?.maxFps ?? Math.round(1000 / MIN_DRAW_INTERVAL_MS))));
 
   function isActive() {
@@ -310,17 +337,79 @@ export function createVisualizerPanel(
     });
   }
 
+  function displayId(rawNodeId: string): string {
+    return displayIdByNodeId.get(rawNodeId) ?? rawNodeId;
+  }
+
+  function edgeKey(from: string, to: string): string {
+    return `${from}->${to}`;
+  }
+
+  function colorForEvent(event: GraphEvent): string {
+    if (event.type === 'assertion-failed') return '#ff5d8f';
+    if (event.type === 'assertion-armed') return '#f8d66d';
+    if (event.type === 'assertion-passed') return '#72f1b8';
+    if (event.type === 'effect-run') return '#7ee787';
+    if (event.type === 'derived-recompute') return '#b197fc';
+    return '#6ee7f9';
+  }
+
+  function markActivity(event: GraphEvent) {
+    const now = Date.now();
+    const color = colorForEvent(event);
+    const label = `${event.type} · ${event.metadata?.name ?? graph.getNode(event.nodeId)?.name ?? event.nodeId}`;
+    const pulse = { expiresAt: now + ACTIVITY_TTL_MS, tick: event.tick, color, label };
+    const eventDisplayId = displayId(event.nodeId);
+    nodeActivity.set(eventDisplayId, pulse);
+    lastEventLabel = label;
+
+    for (const edge of graph.getEdges()) {
+      if (edge.from !== event.nodeId && edge.to !== event.nodeId) continue;
+      const from = displayId(edge.from);
+      const to = displayId(edge.to);
+      if (from === to) continue;
+      edgeActivity.set(edgeKey(from, to), pulse);
+    }
+
+    scheduleFadeClear();
+  }
+
+  function scheduleFadeClear() {
+    if (fadeTimer || disposed) return;
+    fadeTimer = setTimeout(() => {
+      fadeTimer = null;
+      scheduleDraw(false);
+      if (nodeActivity.size > 0 || edgeActivity.size > 0) scheduleFadeClear();
+    }, ACTIVITY_TTL_MS + 20);
+  }
+
+  function pruneActivity(now: number) {
+    for (const [id, pulse] of nodeActivity) {
+      if (pulse.expiresAt <= now) nodeActivity.delete(id);
+    }
+    for (const [id, pulse] of edgeActivity) {
+      if (pulse.expiresAt <= now) edgeActivity.delete(id);
+    }
+  }
+
+  function pulseAlpha(pulse: ActivityPulse, now: number): number {
+    return Math.max(0, Math.min(1, (pulse.expiresAt - now) / ACTIVITY_TTL_MS));
+  }
+
   function draw() {
     if (disposed || !isActive()) {
       pendingWhileInactive = true;
       return;
     }
     lastDrawAt = Date.now();
+    const now = lastDrawAt;
+    pruneActivity(now);
     pendingWhileInactive = false;
     if (layoutDirty) {
       const model = displayModel(graph);
       layoutResult = layoutNodes(model);
       displayEdges = model.edges;
+      displayIdByNodeId = model.displayIdByNodeId;
       groupedMembers = model.groupedMembers;
       layoutDirty = false;
     }
@@ -343,10 +432,11 @@ export function createVisualizerPanel(
     }
     canvas.style.width = `${maxX}px`;
     canvas.style.height = `${maxY}px`;
-    status.style.display = groupedMembers > 0 ? 'block' : 'none';
+    status.style.display = 'block';
+    const activityText = `Live tick ${graph.currentTick} · ${lastEventLabel} · ${nodeActivity.size} active nodes · ${edgeActivity.size} active edges`;
     status.textContent = groupedMembers > 0
-      ? `Grouped ${groupedMembers} repeated player metric nodes. Hover a player metrics node for values.`
-      : '';
+      ? `${activityText} · Grouped ${groupedMembers} repeated player metric nodes`
+      : activityText;
 
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -368,7 +458,15 @@ export function createVisualizerPanel(
       const to = nodePositions.get(edge.to);
       if (!from || !to) continue;
 
-      ctx.strokeStyle = 'rgba(110,231,249,0.25)';
+      const active = edgeActivity.get(edgeKey(edge.from, edge.to));
+      if (active) {
+        const alpha = pulseAlpha(active, now);
+        ctx.strokeStyle = hexToRgba(active.color, 0.28 + alpha * 0.62);
+        ctx.lineWidth = 1.2 + alpha * 2.2;
+      } else {
+        ctx.strokeStyle = 'rgba(110,231,249,0.25)';
+        ctx.lineWidth = 1;
+      }
       ctx.beginPath();
       const x1 = from.x + NODE_W;
       const y1 = from.y + NODE_H / 2;
@@ -382,7 +480,7 @@ export function createVisualizerPanel(
 
       // Arrow head
       const angle = Math.atan2(y2 - (y2 - (y2 - y1) * 0.1), x2 - (x2 - cp));
-      ctx.fillStyle = 'rgba(110,231,249,0.4)';
+      ctx.fillStyle = active ? hexToRgba(active.color, 0.42 + pulseAlpha(active, now) * 0.44) : 'rgba(110,231,249,0.4)';
       ctx.beginPath();
       ctx.moveTo(x2, y2);
       ctx.lineTo(x2 - 8 * Math.cos(angle - 0.3), y2 - 8 * Math.sin(angle - 0.3));
@@ -394,11 +492,15 @@ export function createVisualizerPanel(
     // Draw nodes
     for (const n of layoutResult) {
       const color = NODE_COLORS[n.type] ?? '#c9d1d9';
+      const active = nodeActivity.get(n.id);
+      const activeAlpha = active ? pulseAlpha(active, now) : 0;
 
       // Box
       ctx.fillStyle = '#161b22';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = active ? active.color : color;
+      ctx.lineWidth = active ? 1.8 + activeAlpha * 2.2 : 1.5;
+      ctx.shadowColor = active ? active.color : 'transparent';
+      ctx.shadowBlur = active ? 14 * activeAlpha : 0;
       ctx.beginPath();
       const r = 4;
       ctx.moveTo(n.x + r, n.y);
@@ -413,12 +515,22 @@ export function createVisualizerPanel(
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+      ctx.shadowBlur = 0;
 
       // Type badge
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.15;
       ctx.fillRect(n.x + 1, n.y + 1, NODE_W - 2, NODE_H - 2);
       ctx.globalAlpha = 1;
+
+      if (active) {
+        ctx.fillStyle = hexToRgba(active.color, 0.18 + activeAlpha * 0.24);
+        ctx.fillRect(n.x + 3, n.y + 3, NODE_W - 6, NODE_H - 6);
+        ctx.fillStyle = active.color;
+        ctx.beginPath();
+        ctx.arc(n.x + NODE_W - 10, n.y + 10, 3 + activeAlpha * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // Label and current value. Showing values in-canvas makes graph redraws
       // visibly live without requiring hover/tooltips.
@@ -486,6 +598,7 @@ export function createVisualizerPanel(
       event.type === 'assertion-passed' ||
       event.type === 'assertion-failed'
     ) {
+      markActivity(event);
       scheduleDraw(false);
     }
   });
@@ -496,6 +609,7 @@ export function createVisualizerPanel(
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);
+      if (fadeTimer) clearTimeout(fadeTimer);
       unsubscribe();
       container.innerHTML = '';
     },
