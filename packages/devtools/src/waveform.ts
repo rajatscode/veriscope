@@ -700,7 +700,7 @@ function createHierarchyBrowser(
   signals: WaveformSignal[],
   onToggleVisibility: (signalId: string) => void,
   onToggleRenderMode: (signalId: string) => void,
-): { update: () => void; dispose: () => void } {
+): { update: (nextSignals?: WaveformSignal[]) => void; dispose: () => void } {
   const panel = document.createElement('div');
   panel.style.cssText = `
     display:flex; flex-direction:column; gap:0;
@@ -711,10 +711,11 @@ function createHierarchyBrowser(
 
   interface HierGroup { name: string; signals: WaveformSignal[]; collapsed: boolean; }
   const groups = new Map<string, HierGroup>();
+  let currentSignals = signals;
 
   function buildGroups() {
     groups.clear();
-    for (const sig of signals) {
+    for (const sig of currentSignals) {
       let group = groups.get(sig.group);
       if (!group) {
         group = { name: sig.group, signals: [], collapsed: false };
@@ -780,7 +781,11 @@ function createHierarchyBrowser(
   render();
 
   return {
-    update() { buildGroups(); render(); },
+    update(nextSignals?: WaveformSignal[]) {
+      if (nextSignals) currentSignals = nextSignals;
+      buildGroups();
+      render();
+    },
     dispose() { panel.remove(); },
   };
 }
@@ -1161,7 +1166,7 @@ export function createWaveformPanel(
         if (modeMap.has(s.id)) s.renderMode = modeMap.get(s.id)!;
       }
       signals = newSignals;
-      hierarchyBrowser.update();
+      hierarchyBrowser.update(signals);
       resize();
       lastContainerWidth = canvasWrap.clientWidth;
     }
@@ -1198,7 +1203,7 @@ export function createWaveformPanel(
     dispose,
     refresh() {
       signals = buildSignalList(graph);
-      hierarchyBrowser.update();
+      hierarchyBrowser.update(signals);
       resize();
       draw();
     },

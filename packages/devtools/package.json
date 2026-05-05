@@ -13,10 +13,13 @@
     "@veriscope/graph": "*"
   },
   "devDependencies": {
+    "jsdom": "^25.0.1",
     "tsup": "^8.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "vitest run"
   }
 }
