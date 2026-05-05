@@ -21,6 +21,23 @@ describe('CoverageCollector', () => {
     expect(report.transitions[0].transitions.size).toBe(2);
   });
 
+  it('includes FSM transitions in summary and reports missing transition gaps', () => {
+    const c = new CoverageCollector();
+    c.enable();
+    c.recordTransition('fsm1', 'idle', 'loading');
+    c.recordTransition('fsm1', 'loading', 'success');
+
+    const report = c.getReport();
+
+    expect(report.summary.totalPoints).toBe(6);
+    expect(report.summary.coveredPoints).toBe(2);
+    expect(report.gaps).toContainEqual({
+      kind: 'transition',
+      id: 'fsm1',
+      missing: ['idle->success', 'loading->idle', 'success->idle', 'success->loading'],
+    });
+  });
+
   it('does nothing when disabled', () => {
     const c = new CoverageCollector();
     c.recordToggle('sig1', true);

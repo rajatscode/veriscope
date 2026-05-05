@@ -8,6 +8,13 @@ export interface Violation {
   sequence: Array<{ signal: string; value: any }>;
 }
 
+export interface ScenarioObservation {
+  type: 'signal-change' | 'derived-recompute' | 'assertion-armed' | 'assertion-passed' | 'assertion-failed';
+  node: string;
+  oldValue?: any;
+  newValue?: any;
+}
+
 export interface ScenarioTrace {
   id: string;
   kind: 'enumerated' | 'current-state' | 'coverage-completion' | 'adversarial';
@@ -15,6 +22,7 @@ export interface ScenarioTrace {
   steps: Array<{ signal: string; value: any }>;
   assertions: string[];
   violations: string[];
+  observations?: ScenarioObservation[];
 }
 
 export interface ExploreOptions {

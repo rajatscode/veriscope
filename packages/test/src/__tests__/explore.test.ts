@@ -205,6 +205,38 @@ describe('explore', () => {
     expect(result.coverage.overall.total).toBeGreaterThan(0);
   });
 
+  it('drives FSM state pairs for transition coverage completion', async () => {
+    const g = new CircuitGraph();
+    let modeVal = 'idle';
+
+    const mode = g.registerNode({
+      name: 'mode',
+      type: 'signal',
+      metadata: { states: ['idle', 'loading', 'success'] },
+    });
+    g.setNodeValue(mode, () => modeVal);
+    g.setNodeSetter(mode, (v: string) => {
+      modeVal = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'mode-valid',
+      type: 'assertion',
+      deps: [mode],
+      assertionMetadata: {
+        domains: { [mode]: ['idle', 'loading', 'success'] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => ['idle', 'loading', 'success'].includes(modeVal), 'always');
+
+    const result = await explore(g, { budget: 50 });
+
+    expect(result.coverage.transitions.total).toBe(6);
+    expect(result.coverage.transitions.covered).toBe(6);
+    expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(false);
+  });
+
   it('reports uncovered coverage gaps with explicit denominators', async () => {
     const g = new CircuitGraph();
     let flagVal = false;
@@ -553,6 +585,87 @@ describe('explore — adversarial mode', () => {
     // The adversarial pass should find the violation: loading=true, error=true
     const violation = result.violations.find(v => v.assertionName === 'no-loading-and-error');
     expect(violation).toBeDefined();
+  });
+
+  it('uses declared metadata before function-source parsing in adversarial mode', async () => {
+    const g = new CircuitGraph();
+
+    let badVal = false;
+    const bad = g.registerNode({ name: 'bad', type: 'signal' });
+    g.setNodeValue(bad, () => badVal);
+    g.setNodeSetter(bad, (v: boolean) => { badVal = v; });
+
+    const deps = [bad];
+    for (let i = 0; i < 16; i++) {
+      let value = false;
+      const id = g.registerNode({ name: `irrelevant${i}`, type: 'signal' });
+      g.setNodeValue(id, () => value);
+      g.setNodeSetter(id, (v: boolean) => { value = v; });
+      deps.push(id);
+    }
+
+    const checkFn = () => !badVal;
+    Object.defineProperty(checkFn, 'toString', { value: () => '() => opaqueProductionBundle()' });
+    const assertId = g.registerNode({
+      name: 'metadata-breaks-without-parsing',
+      type: 'assertion',
+      deps,
+      assertionMetadata: {
+        checkDeps: [bad],
+        domains: { [bad]: [false, true] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, checkFn, 'always');
+
+    const result = await explore(g, { budget: 100 });
+
+    expect(result.violations.some(v => v.assertionName === 'metadata-breaks-without-parsing')).toBe(true);
+    expect(result.scenarios.some(s =>
+      s.kind === 'adversarial'
+      && s.steps.some(step => step.signal === 'bad' && step.value === true),
+    )).toBe(true);
+  });
+
+  it('adversarially tests assertAfter by creating trigger/property sequences', async () => {
+    const g = new CircuitGraph();
+
+    let triggerVal = true;
+    const trigger = g.registerNode({ name: 'trigger', type: 'signal' });
+    g.setNodeValue(trigger, () => triggerVal);
+    g.setNodeSetter(trigger, (v: boolean) => { triggerVal = v; });
+
+    let readyVal = false;
+    const ready = g.registerNode({ name: 'ready', type: 'signal' });
+    g.setNodeValue(ready, () => readyVal);
+    g.setNodeSetter(ready, (v: boolean) => { readyVal = v; });
+
+    const assertId = assertAfter(
+      { nodeId: trigger },
+      'posedge',
+      'immediately',
+      () => readyVal,
+      { name: 'trigger-requires-ready' },
+      g,
+    );
+    g.setAssertionMetadata(assertId, {
+      triggerDeps: [trigger],
+      checkDeps: [ready],
+      domains: {
+        [trigger]: [true],
+        [ready]: [false],
+      },
+      partial: false,
+    });
+
+    const result = await explore(g, { budget: 30 });
+
+    expect(result.violations.some(v => v.assertionName === 'trigger-requires-ready')).toBe(true);
+    expect(result.scenarios.some(s =>
+      s.kind === 'adversarial'
+      && s.violations.includes('trigger-requires-ready')
+      && s.observations?.some(obs => obs.type === 'assertion-armed' && obs.node === 'trigger-requires-ready'),
+    )).toBe(true);
   });
 
   it('does not report violations for unbreakable assertions', async () => {

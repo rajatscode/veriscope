@@ -22,6 +22,10 @@ function formatScenarioValue(value: unknown): string {
   return String(value);
 }
 
+function formatObservationValue(value: unknown): string {
+  return formatScenarioValue(value);
+}
+
 function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLElement {
   const item = document.createElement('div');
   item.style.cssText = 'padding:5px 6px; margin-top:4px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:3px; font-size:0.68rem;';
@@ -59,6 +63,32 @@ function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLE
     failedLine.style.cssText = 'color:#ff5d8f; margin-top:2px; overflow-wrap:anywhere;';
     failedLine.textContent = `failed assertions: ${failedAssertions.join(', ')}`;
     item.appendChild(failedLine);
+  }
+
+  const propagations = scenario.observations?.filter(obs => obs.type === 'derived-recompute') ?? [];
+  if (propagations.length > 0) {
+    const propagationLine = document.createElement('div');
+    propagationLine.style.cssText = 'color:#a78bfa; margin-top:2px; overflow-wrap:anywhere;';
+    propagationLine.textContent = `propagated: ${propagations.slice(0, 4).map(obs =>
+      `${obs.node} ${formatObservationValue(obs.oldValue)} -> ${formatObservationValue(obs.newValue)}`,
+    ).join(', ')}${propagations.length > 4 ? ` +${propagations.length - 4} more` : ''}`;
+    item.appendChild(propagationLine);
+  }
+
+  const assertionObservations = scenario.observations?.filter(obs =>
+    obs.type === 'assertion-armed' || obs.type === 'assertion-passed' || obs.type === 'assertion-failed',
+  ) ?? [];
+  const temporalEvents = [
+    ...assertionObservations.filter(obs => obs.type === 'assertion-armed' || obs.type === 'assertion-failed'),
+    ...assertionObservations.filter(obs => obs.type === 'assertion-passed'),
+  ];
+  if (temporalEvents.length > 0) {
+    const temporalLine = document.createElement('div');
+    temporalLine.style.cssText = 'color:#f8d66d; margin-top:2px; overflow-wrap:anywhere;';
+    temporalLine.textContent = `assertion events: ${temporalEvents.slice(0, 5).map(obs =>
+      `${obs.type.replace('assertion-', '')}:${obs.node}`,
+    ).join(', ')}${temporalEvents.length > 5 ? ` +${temporalEvents.length - 5} more` : ''}`;
+    item.appendChild(temporalLine);
   }
 
   return item;
@@ -135,8 +165,18 @@ export function createAssertionsPanel(
         <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Autotest Results</div>
         <div style="color:#8b949e;">Status: <span style="color:${status === 'failed' ? '#ff5d8f' : '#72f1b8'}">${status}</span> · Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
         <div style="color:#8b949e; margin-top:4px;">Coverage: ${coverage.overall.percentage.toFixed(1)}% (${coverage.overall.covered}/${coverage.overall.total}) · Gaps: ${coverage.gaps.length}</div>
+        <div style="color:#8b949e; margin-top:4px;">Breakdown: toggles ${coverage.toggle.covered}/${coverage.toggle.total}, transitions ${coverage.transitions.covered}/${coverage.transitions.total}, cross ${coverage.cross.covered}/${coverage.cross.total}, operations ${coverage.operations.covered}/${coverage.operations.total}</div>
         <div style="color:#8b949e; margin-top:4px;">${generatedBy}</div>
+        <div style="color:#8b949e; margin-top:4px;">Each case lists driven roots, propagated derived recomputes, temporal assertion events, and failed assertions when present.</div>
       `;
+      if (coverage.gaps.length > 0) {
+        const gapList = document.createElement('div');
+        gapList.style.cssText = 'color:#f8d66d; margin-top:4px; overflow-wrap:anywhere;';
+        gapList.textContent = `Missing coverage: ${coverage.gaps.slice(0, 6).map(gap =>
+          `${gap.kind}:${gap.id} missing ${gap.missing.slice(0, 4).join('|')}${gap.missing.length > 4 ? '+more' : ''}`,
+        ).join('; ')}${coverage.gaps.length > 6 ? `; +${coverage.gaps.length - 6} more gaps` : ''}`;
+        resultBox.appendChild(gapList);
+      }
       if (isAutotestResult(lastRunResult)) {
         const partials = lastRunResult.assertions.filter(assertion => assertion.partialCoverage);
         const partialLine = document.createElement('div');

@@ -1,9 +1,9 @@
 // explore.ts — Main explore() function: backward-cone-driven state exploration
 
-import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport } from '@veriscope/graph';
+import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport, type GraphEvent } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
 import { parseComputeFn } from './fn-parser.js';
-import type { ExploreOptions, ExploreResult, Violation } from './types.js';
+import type { ExploreOptions, ExploreResult, ScenarioTrace, Violation } from './types.js';
 
 /**
  * Explore the state space of a reactive graph by:
@@ -142,6 +142,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             return valueForDomainIndex(boolIdx, boolRoots, boolDomains, j, values);
           });
 
+          const eventMarker = markEvents(graph);
           graph.openTick();
 
           // Set boolean roots
@@ -165,6 +166,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           // Check assertions
           const v = graph.checkAssertions();
           graph.closeTick();
+          const observations = observationsSince(graph, eventMarker);
 
           const sequence = [
             ...boolCombo.map((val, j) => ({
@@ -183,6 +185,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             steps: sequence,
             assertions: checkedAssertionNames,
             violations: v.map(violation => violation.name),
+            observations,
           });
 
           if (v.length > 0) {
@@ -211,6 +214,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         }
       } else if (boolRoots.length === 0 && nonBoolRoots.length === 0) {
         // No roots found — just check assertion at current state
+        const eventMarker = markEvents(graph);
         graph.openTick();
         await flush();
         const v = graph.checkAssertions();
@@ -222,6 +226,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           steps: [],
           assertions: checkedAssertionNames,
           violations: v.map(violation => violation.name),
+          observations: observationsSince(graph, eventMarker),
         });
         if (v.length > 0) {
           for (const violation of v) {
@@ -241,10 +246,11 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     if (steps < budget) {
       const advViolations = await adversarialPass(graph, assertions, flush, budget - steps);
       violations.push(...advViolations.violations);
+      scenarios.push(...advViolations.scenarios);
       steps += advViolations.steps;
     }
 
-    // 7. Coverage completion pass — drive untoggled booleans and FSM states
+    // 7. Coverage completion pass — drive untoggled booleans and FSM state transitions
     if (steps < budget) {
       for (const node of signalNodes) {
         if (steps >= budget) break;
@@ -258,6 +264,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           const values = coverageDomainForNode(assertions, node)
             ?.filter((value): value is boolean => typeof value === 'boolean') ?? [true, false];
           for (const val of values.length > 0 ? values : [true, false]) {
+            const eventMarker = markEvents(graph);
             graph.openTick();
             graph.driveNodeValue(node.id, val);
             await flush();
@@ -269,28 +276,65 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               steps: [{ signal: node.name, value: val }],
               assertions: checkedAssertionNames,
               violations: [],
+              observations: observationsSince(graph, eventMarker),
             });
             steps++;
           }
         }
 
-        // FSM signals with known states — drive through each state
-        if (node.metadata?.states && Array.isArray(node.metadata.states)) {
-          for (const state of node.metadata.states) {
-            if (steps >= budget) break;
-            graph.openTick();
-            graph.driveNodeValue(node.id, state);
-            await flush();
-            graph.closeTick();
-            scenarios.push({
-              id: `scenario-${scenarioCounter++}`,
-              kind: 'coverage-completion',
-              tick: graph.currentTick,
-              steps: [{ signal: node.name, value: state }],
-              assertions: checkedAssertionNames,
-              violations: [],
-            });
-            steps++;
+        const stateDomain = node.metadata?.states && Array.isArray(node.metadata.states)
+          ? node.metadata.states
+          : coverageDomainForNode(assertions, node);
+        const states = (stateDomain ?? [])
+          .filter((state): state is string => typeof state === 'string')
+          .filter((state, index, all) => all.indexOf(state) === index);
+
+        // FSM signals with known states — drive ordered pairs so transition
+        // coverage observes A->B, not just isolated state values.
+        if (states.length > 1) {
+          for (const from of states) {
+            for (const to of states) {
+              if (steps >= budget) break;
+              if (Object.is(from, to)) continue;
+              const eventMarker = markEvents(graph);
+              const scenarioSteps: Array<{ signal: string; value: any }> = [];
+
+              graph.openTick();
+              graph.driveNodeValue(node.id, from);
+              scenarioSteps.push({ signal: node.name, value: from });
+              await flush();
+              graph.closeTick();
+              steps++;
+              if (steps >= budget) {
+                scenarios.push({
+                  id: `scenario-${scenarioCounter++}`,
+                  kind: 'coverage-completion',
+                  tick: graph.currentTick,
+                  steps: scenarioSteps,
+                  assertions: checkedAssertionNames,
+                  violations: [],
+                  observations: observationsSince(graph, eventMarker),
+                });
+                break;
+              }
+
+              graph.openTick();
+              graph.driveNodeValue(node.id, to);
+              scenarioSteps.push({ signal: node.name, value: to });
+              await flush();
+              graph.closeTick();
+              steps++;
+
+              scenarios.push({
+                id: `scenario-${scenarioCounter++}`,
+                kind: 'coverage-completion',
+                tick: graph.currentTick,
+                steps: scenarioSteps,
+                assertions: checkedAssertionNames,
+                violations: [],
+                observations: observationsSince(graph, eventMarker),
+              });
+            }
           }
         }
       }
@@ -341,6 +385,28 @@ function coverageDomainForNode(
 
 function isOpaqueRootValue(value: unknown): boolean {
   return value !== null && (typeof value === 'object' || typeof value === 'function' || typeof value === 'symbol');
+}
+
+function markEvents(graph: CircuitGraph): Set<GraphEvent> {
+  return new Set(graph.getRecentEvents(256));
+}
+
+function observationsSince(graph: CircuitGraph, before: Set<GraphEvent>): ScenarioTrace['observations'] {
+  const eventTypes = new Set<GraphEvent['type']>([
+    'signal-change',
+    'derived-recompute',
+    'assertion-armed',
+    'assertion-passed',
+    'assertion-failed',
+  ]);
+  return graph.getRecentEvents(256)
+    .filter(event => !before.has(event) && eventTypes.has(event.type))
+    .map(event => ({
+      type: event.type as NonNullable<ScenarioTrace['observations']>[number]['type'],
+      node: graph.getNode(event.nodeId)?.name ?? event.stablePath ?? event.nodeId,
+      oldValue: event.oldValue,
+      newValue: event.newValue,
+    }));
 }
 
 function driveValueForAssertion(
@@ -585,8 +651,21 @@ async function driveObservational(
 
 interface AdversarialResult {
   violations: Violation[];
+  scenarios: ScenarioTrace[];
   steps: number;
 }
+
+interface AssertionInfo {
+  id: string;
+  name: string;
+  kind: string;
+  checkFn: () => boolean;
+  deps: string[];
+  metadata?: AssertionMetadata;
+}
+
+type DriveNode = NonNullable<ReturnType<CircuitGraph['getNode']>>;
+type DriveAssignment = Array<{ node: DriveNode; value: any }>;
 
 /**
  * Adversarial pass: for each assertion, try to break it by driving inputs toward violation.
@@ -596,19 +675,59 @@ interface AdversarialResult {
  */
 async function adversarialPass(
   graph: CircuitGraph,
-  assertions: Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[]; metadata?: AssertionMetadata }>,
+  assertions: AssertionInfo[],
   flush: () => void | Promise<void>,
   remainingBudget: number,
 ): Promise<AdversarialResult> {
   const violations: Violation[] = [];
+  const scenarios: ScenarioTrace[] = [];
   let steps = 0;
   const nodes = graph.getNodes();
   const nodeByName = new Map(nodes.map(n => [n.name, n]));
+  let scenarioCounter = 0;
 
   for (const assertion of assertions) {
     if (steps >= remainingBudget) break;
 
-    if (assertion.kind === 'always') {
+    if (assertion.kind === 'after') {
+      const result = await runTemporalAdversarialScenario(
+        graph,
+        assertion,
+        assertions,
+        flush,
+        `adversarial-${scenarioCounter++}`,
+        remainingBudget - steps,
+      );
+      violations.push(...result.violations);
+      scenarios.push(...result.scenarios);
+      steps += result.steps;
+      continue;
+    }
+
+    const metadataCombos = metadataDriveAssignments(graph, assertion, assertions, remainingBudget - steps);
+    if (metadataCombos.length > 0) {
+      let metadataFoundViolation = false;
+      for (const combo of metadataCombos) {
+        if (steps >= remainingBudget) break;
+        const result = await runAdversarialAssignment(
+          graph,
+          assertion,
+          combo,
+          flush,
+          `adversarial-${scenarioCounter++}`,
+        );
+        violations.push(...result.violations);
+        scenarios.push(result.scenario);
+        steps++;
+        if (result.violations.some(violation => violation.assertionName === assertion.name)) {
+          metadataFoundViolation = true;
+          break;
+        }
+      }
+      if (metadataFoundViolation || steps >= remainingBudget) continue;
+    }
+
+    if (assertion.kind === 'always' || assertion.kind === 'never') {
       // Parse the check function to find what would violate it
       // Use originalCheckFn if available (assertNever wraps the user's fn)
       const fnToParse = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
@@ -689,38 +808,249 @@ async function adversarialPass(
       }
 
       if (targetValues.size > 0) {
-        graph.openTick();
-        for (const [name, value] of targetValues) {
-          const node = nodeByName.get(name);
-          if (node?.setValue) {
-            graph.driveNodeValue(node.id, value);
-          }
-        }
-        await flush();
-
-        const v = graph.checkAssertions();
-        graph.closeTick();
+        const assignment = [...targetValues.entries()]
+          .map(([name, value]) => {
+            const node = nodeByName.get(name);
+            return node ? { node, value } : null;
+          })
+          .filter((entry): entry is { node: DriveNode; value: any } => entry != null);
+        const result = await runAdversarialAssignment(
+          graph,
+          assertion,
+          assignment,
+          flush,
+          `adversarial-${scenarioCounter++}`,
+        );
+        violations.push(...result.violations);
+        scenarios.push(result.scenario);
         steps++;
-
-        if (v.length > 0) {
-          for (const violation of v) {
-            violations.push({
-              assertionName: violation.name,
-              tick: graph.currentTick,
-              signalValues: Object.fromEntries(targetValues),
-              sequence: [...targetValues.entries()].map(([signal, value]) => ({
-                signal,
-                value,
-              })),
-            });
-          }
-        }
       }
     }
-    // Skip 'after' assertions — they depend on trigger→property sequences that
-    // explore() can't simulate correctly at the graph level. Only 'always' and
-    // 'never' assertions are testable via combinational state enumeration.
   }
 
-  return { violations, steps };
+  return { violations, scenarios, steps };
+}
+
+async function runAdversarialAssignment(
+  graph: CircuitGraph,
+  assertion: AssertionInfo,
+  assignment: DriveAssignment,
+  flush: () => void | Promise<void>,
+  id: string,
+): Promise<{ violations: Violation[]; scenario: ScenarioTrace }> {
+  const eventMarker = markEvents(graph);
+  graph.openTick();
+  for (const { node, value } of assignment) {
+    if (node.setValue) graph.driveNodeValue(node.id, value);
+  }
+  await flush();
+  const found = graph.checkAssertions();
+  graph.closeTick();
+
+  const sequence = assignment.map(({ node, value }) => ({ signal: node.name, value }));
+  const signalValues = Object.fromEntries(sequence.map(step => [step.signal, step.value]));
+  const scenario: ScenarioTrace = {
+    id,
+    kind: 'adversarial',
+    tick: graph.currentTick,
+    steps: sequence,
+    assertions: [assertion.name],
+    violations: found.map(violation => violation.name),
+    observations: observationsSince(graph, eventMarker),
+  };
+
+  return {
+    scenario,
+    violations: found.map(violation => ({
+      assertionName: violation.name,
+      tick: graph.currentTick,
+      signalValues,
+      sequence,
+    })),
+  };
+}
+
+function metadataDriveAssignments(
+  graph: CircuitGraph,
+  assertion: AssertionInfo,
+  assertions: AssertionInfo[],
+  budget: number,
+): DriveAssignment[] {
+  if (!assertion.metadata?.domains && !assertion.metadata?.checkDeps?.length) return [];
+
+  const nodes = driveNodesForAssertion(graph, assertion);
+  const driveable = nodes
+    .map(node => {
+      const domain = domainForDriveNode(assertion, assertions, node);
+      return domain.length > 0 ? { node, domain } : null;
+    })
+    .filter((entry): entry is { node: DriveNode; domain: any[] } => entry != null);
+
+  if (driveable.length === 0) return [];
+
+  const limit = Math.max(1, Math.min(budget, 64));
+  const combos: DriveAssignment[] = [];
+  const total = driveable.reduce((count, entry) => count * entry.domain.length, 1);
+  for (let i = 0; i < total && combos.length < limit; i++) {
+    let cursor = i;
+    const combo: DriveAssignment = [];
+    for (const entry of driveable) {
+      const value = entry.domain[cursor % entry.domain.length];
+      cursor = Math.floor(cursor / entry.domain.length);
+      combo.push({ node: entry.node, value });
+    }
+    combos.push(combo);
+  }
+  return combos;
+}
+
+function driveNodesForAssertion(graph: CircuitGraph, assertion: AssertionInfo): DriveNode[] {
+  const ids = new Set<string>(backwardCone(graph, assertion.id));
+  for (const dep of [...(assertion.metadata?.checkDeps ?? []), ...(assertion.metadata?.triggerDeps ?? [])]) {
+    ids.add(dep);
+    for (const upstream of backwardCone(graph, dep)) ids.add(upstream);
+  }
+
+  return [...ids]
+    .map(id => graph.getNode(id))
+    .filter((node): node is DriveNode => node != null && node.type === 'signal' && node.setValue != null);
+}
+
+function domainForDriveNode(
+  assertion: AssertionInfo,
+  assertions: AssertionInfo[],
+  node: DriveNode,
+): any[] {
+  const declared = domainForNode(assertion.metadata?.domains, node)
+    ?? coverageDomainForNode(assertions, node);
+  if (declared && declared.length > 0) return uniqueValues(declared);
+
+  const current = node.getValue?.();
+  if (typeof current === 'boolean') return [true, false];
+  if (isOpaqueRootValue(current)) return [];
+  if (typeof current === 'string') return uniqueValues([current, 'value']);
+  if (typeof current === 'number') return uniqueValues([current, 0, 1]);
+  if (current === null) return [null, 'value'];
+  return uniqueValues([current, true, false]);
+}
+
+function uniqueValues(values: any[]): any[] {
+  const result: any[] = [];
+  for (const value of values) {
+    if (!result.some(existing => Object.is(existing, value))) result.push(value);
+  }
+  return result;
+}
+
+async function runTemporalAdversarialScenario(
+  graph: CircuitGraph,
+  assertion: AssertionInfo,
+  assertions: AssertionInfo[],
+  flush: () => void | Promise<void>,
+  id: string,
+  budget: number,
+): Promise<AdversarialResult> {
+  const trigger = firstDriveableNode(graph, assertion.metadata?.triggerDeps ?? assertion.deps);
+  if (!trigger || budget <= 0) return { violations: [], scenarios: [], steps: 0 };
+
+  const checkNodes = (assertion.metadata?.checkDeps ?? [])
+    .flatMap(dep => {
+      const direct = graph.getNode(dep);
+      const upstream = backwardCone(graph, dep).map(id => graph.getNode(id));
+      return [direct, ...upstream];
+    })
+    .filter((node): node is DriveNode => node != null && node.type === 'signal' && node.setValue != null);
+
+  const checkAssignment = checkNodes
+    .map(node => {
+      const domain = domainForDriveNode(assertion, assertions, node);
+      if (domain.length === 0) return null;
+      const current = node.getValue?.();
+      const value = domain.find(candidate => !Object.is(candidate, current)) ?? domain[0];
+      return { node, value };
+    })
+    .filter((entry): entry is { node: DriveNode; value: any } => entry != null);
+
+  const sequence: Array<{ signal: string; value: any }> = [];
+  const eventMarker = markEvents(graph);
+  let steps = 0;
+  let found: ReturnType<CircuitGraph['checkAssertions']> = [];
+
+  graph.openTick();
+  graph.driveNodeValue(trigger.id, false);
+  sequence.push({ signal: trigger.name, value: false });
+  for (const { node, value } of checkAssignment) {
+    graph.driveNodeValue(node.id, value);
+    sequence.push({ signal: node.name, value });
+  }
+  await flush();
+  graph.checkAssertions();
+  graph.closeTick();
+  steps++;
+  if (steps >= budget) {
+    return temporalResult(graph, id, assertion, sequence, found, eventMarker, steps);
+  }
+
+  graph.openTick();
+  graph.driveNodeValue(trigger.id, true);
+  sequence.push({ signal: trigger.name, value: true });
+  for (const { node, value } of checkAssignment) {
+    graph.driveNodeValue(node.id, value);
+  }
+  await flush();
+  found = graph.checkAssertions();
+  graph.closeTick();
+  steps++;
+
+  for (let i = 0; found.length === 0 && i < 3 && steps < budget; i++) {
+    graph.openTick();
+    for (const { node, value } of checkAssignment) {
+      graph.driveNodeValue(node.id, value);
+    }
+    await flush();
+    found = graph.checkAssertions();
+    graph.closeTick();
+    steps++;
+  }
+
+  return temporalResult(graph, id, assertion, sequence, found, eventMarker, steps);
+}
+
+function firstDriveableNode(graph: CircuitGraph, ids: string[]): DriveNode | undefined {
+  for (const id of ids) {
+    const node = graph.getNode(id);
+    if (node?.type === 'signal' && node.setValue) return node;
+  }
+  return undefined;
+}
+
+function temporalResult(
+  graph: CircuitGraph,
+  id: string,
+  assertion: AssertionInfo,
+  sequence: Array<{ signal: string; value: any }>,
+  found: ReturnType<CircuitGraph['checkAssertions']>,
+  eventMarker: Set<GraphEvent>,
+  steps: number,
+): AdversarialResult {
+  const signalValues = Object.fromEntries(sequence.map(step => [step.signal, step.value]));
+  const scenario: ScenarioTrace = {
+    id,
+    kind: 'adversarial',
+    tick: graph.currentTick,
+    steps: sequence,
+    assertions: [assertion.name],
+    violations: found.map(violation => violation.name),
+    observations: observationsSince(graph, eventMarker),
+  };
+  return {
+    scenarios: [scenario],
+    steps,
+    violations: found.map(violation => ({
+      assertionName: violation.name,
+      tick: graph.currentTick,
+      signalValues,
+      sequence,
+    })),
+  };
 }

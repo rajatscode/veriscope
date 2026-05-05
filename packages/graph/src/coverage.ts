@@ -194,6 +194,20 @@ export class CoverageCollector {
       if (missing.length > 0) gaps.push({ kind: 'toggle', id: t.signalId, missing });
     }
 
+    for (const fsm of transitions) {
+      const states = [...fsm.states];
+      const expected = states.flatMap(from =>
+        states.filter(to => to !== from).map(to => `${from}->${to}`),
+      );
+      const total = expected.length > 0 ? expected.length : fsm.transitions.size;
+      totalPoints += total;
+      coveredPoints += expected.length > 0
+        ? expected.filter(key => fsm.transitions.has(key)).length
+        : fsm.transitions.size;
+      const missing = expected.filter(key => !fsm.transitions.has(key));
+      if (missing.length > 0) gaps.push({ kind: 'transition', id: fsm.fsmId, missing });
+    }
+
     for (const c of cross) {
       totalPoints += c.total;
       coveredPoints += c.observed.size;

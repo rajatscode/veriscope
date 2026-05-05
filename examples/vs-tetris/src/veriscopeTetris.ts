@@ -1,4 +1,4 @@
-import { CircuitGraph } from '@veriscope/graph';
+import { CircuitGraph, assertAfter } from '@veriscope/graph';
 import {
   DEFAULT_OPPONENTS,
   ROWS,
@@ -175,13 +175,15 @@ export function registerTetrisAssertions(
     reason: 'recipient state is derived from arena.players; the trigger signal is enumerated',
   });
 
-  const temporalDeliveryId = registerTemporalAssertion(
+  const temporalDeliveryId = assertAfter(
+    { nodeId: bindings.garbagePulseNodeId },
+    'posedge',
+    'eventually',
+    () => bindings.getSendHasRecipient(),
+    { name: 'after-garbage-pulse-recipient-eventually-visible' },
     targetGraph,
-    'after-garbage-pulse-recipient-eventually-visible',
-    [bindings.garbagePulseNodeId, bindings.sendHasRecipientNodeId],
-    'after',
-    createEventuallyAfterCheck(bindings.getGarbagePulse, bindings.getSendHasRecipient),
   );
+  targetGraph.addEdge(bindings.sendHasRecipientNodeId, temporalDeliveryId);
   targetGraph.setAssertionMetadata(temporalDeliveryId, {
     triggerDeps: [bindings.garbagePulseNodeId],
     checkDeps: [bindings.sendHasRecipientNodeId],
@@ -355,27 +357,6 @@ function registerTemporalAssertion(
   const id = targetGraph.registerNode({ name, type: 'assertion', deps, stablePath: name });
   targetGraph.setAssertionFn(id, checkFn, kind === 'after' ? 'after' : 'never');
   return id;
-}
-
-function createEventuallyAfterCheck(getTrigger: () => boolean, getCondition: () => boolean): () => boolean {
-  let previous = getTrigger();
-  let armed = false;
-  return () => {
-    const current = getTrigger();
-    if (!previous && current) {
-      armed = true;
-    }
-    previous = current;
-
-    if (!armed) return true;
-    if (getCondition()) {
-      armed = false;
-      return true;
-    }
-
-    // Eventually assertions remain pending rather than failing immediately.
-    return true;
-  };
 }
 
 function safePlayers(value: PlayerState[] | unknown): PlayerState[] {

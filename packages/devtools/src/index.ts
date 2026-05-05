@@ -21,6 +21,12 @@ export interface ExploreResult {
     steps: Array<{ signal: string; value: any }>;
     assertions: string[];
     violations: string[];
+    observations?: Array<{
+      type: 'signal-change' | 'derived-recompute' | 'assertion-armed' | 'assertion-passed' | 'assertion-failed';
+      node: string;
+      oldValue?: any;
+      newValue?: any;
+    }>;
   }>;
   coverage: {
     toggle: { covered: number; total: number; percentage: number };

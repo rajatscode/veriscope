@@ -262,6 +262,32 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('records propagated derived values in waveform data', () => {
+    const graph = new CircuitGraph();
+    let ready = false;
+    const readyId = graph.registerNode({ name: 'player.ready', type: 'signal' });
+    graph.setNodeValue(readyId, () => ready);
+    graph.setNodeSetter(readyId, value => {
+      ready = value;
+    });
+    const canStartId = graph.registerNode({
+      name: 'player.canStart',
+      type: 'derived',
+      deps: [readyId],
+      computeFn: () => ready,
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'waveform' });
+
+    graph.driveNodeValue(readyId, true);
+
+    expect(graph.getWaveformData().get(canStartId)?.map(point => point.v)).toEqual([false, true]);
+
+    handle.dispose();
+  });
+
   it('renders sparse numeric waveforms as held steps capped at the last graph event', () => {
     let now = 1000;
     const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
@@ -417,12 +443,31 @@ describe('mountDevtools', () => {
         sequence: [{ signal: 'mode', value: 'bad' }],
       }],
       scenarios: [
-        { id: 'case-pass', kind: 'enumerated', tick: 1, steps: [{ signal: 'mode', value: 'ok' }], assertions: ['passes'], violations: [] },
-        { id: 'case-fail', kind: 'enumerated', tick: 2, steps: [{ signal: 'mode', value: 'bad' }], assertions: ['fails', 'fails-late'], violations: ['fails', 'fails-late'] },
+        {
+          id: 'case-pass',
+          kind: 'enumerated',
+          tick: 1,
+          steps: [{ signal: 'mode', value: 'ok' }],
+          assertions: ['passes'],
+          violations: [],
+          observations: [{ type: 'derived-recompute', node: 'canSubmit', oldValue: false, newValue: true }],
+        },
+        {
+          id: 'case-fail',
+          kind: 'adversarial',
+          tick: 2,
+          steps: [{ signal: 'mode', value: 'bad' }],
+          assertions: ['fails', 'fails-late'],
+          violations: ['fails', 'fails-late'],
+          observations: [
+            { type: 'assertion-armed', node: 'fails' },
+            { type: 'assertion-failed', node: 'fails' },
+          ],
+        },
       ],
       coverage: {
         toggle: metric(1, 2),
-        transitions: metric(0, 0),
+        transitions: metric(1, 2),
         cross: metric(0, 0),
         operations: metric(0, 0),
         overall: metric(1, 2),
@@ -451,6 +496,10 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('case-fail');
     expect(host.textContent).toContain('failed: fails, fails-late');
     expect(host.textContent).toContain('failed assertions: fails, fails-late');
+    expect(host.textContent).toContain('Breakdown: toggles 1/2, transitions 1/2');
+    expect(host.textContent).toContain('Missing coverage: toggle:mode missing false');
+    expect(host.textContent).toContain('propagated: canSubmit false -> true');
+    expect(host.textContent).toContain('assertion events: armed:fails, failed:fails');
 
     handle.dispose();
   });
