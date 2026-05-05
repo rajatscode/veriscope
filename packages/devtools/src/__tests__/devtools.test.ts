@@ -72,6 +72,30 @@ function mutationResult(): MutateResult {
   };
 }
 
+function mutationResultWithSkipped(): MutateResult {
+  return {
+    ...mutationResult(),
+    generatedMutants: 6,
+    skipped: [
+      {
+        mutation: 'sever-edge:input->view',
+        description: 'Sever dependency from input to view',
+        reason: 'available in broad mutation mode; excluded from the default semantic score',
+      },
+      {
+        mutation: 'swap-edge:input<->clock',
+        description: 'Swap signal input to read clock value',
+        reason: 'available in broad mutation mode; excluded from the default semantic score',
+      },
+      {
+        mutation: 'remove-assertion:invariant',
+        description: 'Remove assertion invariant',
+        reason: 'meta-mutations are disabled',
+      },
+    ],
+  };
+}
+
 function flushPromises() {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
@@ -596,7 +620,7 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
 
-    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
     expect(mutate).toHaveBeenCalledOnce();
@@ -608,7 +632,7 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Budget per mutant: 1000');
     expect(host.textContent).toContain('Autotest runs: 2');
     expect(host.textContent).toContain('Autotest steps: 73');
-    expect(host.textContent).toContain('Rerun Mutants');
+    expect(host.textContent).toContain('Rerun Semantic Mutants');
     expect(host.textContent).toContain('Semantic mode scores assertion-reachable behavior mutants.');
     expect(host.textContent).toContain('negate:canSubmit');
     expect(host.textContent).toContain('swap-edge:a:b');
@@ -624,12 +648,45 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
 
-    buttonByText(host, 'Broad').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Mutation mode');
+    buttonByText(host, 'Broad Sweep').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Broad Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
     expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'broad' }));
     expect(host.textContent).toContain('Broad mode includes structural and effect candidates');
+
+    handle.dispose();
+  });
+
+  it('keeps skipped mutation candidates inspectable across refreshes', async () => {
+    const graph = new CircuitGraph();
+    const mutate = vi.fn(async () => mutationResultWithSkipped());
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
+
+    buttonByText(host, 'Run Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(host.textContent).toContain('Skipped candidates (3)');
+    expect(host.textContent).toContain('Switch to Broad Sweep');
+    expect(host.textContent).toContain('available in broad mutation mode; excluded from the default semantic score · 2');
+
+    buttonByText(host, 'Inspect').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('sever-edge:input->view');
+    expect(host.textContent).toContain('swap-edge:input<->clock');
+
+    handle.refresh();
+    expect(host.textContent).toContain('Collapse');
+    expect(host.textContent).toContain('swap-edge:input<->clock');
+
+    buttonByText(host, 'Hide').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).not.toContain('Switch to Broad Sweep');
+    handle.refresh();
+    expect(host.textContent).toContain('Skipped candidates (3)');
+    expect(host.textContent).not.toContain('Switch to Broad Sweep');
 
     handle.dispose();
   });
@@ -651,7 +708,7 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
 
-    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Run #1 running');
     expect(host.textContent).toContain('Elapsed:');
     expect(host.textContent).toContain('Applying generated mutations and running the full autotest budget against each mutant.');
@@ -663,7 +720,7 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Last run: #1 completed');
     expect(host.textContent).toContain('Score: 50.0%');
 
-    buttonByText(host, 'Rerun Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Rerun Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Run #2 running');
     expect(host.textContent).toContain('Elapsed:');
     expect(host.textContent).toContain('Showing the previous completed result until this run finishes.');
@@ -706,7 +763,7 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
 
-    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Semantic Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
     await flushPromises();
 

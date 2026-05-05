@@ -84,6 +84,8 @@ export function createMutantsPanel(
   let lastRun: MutationRunStatus | null = null;
   let liveTimer: ReturnType<typeof setInterval> | null = null;
   let mutationMode: MutationMode = 'semantic';
+  let skippedCandidatesOpen = true;
+  const expandedSkippedReasons = new Set<string>();
 
   function stopLiveTimer() {
     if (liveTimer) {
@@ -142,6 +144,8 @@ export function createMutantsPanel(
         },
       });
       result = nextResult;
+      skippedCandidatesOpen = (nextResult.skipped?.length ?? 0) > 0;
+      expandedSkippedReasons.clear();
       lastRun = {
         number: runNumber,
         status: 'completed',
@@ -278,17 +282,35 @@ export function createMutantsPanel(
   function renderSkippedSummary(
     items: Array<{ mutation: string; description: string; reason: string }>,
   ): HTMLElement {
-    const box = document.createElement('details');
+    const box = document.createElement('div');
     box.style.cssText = 'margin-top:10px; padding:7px 8px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:4px; color:#8b949e;';
 
-    const summary = document.createElement('summary');
-    summary.style.cssText = 'cursor:pointer; color:#8b949e; font-weight:600;';
-    summary.textContent = `Skipped candidates (${items.length})`;
-    box.appendChild(summary);
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px;';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'color:#8b949e; font-weight:600;';
+    title.textContent = `Skipped candidates (${items.length})`;
+    header.appendChild(title);
+
+    const toggle = document.createElement('button');
+    toggle.textContent = skippedCandidatesOpen ? 'Hide' : 'Show';
+    toggle.style.cssText = `
+      background:#161b22; border:1px solid #30363d; color:#c9d1d9;
+      padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.68rem;
+    `;
+    toggle.addEventListener('click', () => {
+      skippedCandidatesOpen = !skippedCandidatesOpen;
+      render();
+    });
+    header.appendChild(toggle);
+    box.appendChild(header);
+
+    if (!skippedCandidatesOpen) return box;
 
     const note = document.createElement('div');
     note.style.cssText = 'margin-top:6px; line-height:1.45; font-size:0.68rem;';
-    note.textContent = 'Skipped candidates are generated mutations that are not part of the default score. They remain available for broad mutation runs, but listing every one would mostly show graph-structure/display candidates rather than assertion quality.';
+    note.textContent = 'Skipped candidates are generated mutations outside the current scored mode. Switch to Broad Sweep to run structural and effect candidates; semantic mode keeps the default score focused on assertion-reachable behavior mutants.';
     box.appendChild(note);
 
     const byReason = new Map<string, Array<{ mutation: string; description: string; reason: string }>>();
@@ -301,11 +323,45 @@ export function createMutantsPanel(
     for (const [reason, group] of byReason) {
       const row = document.createElement('div');
       row.style.cssText = 'margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.06); font-size:0.68rem;';
-      const examples = group.slice(0, 3).map(item => item.mutation).join(', ');
-      row.innerHTML = `
-        <div style="color:#c9d1d9;">${escapeHtml(reason)} · ${group.length}</div>
-        <div style="color:#666; margin-top:2px; overflow-wrap:anywhere;">${escapeHtml(examples)}${group.length > 3 ? ` · +${group.length - 3} more` : ''}</div>
+      const reasonOpen = expandedSkippedReasons.has(reason);
+      const reasonHeader = document.createElement('div');
+      reasonHeader.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px;';
+      reasonHeader.innerHTML = `<div style="color:#c9d1d9;">${escapeHtml(reason)} · ${group.length}</div>`;
+
+      const reasonToggle = document.createElement('button');
+      reasonToggle.textContent = reasonOpen ? 'Collapse' : 'Inspect';
+      reasonToggle.style.cssText = `
+        background:#0d1117; border:1px solid #30363d; color:#8b949e;
+        padding:1px 7px; border-radius:4px; cursor:pointer; font-size:0.64rem;
       `;
+      reasonToggle.addEventListener('click', () => {
+        if (reasonOpen) expandedSkippedReasons.delete(reason);
+        else expandedSkippedReasons.add(reason);
+        render();
+      });
+      reasonHeader.appendChild(reasonToggle);
+      row.appendChild(reasonHeader);
+
+      const examples = group.slice(0, 3).map(item => item.mutation).join(', ');
+      const exampleLine = document.createElement('div');
+      exampleLine.style.cssText = 'color:#666; margin-top:2px; overflow-wrap:anywhere;';
+      exampleLine.textContent = `${examples}${group.length > 3 ? ` · +${group.length - 3} more` : ''}`;
+      row.appendChild(exampleLine);
+
+      if (reasonOpen) {
+        const list = document.createElement('div');
+        list.style.cssText = 'margin-top:6px; max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,0.06); border-radius:4px;';
+        for (const item of group) {
+          const itemRow = document.createElement('div');
+          itemRow.style.cssText = 'padding:5px 6px; border-bottom:1px solid rgba(255,255,255,0.04);';
+          itemRow.innerHTML = `
+            <div style="color:#c9d1d9; overflow-wrap:anywhere;">${escapeHtml(item.mutation)}</div>
+            <div style="color:#666; margin-top:2px; overflow-wrap:anywhere;">${escapeHtml(item.description)}</div>
+          `;
+          list.appendChild(itemRow);
+        }
+        row.appendChild(list);
+      }
       box.appendChild(row);
     }
 
@@ -327,11 +383,16 @@ export function createMutantsPanel(
     const controls = document.createElement('div');
     controls.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;';
 
+    const modeLabel = document.createElement('div');
+    modeLabel.style.cssText = 'color:#8b949e; font-size:0.68rem;';
+    modeLabel.textContent = 'Mutation mode';
+    controls.appendChild(modeLabel);
+
     const modeWrap = document.createElement('div');
     modeWrap.style.cssText = 'display:flex; border:1px solid #30363d; border-radius:4px; overflow:hidden;';
     for (const [mode, label, titleText] of [
-      ['semantic', 'Semantic', 'Score semantic, assertion-reachable mutants only'],
-      ['broad', 'Broad', 'Include broad structural/effect mutation candidates'],
+      ['semantic', 'Semantic Score', 'Score semantic, assertion-reachable mutants only'],
+      ['broad', 'Broad Sweep', 'Include broad structural/effect mutation candidates'],
     ] as Array<[MutationMode, string, string]>) {
       const modeBtn = document.createElement('button');
       modeBtn.textContent = label;
@@ -354,7 +415,8 @@ export function createMutantsPanel(
     controls.appendChild(modeWrap);
 
     const runBtn = document.createElement('button');
-    runBtn.textContent = running ? 'Running...' : result ? 'Rerun Mutants' : 'Run Mutants';
+    const modeVerb = mutationMode === 'semantic' ? 'Semantic Mutants' : 'Broad Mutants';
+    runBtn.textContent = running ? 'Running...' : result ? `Rerun ${modeVerb}` : `Run ${modeVerb}`;
     runBtn.disabled = running || !options?.mutate;
     runBtn.style.cssText = `
       background:#21262d; border:1px solid #30363d; color:#c9d1d9;
