@@ -42,6 +42,10 @@ export interface AutotestResult extends ExploreResult {
     status: 'passed' | 'failed';
     partialCoverage: boolean;
     reason?: string;
+    exercised?: boolean;
+    scenarioCount?: number;
+    passScenarioCount?: number;
+    failScenarioCount?: number;
   }>;
 }
 
@@ -97,6 +101,7 @@ export function mountDevtools(
 
   const layout = createTabLayout(container);
   const disposers: Array<() => void> = [];
+  let activeTab = normalizeTab(options?.initialTab ?? 'circuit');
 
   // Circuit panel
   const circuitContainer = layout.contentPanels.get('circuit')!;
@@ -118,7 +123,9 @@ export function mountDevtools(
   // Lazy-init panels on tab switch (avoid unnecessary work for hidden tabs)
   function ensurePanel(tab: string) {
     if (tab === 'circuit' && !visualizer) {
-      visualizer = createVisualizerPanel(circuitContainer, graph);
+      visualizer = createVisualizerPanel(circuitContainer, graph, {
+        isActive: () => activeTab === 'circuit',
+      });
       disposers.push(visualizer.dispose);
     }
     if (tab === 'autotest' && !autotest) {
@@ -136,6 +143,7 @@ export function mountDevtools(
   }
 
   layout.onTabChange((tab) => {
+    activeTab = tab;
     ensurePanel(tab);
     // Refresh the newly active panel
     if (tab === 'circuit') visualizer?.refresh();
@@ -145,9 +153,8 @@ export function mountDevtools(
   });
 
   // Initialize with the requested tab
-  const initialTab = normalizeTab(options?.initialTab ?? 'circuit');
-  layout.setActive(initialTab);
-  ensurePanel(initialTab);
+  layout.setActive(activeTab);
+  ensurePanel(activeTab);
 
   return {
     dispose() {
@@ -155,10 +162,10 @@ export function mountDevtools(
       layout.dispose();
     },
     refresh() {
-      visualizer?.refresh();
-      waveform.refresh();
-      autotest?.refresh();
-      mutants?.refresh();
+      if (activeTab === 'circuit') visualizer?.refresh();
+      if (activeTab === 'waveform') waveform.refresh();
+      if (activeTab === 'autotest') autotest?.refresh();
+      if (activeTab === 'mutants') mutants?.refresh();
     },
     setTab(tab) {
       layout.setActive(tab);

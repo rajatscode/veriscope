@@ -272,6 +272,36 @@ describe('explore', () => {
     expect(result.scenarios.some(s => s.steps.some(step => step.signal === 'mode' && step.value === 'edit'))).toBe(true);
   });
 
+  it('reuses declared domains from other assertions instead of inventing invalid values', async () => {
+    const g = new CircuitGraph();
+    let modeVal = 'view';
+
+    const mode = g.registerNode({ name: 'mode', type: 'signal' });
+    g.setNodeValue(mode, () => modeVal);
+    g.setNodeSetter(mode, (v: string) => {
+      modeVal = v;
+    });
+
+    const domainAssert = g.registerNode({
+      name: 'mode-domain-valid',
+      type: 'assertion',
+      deps: [mode],
+      assertionMetadata: {
+        domains: { mode: ['view', 'edit'] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(domainAssert, () => ['view', 'edit'].includes(modeVal), 'always');
+
+    const otherAssert = g.registerNode({ name: 'mode-observed', type: 'assertion', deps: [mode] });
+    g.setAssertionFn(otherAssert, () => true, 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.violations).toHaveLength(0);
+    expect(result.scenarios.some(s => s.steps.some(step => step.signal === 'mode' && step.value === 'value'))).toBe(false);
+  });
+
   it('uses declared assertion domains for boolean roots', async () => {
     const g = new CircuitGraph();
     let pulseVal = false;

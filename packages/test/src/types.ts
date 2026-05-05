@@ -54,6 +54,10 @@ export interface AutotestAssertionResult {
   status: 'passed' | 'failed';
   partialCoverage: boolean;
   reason?: string;
+  exercised: boolean;
+  scenarioCount: number;
+  passScenarioCount: number;
+  failScenarioCount: number;
 }
 
 export interface AutotestResult {

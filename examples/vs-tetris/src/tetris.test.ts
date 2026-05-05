@@ -103,6 +103,18 @@ describe('vs-tetris engine', () => {
     expect(result.scenarios.some(scenario => scenario.steps.length > 0)).toBe(true);
     expect(result.coverage.overall.total).toBeGreaterThan(0);
     expect(result.assertions.some(assertion => assertion.partialCoverage)).toBe(true);
+    expect(result.assertions.every(assertion => assertion.exercised)).toBe(true);
+    expect(result.assertions.every(assertion => assertion.passScenarioCount + assertion.failScenarioCount > 0)).toBe(true);
+    expect(result.assertions.map(assertion => assertion.name)).toEqual([
+      'scores-and-garbage-nonnegative',
+      'human-target-domain-valid',
+      'garbage-queue-bounded',
+      'attack-bank-gates-send-buttons',
+      'garbage-pulse-has-recipient',
+      'after-garbage-pulse-recipient-eventually-visible',
+      'never-can-send-with-empty-bank',
+    ]);
+    expect(result.assertions.some(assertion => assertion.kind === 'after')).toBe(true);
   });
 
   it('registers a real mutation target that autotest can kill', async () => {

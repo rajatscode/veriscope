@@ -76,6 +76,151 @@ export function registerTetrisTelemetry(
   };
 }
 
+interface TetrisAssertionBindings {
+  playersNodeId: string;
+  getPlayers: () => PlayerState[];
+  humanTargetNodeId: string;
+  getHumanTarget: () => string;
+  targetDomain: string[];
+  attackBankNodeId: string;
+  getAttackBank: () => number;
+  canSend2NodeId: string;
+  getCanSend2: () => boolean;
+  canSend4NodeId: string;
+  getCanSend4: () => boolean;
+  garbagePulseNodeId: string;
+  getGarbagePulse: () => boolean;
+  sendHasRecipientNodeId: string;
+  getSendHasRecipient: () => boolean;
+}
+
+export function registerTetrisAssertions(
+  targetGraph: CircuitGraph,
+  bindings: TetrisAssertionBindings,
+): { ids: Record<string, string>; dispose: () => void } {
+  const ids: Record<string, string> = {};
+  const disposables: string[] = [];
+
+  const register = (name: string, deps: string[], checkFn: () => boolean) => {
+    const id = registerAssertion(targetGraph, name, deps, checkFn);
+    ids[name] = id;
+    disposables.push(id);
+    return id;
+  };
+
+  const scoresId = register(
+    'scores-and-garbage-nonnegative',
+    [bindings.playersNodeId],
+    () => safePlayers(bindings.getPlayers()).every(player => player.score >= 0 && player.pendingGarbage >= 0),
+  );
+  targetGraph.setAssertionMetadata(scoresId, {
+    checkDeps: [bindings.playersNodeId],
+    partial: true,
+    reason: 'checks full PlayerState arrays observed through arena.players; scalar controls are enumerated separately',
+  });
+
+  const targetId = register(
+    'human-target-domain-valid',
+    [bindings.humanTargetNodeId],
+    () => bindings.targetDomain.includes(bindings.getHumanTarget()) && bindings.getHumanTarget() !== 'p1',
+  );
+  targetGraph.setAssertionMetadata(targetId, {
+    checkDeps: [bindings.humanTargetNodeId],
+    domains: {
+      [bindings.humanTargetNodeId]: bindings.targetDomain,
+      'arena.humanTarget': bindings.targetDomain,
+    },
+    partial: false,
+  });
+
+  const garbageId = register(
+    'garbage-queue-bounded',
+    [bindings.playersNodeId],
+    () => safePlayers(bindings.getPlayers()).every(player => player.pendingGarbage <= 20),
+  );
+  targetGraph.setAssertionMetadata(garbageId, {
+    checkDeps: [bindings.playersNodeId],
+    partial: true,
+    reason: 'checks full PlayerState arrays observed through arena.players; finite scalar controls are enumerated separately',
+  });
+
+  const bankId = register(
+    'attack-bank-gates-send-buttons',
+    [bindings.canSend2NodeId, bindings.canSend4NodeId, bindings.attackBankNodeId],
+    () =>
+      (!bindings.getCanSend2() || bindings.getAttackBank() >= 2)
+      && (!bindings.getCanSend4() || bindings.getAttackBank() >= 4),
+  );
+  targetGraph.setAssertionMetadata(bankId, {
+    checkDeps: [bindings.canSend2NodeId, bindings.canSend4NodeId, bindings.attackBankNodeId],
+    domains: {
+      [bindings.attackBankNodeId]: [0, 1, 2, 4],
+      'p1.attackBank': [0, 1, 2, 4],
+    },
+    partial: false,
+  });
+
+  const pulseId = register(
+    'garbage-pulse-has-recipient',
+    [bindings.garbagePulseNodeId, bindings.sendHasRecipientNodeId],
+    () => !bindings.getGarbagePulse() || bindings.getSendHasRecipient(),
+  );
+  targetGraph.setAssertionMetadata(pulseId, {
+    checkDeps: [bindings.garbagePulseNodeId, bindings.sendHasRecipientNodeId],
+    domains: {
+      [bindings.garbagePulseNodeId]: [false],
+      'arena.garbagePulse': [false],
+    },
+    partial: true,
+    reason: 'recipient state is derived from arena.players; the trigger signal is enumerated',
+  });
+
+  const temporalDeliveryId = registerTemporalAssertion(
+    targetGraph,
+    'after-garbage-pulse-recipient-eventually-visible',
+    [bindings.garbagePulseNodeId, bindings.sendHasRecipientNodeId],
+    'after',
+    createEventuallyAfterCheck(bindings.getGarbagePulse, bindings.getSendHasRecipient),
+  );
+  targetGraph.setAssertionMetadata(temporalDeliveryId, {
+    triggerDeps: [bindings.garbagePulseNodeId],
+    checkDeps: [bindings.sendHasRecipientNodeId],
+    domains: {
+      [bindings.garbagePulseNodeId]: [false],
+      'arena.garbagePulse': [false, true],
+    },
+    partial: true,
+    reason: 'demonstrates temporal after/eventually semantics over the garbage send pulse',
+  });
+  ids['after-garbage-pulse-recipient-eventually-visible'] = temporalDeliveryId;
+  disposables.push(temporalDeliveryId);
+
+  const neverSendWithoutBankId = registerTemporalAssertion(
+    targetGraph,
+    'never-can-send-with-empty-bank',
+    [bindings.canSend2NodeId, bindings.canSend4NodeId, bindings.attackBankNodeId],
+    'never',
+    () => !(bindings.getAttackBank() === 0 && (bindings.getCanSend2() || bindings.getCanSend4())),
+  );
+  targetGraph.setAssertionMetadata(neverSendWithoutBankId, {
+    checkDeps: [bindings.canSend2NodeId, bindings.canSend4NodeId, bindings.attackBankNodeId],
+    domains: {
+      [bindings.attackBankNodeId]: [0, 2, 4],
+      'p1.attackBank': [0, 2, 4],
+    },
+    partial: false,
+  });
+  ids['never-can-send-with-empty-bank'] = neverSendWithoutBankId;
+  disposables.push(neverSendWithoutBankId);
+
+  return {
+    ids,
+    dispose() {
+      for (const id of disposables) targetGraph.disposeNode(id);
+    },
+  };
+}
+
 export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPONENTS): CircuitGraph {
   const targetGraph = new CircuitGraph();
   const count = clampOpponentCount(opponentCount);
@@ -116,7 +261,7 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
     const human = players.find(player => player.id === 'p1');
     return Boolean(human && !human.ko);
   });
-  const activePlayers = registerDerived(targetGraph, 'arena.activePlayersForTests', [playersSignal.id], () =>
+  registerDerived(targetGraph, 'arena.activePlayersForTests', [playersSignal.id], () =>
     players.filter(player => !player.ko).length,
   );
   const canSend2 = registerDerived(
@@ -131,54 +276,31 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
     [startedSignal.id, pausedSignal.id, bankSignal.id, targetSignal.id, targetAlive, humanAlive],
     () => started && !paused && attackBank >= 4 && targetDomain.includes(humanTarget) && targetGraph.getNode(targetAlive)?.getValue?.() === true && targetGraph.getNode(humanAlive)?.getValue?.() === true,
   );
-
-  const targetAssertion = registerAssertion(targetGraph, 'human-target-domain-valid', [targetSignal.id], () =>
-    targetDomain.includes(humanTarget) && humanTarget !== 'p1',
-  );
-  targetGraph.setAssertionMetadata(targetAssertion, {
-    checkDeps: [targetSignal.id],
-    domains: { [targetSignal.id]: targetDomain, 'arena.humanTarget': targetDomain },
-    partial: false,
-  });
-
-  const bankAssertion = registerAssertion(targetGraph, 'attack-bank-gates-send-buttons', [bankSignal.id, canSend2, canSend4], () =>
-    (!targetGraph.getNode(canSend2)?.getValue?.() || attackBank >= 2)
-    && (!targetGraph.getNode(canSend4)?.getValue?.() || attackBank >= 4),
-  );
-  targetGraph.setAssertionMetadata(bankAssertion, {
-    checkDeps: [bankSignal.id, canSend2, canSend4],
-    domains: { [bankSignal.id]: [0, 1, 2, 4], 'p1.attackBank': [0, 1, 2, 4] },
-    partial: false,
-  });
-
-  const pulseAssertion = registerAssertion(
+  const sendHasRecipient = registerDerived(
     targetGraph,
-    'garbage-pulse-has-recipient',
-    [pulseSignal.id, telemetry.ids['arena.anyGarbageQueued'], telemetry.ids['arena.anyRecipientReceived']],
-    () => !garbagePulse
-      || targetGraph.getNode(telemetry.ids['arena.anyGarbageQueued'])?.getValue?.() === true
+    'arena.garbageSendHasRecipient',
+    [playersSignal.id, telemetry.ids['arena.anyGarbageQueued'], telemetry.ids['arena.anyRecipientReceived']],
+    () =>
+      targetGraph.getNode(telemetry.ids['arena.anyGarbageQueued'])?.getValue?.() === true
       || targetGraph.getNode(telemetry.ids['arena.anyRecipientReceived'])?.getValue?.() === true,
   );
-  targetGraph.setAssertionMetadata(pulseAssertion, {
-    checkDeps: [pulseSignal.id, telemetry.ids['arena.anyGarbageQueued'], telemetry.ids['arena.anyRecipientReceived']],
-    domains: { [pulseSignal.id]: [false], 'arena.garbagePulse': [false] },
-    partial: true,
-    reason: 'recipient state is derived from arena.players, which is explored only through declared domain cases',
-  });
 
-  const integrityAssertion = registerAssertion(
-    targetGraph,
-    'tetris-player-state-integrity',
-    [telemetry.ids['arena.scoresAndGarbageNonnegative'], telemetry.ids['arena.garbageQueuesBounded'], activePlayers],
-    () =>
-      targetGraph.getNode(telemetry.ids['arena.scoresAndGarbageNonnegative'])?.getValue?.() === true
-      && targetGraph.getNode(telemetry.ids['arena.garbageQueuesBounded'])?.getValue?.() === true
-      && Number(targetGraph.getNode(activePlayers)?.getValue?.() ?? 0) >= 1,
-  );
-  targetGraph.setAssertionMetadata(integrityAssertion, {
-    checkDeps: [telemetry.ids['arena.scoresAndGarbageNonnegative'], telemetry.ids['arena.garbageQueuesBounded'], activePlayers],
-    partial: true,
-    reason: 'full board arrays are observed and derived; finite scalar controls are enumerated',
+  registerTetrisAssertions(targetGraph, {
+    playersNodeId: playersSignal.id,
+    getPlayers: () => players,
+    humanTargetNodeId: targetSignal.id,
+    getHumanTarget: () => humanTarget,
+    targetDomain,
+    attackBankNodeId: bankSignal.id,
+    getAttackBank: () => attackBank,
+    canSend2NodeId: canSend2,
+    getCanSend2: () => targetGraph.getNode(canSend2)?.getValue?.() === true,
+    canSend4NodeId: canSend4,
+    getCanSend4: () => targetGraph.getNode(canSend4)?.getValue?.() === true,
+    garbagePulseNodeId: pulseSignal.id,
+    getGarbagePulse: () => garbagePulse,
+    sendHasRecipientNodeId: sendHasRecipient,
+    getSendHasRecipient: () => targetGraph.getNode(sendHasRecipient)?.getValue?.() === true,
   });
 
   targetGraph.propagate();
@@ -221,6 +343,39 @@ function registerAssertion(
   const id = targetGraph.registerNode({ name, type: 'assertion', deps, stablePath: name });
   targetGraph.setAssertionFn(id, checkFn, 'always');
   return id;
+}
+
+function registerTemporalAssertion(
+  targetGraph: CircuitGraph,
+  name: string,
+  deps: string[],
+  kind: 'after' | 'never',
+  checkFn: () => boolean,
+): string {
+  const id = targetGraph.registerNode({ name, type: 'assertion', deps, stablePath: name });
+  targetGraph.setAssertionFn(id, checkFn, kind === 'after' ? 'after' : 'never');
+  return id;
+}
+
+function createEventuallyAfterCheck(getTrigger: () => boolean, getCondition: () => boolean): () => boolean {
+  let previous = getTrigger();
+  let armed = false;
+  return () => {
+    const current = getTrigger();
+    if (!previous && current) {
+      armed = true;
+    }
+    previous = current;
+
+    if (!armed) return true;
+    if (getCondition()) {
+      armed = false;
+      return true;
+    }
+
+    // Eventually assertions remain pending rather than failing immediately.
+    return true;
+  };
 }
 
 function safePlayers(value: PlayerState[] | unknown): PlayerState[] {

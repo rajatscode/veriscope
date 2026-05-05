@@ -45,6 +45,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   try {
     // 1. Discover assertions
     const assertions = graph.getAssertions();
+    const checkedAssertionNames = assertions.map(assertion => assertion.name);
 
     // 2. For each assertion, find its upstream roots
     for (const assertion of assertions) {
@@ -82,7 +83,8 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       const nonBoolDomains = new Map<string, any[]>();
       const nonBoolRoots: typeof nonBoolRootCandidates = [];
       for (const node of nonBoolRootCandidates) {
-        const declaredDomain = domainForNode(assertion.metadata?.domains, node);
+        const declaredDomain = domainForNode(assertion.metadata?.domains, node)
+          ?? coverageDomainForNode(assertions, node);
         if (declaredDomain && declaredDomain.length > 0) {
           nonBoolDomains.set(node.id, declaredDomain);
           nonBoolRoots.push(node);
@@ -112,7 +114,8 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
 
       const boolDomains = new Map<string, any[]>();
       for (const node of boolRoots) {
-        const declaredDomain = domainForNode(assertion.metadata?.domains, node);
+        const declaredDomain = domainForNode(assertion.metadata?.domains, node)
+          ?? coverageDomainForNode(assertions, node);
         const domain = declaredDomain && declaredDomain.length > 0
           ? declaredDomain.filter(value => typeof value === 'boolean')
           : [false, true];
@@ -178,7 +181,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             kind: 'enumerated',
             tick: graph.currentTick,
             steps: sequence,
-            assertions: [assertion.name],
+            assertions: checkedAssertionNames,
             violations: v.map(violation => violation.name),
           });
 
@@ -217,7 +220,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           kind: 'current-state',
           tick: graph.currentTick,
           steps: [],
-          assertions: [assertion.name],
+          assertions: checkedAssertionNames,
           violations: v.map(violation => violation.name),
         });
         if (v.length > 0) {
@@ -264,7 +267,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               kind: 'coverage-completion',
               tick: graph.currentTick,
               steps: [{ signal: node.name, value: val }],
-              assertions: assertions.map(assertion => assertion.name),
+              assertions: checkedAssertionNames,
               violations: [],
             });
             steps++;
@@ -284,7 +287,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               kind: 'coverage-completion',
               tick: graph.currentTick,
               steps: [{ signal: node.name, value: state }],
-              assertions: assertions.map(assertion => assertion.name),
+              assertions: checkedAssertionNames,
               violations: [],
             });
             steps++;
@@ -342,10 +345,12 @@ function isOpaqueRootValue(value: unknown): boolean {
 
 function driveValueForAssertion(
   metadata: AssertionMetadata | undefined,
+  assertions: Array<{ metadata?: AssertionMetadata }>,
   node: NonNullable<ReturnType<CircuitGraph['getNode']>>,
   desiredValue: unknown,
 ): { driveable: true; value: unknown } | { driveable: false } {
-  const declaredDomain = domainForNode(metadata?.domains, node);
+  const declaredDomain = domainForNode(metadata?.domains, node)
+    ?? coverageDomainForNode(assertions, node);
   if (declaredDomain && declaredDomain.length > 0) {
     const value = declaredDomain.some(domainValue => Object.is(domainValue, desiredValue))
       ? desiredValue
@@ -647,7 +652,7 @@ async function adversarialPass(
           const name = m[1];
           const node = nodeByName.get(name);
           if (node) {
-            const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(name) ?? true);
+            const drive = driveValueForAssertion(assertion.metadata, assertions, node, comparisonValues.get(name) ?? true);
             if (drive.driveable) targetValues.set(name, drive.value);
           }
         }
@@ -657,7 +662,7 @@ async function adversarialPass(
             const name = m[1];
             const node = nodeByName.get(name);
             if (node) {
-              const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(name) ?? true);
+              const drive = driveValueForAssertion(assertion.metadata, assertions, node, comparisonValues.get(name) ?? true);
               if (drive.driveable) targetValues.set(name, drive.value);
             }
           }
@@ -669,7 +674,7 @@ async function adversarialPass(
         for (const sigName of parsed.signals) {
           const node = nodeByName.get(sigName);
           if (node) {
-            const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(sigName) ?? true);
+            const drive = driveValueForAssertion(assertion.metadata, assertions, node, comparisonValues.get(sigName) ?? true);
             if (drive.driveable) targetValues.set(sigName, drive.value);
           }
         }
@@ -678,7 +683,7 @@ async function adversarialPass(
       // Last resort: try setting all signals in cone to true
       if (targetValues.size === 0) {
         for (const node of coneNodes) {
-          const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(node.name) ?? true);
+          const drive = driveValueForAssertion(assertion.metadata, assertions, node, comparisonValues.get(node.name) ?? true);
           if (drive.driveable) targetValues.set(node.name, drive.value);
         }
       }

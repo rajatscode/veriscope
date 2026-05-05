@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { assertAlways, coverage, graph } from '@veriscope/graph';
+import { coverage, graph } from '@veriscope/graph';
 import { useDerived, useSignal, useTrackedEffect } from '@veriscope/react';
 import { mountDevtools } from '@veriscope/devtools';
 import { runAutotest } from '@veriscope/test';
@@ -29,7 +29,7 @@ import {
   type PlayerId,
   type PlayerState,
 } from './tetris';
-import { createVsTetrisGraph, registerTetrisTelemetry } from './veriscopeTetris';
+import { createVsTetrisGraph, registerTetrisAssertions, registerTetrisTelemetry } from './veriscopeTetris';
 
 export function App() {
   const initialized = useRef(false);
@@ -221,77 +221,25 @@ export function App() {
 
   useEffect(() => {
     const targetDomain = targetIdsFor(opponentCount.val);
-    const assertionIds: string[] = [];
-
-    const scoresId = assertAlways(
-      () => arenaPlayers.val.every(player => player.score >= 0 && player.pendingGarbage >= 0),
-      'scores-and-garbage-nonnegative',
-      graph,
-      [arenaPlayers],
-    );
-    graph.setAssertionMetadata(scoresId, {
-      checkDeps: [arenaPlayers.nodeId],
-      partial: true,
-      reason: 'checks full PlayerState arrays observed through arena.players; scalar controls are enumerated separately',
+    const assertions = registerTetrisAssertions(graph, {
+      playersNodeId: arenaPlayers.nodeId,
+      getPlayers: () => arenaPlayers.val,
+      humanTargetNodeId: humanTarget.nodeId,
+      getHumanTarget: () => humanTarget.val,
+      targetDomain,
+      attackBankNodeId: attackBank.nodeId,
+      getAttackBank: () => attackBank.val,
+      canSend2NodeId: canSend2Signal.nodeId,
+      getCanSend2: () => canSend2Signal.val,
+      canSend4NodeId: canSend4Signal.nodeId,
+      getCanSend4: () => canSend4Signal.val,
+      garbagePulseNodeId: garbagePulse.nodeId,
+      getGarbagePulse: () => garbagePulse.val,
+      sendHasRecipientNodeId: sendHasRecipient.nodeId,
+      getSendHasRecipient: () => sendHasRecipient.val,
     });
-    assertionIds.push(scoresId);
 
-    const targetId = assertAlways(
-      () => targetDomain.includes(humanTarget.val) && humanTarget.val !== 'p1',
-      'human-target-domain-valid',
-      graph,
-      [humanTarget],
-    );
-    graph.setAssertionMetadata(targetId, {
-      checkDeps: [humanTarget.nodeId],
-      domains: { [humanTarget.nodeId]: targetDomain, 'arena.humanTarget': targetDomain },
-      partial: false,
-    });
-    assertionIds.push(targetId);
-
-    const garbageId = assertAlways(
-      () => arenaPlayers.val.every(player => player.pendingGarbage <= 20),
-      'garbage-queue-bounded',
-      graph,
-      [arenaPlayers],
-    );
-    graph.setAssertionMetadata(garbageId, {
-      checkDeps: [arenaPlayers.nodeId],
-      partial: true,
-      reason: 'checks full PlayerState arrays observed through arena.players; finite scalar controls are enumerated separately',
-    });
-    assertionIds.push(garbageId);
-
-    const bankId = assertAlways(
-      () => (!canSend2Signal.val || attackBank.val >= 2) && (!canSend4Signal.val || attackBank.val >= 4),
-      'attack-bank-gates-send-buttons',
-      graph,
-      [canSend2Signal, canSend4Signal, attackBank],
-    );
-    graph.setAssertionMetadata(bankId, {
-      checkDeps: [canSend2Signal.nodeId, canSend4Signal.nodeId, attackBank.nodeId],
-      domains: { [attackBank.nodeId]: [0, 1, 2, 4], 'p1.attackBank': [0, 1, 2, 4] },
-      partial: false,
-    });
-    assertionIds.push(bankId);
-
-    const pulseId = assertAlways(
-      () => !garbagePulse.val || sendHasRecipient.val,
-      'garbage-pulse-has-recipient',
-      graph,
-      [garbagePulse, sendHasRecipient],
-    );
-    graph.setAssertionMetadata(pulseId, {
-      checkDeps: [garbagePulse.nodeId, sendHasRecipient.nodeId],
-      domains: { [garbagePulse.nodeId]: [false], 'arena.garbagePulse': [false] },
-      partial: true,
-      reason: 'recipient state is derived from arena.players; the trigger signal is enumerated',
-    });
-    assertionIds.push(pulseId);
-
-    return () => {
-      for (const id of assertionIds) graph.disposeNode(id);
-    };
+    return () => assertions.dispose();
   }, [opponentCount.val]);
 
   useEffect(() => {
@@ -645,7 +593,10 @@ function EmbeddedDevtools({ opponentCount }: { opponentCount: OpponentCount }) {
     if (!hostRef.current) return;
     const handle = mountDevtools(hostRef.current, graph, {
       coverage,
-      autotest: runAutotest,
+      autotest: (_liveGraph, options) => runAutotest(
+        createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
+        options,
+      ),
       mutate: () => runMutationTest(
         () => createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
         { budget: 1200 },

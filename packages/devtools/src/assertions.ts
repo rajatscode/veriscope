@@ -33,6 +33,38 @@ function formatScenarioValue(value: unknown): string {
   return String(value);
 }
 
+function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLElement {
+  const item = document.createElement('div');
+  item.style.cssText = 'padding:5px 6px; margin-top:4px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:3px; font-size:0.68rem;';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex; justify-content:space-between; gap:8px; color:#8b949e;';
+  const left = document.createElement('span');
+  left.textContent = `${scenario.id} · ${scenario.kind}`;
+  const right = document.createElement('span');
+  right.style.cssText = scenario.violations.length > 0 ? 'color:#ff5d8f;' : 'color:#72f1b8;';
+  right.textContent = scenario.violations.length > 0 ? `${scenario.violations.length} violations` : 'passed';
+  header.appendChild(left);
+  header.appendChild(right);
+  item.appendChild(header);
+
+  const stepsLine = document.createElement('div');
+  stepsLine.style.cssText = 'color:#c9d1d9; margin-top:3px; overflow-wrap:anywhere;';
+  stepsLine.textContent = scenario.steps.length > 0
+    ? scenario.steps.map(step => `${step.signal}=${formatScenarioValue(step.value)}`).join(', ')
+    : '(current state)';
+  item.appendChild(stepsLine);
+
+  if (scenario.assertions.length > 0) {
+    const assertionLine = document.createElement('div');
+    assertionLine.style.cssText = 'color:#666; margin-top:2px; overflow-wrap:anywhere;';
+    assertionLine.textContent = `checks ${scenario.assertions.join(', ')}`;
+    item.appendChild(assertionLine);
+  }
+
+  return item;
+}
+
 export function createAssertionsPanel(
   container: HTMLElement,
   graph: CircuitGraph,
@@ -143,11 +175,14 @@ export function createAssertionsPanel(
           buildEntries();
           if (isAutotestResult(lastRunResult)) {
             for (const assertion of lastRunResult.assertions) {
-              const entry = entries.get(assertion.id);
+              const entry = entries.get(assertion.id)
+                ?? [...entries.values()].find(candidate => candidate.name === assertion.name);
               if (!entry) continue;
               entry.status = assertion.status;
-              if (assertion.status === 'failed') entry.failCount++;
-              else entry.passCount++;
+              entry.passCount = assertion.passScenarioCount
+                ?? (assertion.status === 'passed' ? Math.max(assertion.scenarioCount ?? 0, 1) : 0);
+              entry.failCount = assertion.failScenarioCount
+                ?? (assertion.status === 'failed' ? Math.max(assertion.scenarioCount ?? 0, 1) : 0);
             }
           }
           render();
@@ -247,6 +282,36 @@ export function createAssertionsPanel(
           ? `Partial assertions: ${partials.length} (${partials.map(assertion => assertion.name).join(', ')})`
           : 'Partial assertions: 0';
         resultBox.appendChild(partialLine);
+
+        const assertionBox = document.createElement('div');
+        assertionBox.style.cssText = 'margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;';
+        const assertionTitle = document.createElement('div');
+        assertionTitle.style.cssText = 'color:#c9d1d9; margin-bottom:5px; font-weight:600;';
+        const resultPassed = lastRunResult.assertions.filter(assertion => assertion.status === 'passed').length;
+        const resultFailed = lastRunResult.assertions.filter(assertion => assertion.status === 'failed').length;
+        assertionTitle.textContent = `Assertion Results (${resultPassed} passed, ${resultFailed} failed)`;
+        assertionBox.appendChild(assertionTitle);
+
+        for (const assertion of lastRunResult.assertions) {
+          const row = document.createElement('div');
+          row.style.cssText = `display:flex; align-items:center; gap:8px; padding:5px 6px; margin-top:4px; background:${assertion.status === 'failed' ? 'rgba(255,93,143,0.08)' : 'rgba(114,241,184,0.04)'}; border:1px solid ${assertion.status === 'failed' ? 'rgba(255,93,143,0.2)' : 'rgba(114,241,184,0.16)'}; border-radius:3px; font-size:0.68rem;`;
+          const dot = document.createElement('span');
+          dot.style.cssText = `width:8px; height:8px; border-radius:50%; flex-shrink:0; background:${assertion.status === 'failed' ? '#ff5d8f' : '#72f1b8'};`;
+          const name = document.createElement('span');
+          name.style.cssText = 'flex:1; color:#c9d1d9; overflow-wrap:anywhere;';
+          name.textContent = assertion.name;
+          const statusBadge = document.createElement('span');
+          statusBadge.style.cssText = `color:${assertion.status === 'failed' ? '#ff5d8f' : '#72f1b8'}; white-space:nowrap;`;
+          const scenarioCount = assertion.scenarioCount ?? 0;
+          const exerciseText = assertion.exercised === false ? 'unhit' : `${scenarioCount} cases`;
+          statusBadge.textContent = `${assertion.status}${assertion.partialCoverage ? ' · partial' : ''} · ${assertion.kind} · ${exerciseText}`;
+          row.appendChild(dot);
+          row.appendChild(name);
+          row.appendChild(statusBadge);
+          assertionBox.appendChild(row);
+        }
+
+        resultBox.appendChild(assertionBox);
       }
       if (v.length > 0) {
         const list = document.createElement('div');
@@ -261,49 +326,36 @@ export function createAssertionsPanel(
         resultBox.appendChild(list);
       }
       if (lastRunResult.scenarios.length > 0) {
+        const passingScenarios = lastRunResult.scenarios.filter(scenario => scenario.violations.length === 0);
+        const failingScenarios = lastRunResult.scenarios.filter(scenario => scenario.violations.length > 0);
         const scenarioBox = document.createElement('div');
         scenarioBox.style.cssText = 'margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;';
         const scenarioTitle = document.createElement('div');
         scenarioTitle.style.cssText = 'color:#c9d1d9; margin-bottom:5px; font-weight:600;';
-        scenarioTitle.textContent = `Generated Cases (${lastRunResult.scenarios.length})`;
+        scenarioTitle.textContent = `Generated Cases (${passingScenarios.length} passed, ${failingScenarios.length} failed)`;
         scenarioBox.appendChild(scenarioTitle);
 
-        for (const scenario of lastRunResult.scenarios.slice(0, 10)) {
-          const item = document.createElement('div');
-          item.style.cssText = 'padding:5px 6px; margin-top:4px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:3px; font-size:0.68rem;';
-
-          const header = document.createElement('div');
-          header.style.cssText = 'display:flex; justify-content:space-between; gap:8px; color:#8b949e;';
-          const left = document.createElement('span');
-          left.textContent = `${scenario.id} · ${scenario.kind}`;
-          const right = document.createElement('span');
-          right.style.cssText = scenario.violations.length > 0 ? 'color:#ff5d8f;' : 'color:#72f1b8;';
-          right.textContent = scenario.violations.length > 0 ? `${scenario.violations.length} violations` : 'passed';
-          header.appendChild(left);
-          header.appendChild(right);
-          item.appendChild(header);
-
-          const stepsLine = document.createElement('div');
-          stepsLine.style.cssText = 'color:#c9d1d9; margin-top:3px; overflow-wrap:anywhere;';
-          stepsLine.textContent = scenario.steps.length > 0
-            ? scenario.steps.map(step => `${step.signal}=${formatScenarioValue(step.value)}`).join(', ')
-            : '(current state)';
-          item.appendChild(stepsLine);
-
-          if (scenario.assertions.length > 0) {
-            const assertionLine = document.createElement('div');
-            assertionLine.style.cssText = 'color:#666; margin-top:2px; overflow-wrap:anywhere;';
-            assertionLine.textContent = `checks ${scenario.assertions.join(', ')}`;
-            item.appendChild(assertionLine);
-          }
-
-          scenarioBox.appendChild(item);
+        const passingTitle = document.createElement('div');
+        passingTitle.style.cssText = 'color:#72f1b8; margin-top:6px; font-weight:600;';
+        passingTitle.textContent = `Passing Cases (${passingScenarios.length})`;
+        scenarioBox.appendChild(passingTitle);
+        for (const scenario of passingScenarios.slice(0, 5)) {
+          scenarioBox.appendChild(renderScenarioItem(scenario));
         }
 
-        if (lastRunResult.scenarios.length > 10) {
+        const failingTitle = document.createElement('div');
+        failingTitle.style.cssText = 'color:#ff5d8f; margin-top:8px; font-weight:600;';
+        failingTitle.textContent = `Failing Cases (${failingScenarios.length})`;
+        scenarioBox.appendChild(failingTitle);
+        for (const scenario of failingScenarios.slice(0, 5)) {
+          scenarioBox.appendChild(renderScenarioItem(scenario));
+        }
+
+        const hiddenCount = Math.max(0, passingScenarios.length - 5) + Math.max(0, failingScenarios.length - 5);
+        if (hiddenCount > 0) {
           const more = document.createElement('div');
           more.style.cssText = 'color:#666; margin-top:5px;';
-          more.textContent = `Showing 10 of ${lastRunResult.scenarios.length} generated cases.`;
+          more.textContent = `Showing 5 passing and 5 failing cases where available; ${hiddenCount} additional cases hidden.`;
           scenarioBox.appendChild(more);
         }
 

@@ -20,6 +20,9 @@ export async function runAutotest(
       ...(assertion.metadata?.triggerDeps ?? []),
     ]);
     const partialCoverage = assertion.metadata?.partial ?? declaredDeps.size === 0;
+    const assertionScenarios = result.scenarios.filter(scenario => scenario.assertions.includes(assertion.name));
+    const failScenarioCount = assertionScenarios.filter(scenario => scenario.violations.includes(assertion.name)).length;
+    const scenarioCount = assertionScenarios.length;
     return {
       id: assertion.id,
       name: assertion.name,
@@ -27,6 +30,10 @@ export async function runAutotest(
       status: failedAssertions.has(assertion.name) ? 'failed' : 'passed',
       partialCoverage,
       reason: assertion.metadata?.reason ?? (partialCoverage ? 'missing explorable assertion dependency metadata' : undefined),
+      exercised: scenarioCount > 0,
+      scenarioCount,
+      passScenarioCount: scenarioCount - failScenarioCount,
+      failScenarioCount,
     };
   });
 

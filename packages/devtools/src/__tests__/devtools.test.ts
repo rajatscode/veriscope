@@ -25,6 +25,10 @@ function autotestResult(assertionId = 'assertion_0'): AutotestResult {
       kind: 'always',
       status: 'passed',
       partialCoverage: false,
+      exercised: true,
+      scenarioCount: 1,
+      passScenarioCount: 1,
+      failScenarioCount: 0,
     }],
     violations: [],
     scenarios: [{
@@ -141,6 +145,52 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('does not redraw hidden Circuit work until the tab is active again', () => {
+    const graph = new CircuitGraph();
+    graph.registerNode({ name: 'first', type: 'signal' });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
+
+    canvasText.length = 0;
+    handle.setTab('autotest');
+    graph.registerNode({ name: 'hidden-while-autotest', type: 'signal' });
+    expect(canvasText).not.toContain('hidden-while-autotest');
+
+    handle.setTab('circuit');
+    expect(canvasText).toContain('hidden-while-autotest');
+
+    handle.dispose();
+  });
+
+  it('groups repeated player metric nodes in large Circuit graphs', () => {
+    const graph = new CircuitGraph();
+    const root = graph.registerNode({ name: 'arena.players', type: 'signal' });
+    const metrics = ['score', 'lines', 'pendingGarbage', 'lastSent', 'lastReceived', 'stackHeight', 'alive', 'ko', 'piece'];
+
+    for (let player = 1; player <= 10; player++) {
+      for (const metric of metrics) {
+        const nodeId = graph.registerNode({
+          name: `p${player}.${metric}`,
+          type: 'derived',
+          deps: [root],
+        });
+        graph.setNodeValue(nodeId, () => metric === 'piece' ? 'I' : metric === 'ko' ? false : 0);
+      }
+    }
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
+
+    expect(canvasText).toContain('p1.metrics');
+    expect(canvasText).not.toContain('p1.score');
+    expect(host.textContent).toContain('Grouped 90 repeated player metric nodes');
+
+    handle.dispose();
+  });
+
   it('records waveform data and lets users toggle signal visibility', () => {
     const graph = new CircuitGraph();
     let ready = false;
@@ -173,7 +223,7 @@ describe('mountDevtools', () => {
     graph.setAssertionFn(assertionId, () => true, 'always');
     const operationId = graph.beginOperation('loadUser', { outcomes: ['resolved', 'rejected'] });
     graph.resolveOperation(operationId, { id: 1 });
-    const autotest = vi.fn(async () => autotestResult(assertionId));
+    const autotest = vi.fn(async () => autotestResult('factory-assertion-id'));
 
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -187,8 +237,69 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('loadUser');
     expect(host.textContent).toContain('Autotest Results');
     expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
-    expect(host.textContent).toContain('Generated Cases (1)');
+    expect(host.textContent).toContain('Assertion Results (1 passed, 0 failed)');
+    expect(host.textContent).toContain('Generated Cases (1 passed, 0 failed)');
+    expect(host.textContent).toContain('Passing Cases (1)');
+    expect(host.textContent).toContain('Failing Cases (0)');
     expect(host.textContent).toContain('scenario-1');
+    expect(host.textContent).toContain('1 passed');
+
+    handle.dispose();
+  });
+
+  it('renders passing and failing autotest assertions and generated cases separately', async () => {
+    const graph = new CircuitGraph();
+    const passId = graph.registerNode({ name: 'passes', type: 'assertion' });
+    const failId = graph.registerNode({ name: 'fails', type: 'assertion' });
+    graph.setAssertionFn(passId, () => true, 'always');
+    graph.setAssertionFn(failId, () => false, 'always');
+    const autotest = vi.fn(async (): Promise<AutotestResult> => ({
+      status: 'failed',
+      assertions: [
+        { id: 'factory-pass', name: 'passes', kind: 'always', status: 'passed', partialCoverage: false, exercised: true, scenarioCount: 1, passScenarioCount: 1, failScenarioCount: 0 },
+        { id: 'factory-fail', name: 'fails', kind: 'after', status: 'failed', partialCoverage: true, reason: 'expected test failure', exercised: true, scenarioCount: 1, passScenarioCount: 0, failScenarioCount: 1 },
+      ],
+      violations: [{
+        assertionName: 'fails',
+        tick: 2,
+        signalValues: { mode: 'bad' },
+        sequence: [{ signal: 'mode', value: 'bad' }],
+      }],
+      scenarios: [
+        { id: 'case-pass', kind: 'enumerated', tick: 1, steps: [{ signal: 'mode', value: 'ok' }], assertions: ['passes'], violations: [] },
+        { id: 'case-fail', kind: 'enumerated', tick: 2, steps: [{ signal: 'mode', value: 'bad' }], assertions: ['fails'], violations: ['fails'] },
+      ],
+      coverage: {
+        toggle: metric(1, 2),
+        transitions: metric(0, 0),
+        cross: metric(0, 0),
+        operations: metric(0, 0),
+        overall: metric(1, 2),
+        gaps: [{ kind: 'toggle', id: 'mode', missing: ['false'] }],
+      },
+      steps: 2,
+    }));
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'autotest', autotest, coverage });
+
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(host.textContent).toContain('Assertion Results (1 passed, 1 failed)');
+    expect(host.textContent).toContain('passes');
+    expect(host.textContent).toContain('passed');
+    expect(host.textContent).toContain('fails');
+    expect(host.textContent).toContain('failed · partial');
+    expect(host.textContent).toContain('after · 1 cases');
+    expect(host.textContent).toContain('Generated Cases (1 passed, 1 failed)');
+    expect(host.textContent).toContain('Passing Cases (1)');
+    expect(host.textContent).toContain('case-pass');
+    expect(host.textContent).toContain('Failing Cases (1)');
+    expect(host.textContent).toContain('case-fail');
+    expect(host.textContent).toContain('P:1 F:0');
+    expect(host.textContent).toContain('P:0 F:1');
 
     handle.dispose();
   });

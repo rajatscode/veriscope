@@ -1,7 +1,7 @@
 // visualizer.ts — Graph visualizer: nodes as colored boxes, edges as lines
 // Simple force-directed-ish layout without external dependencies
 
-import type { CircuitGraph, GraphEvent } from '@veriscope/graph';
+import type { CircuitGraph, GraphEdge, GraphEvent, GraphNode } from '@veriscope/graph';
 
 const NODE_COLORS: Record<string, string> = {
   signal: '#6ee7f9',
@@ -13,6 +13,9 @@ const NODE_COLORS: Record<string, string> = {
 const NODE_W = 168;
 const NODE_H = 50;
 const PADDING = 40;
+const PLAYER_GROUP_THRESHOLD = 80;
+const MIN_DRAW_INTERVAL_MS = 120;
+const PLAYER_METRIC_RE = /^p\d+\.(score|lines|pendingGarbage|lastSent|lastReceived|stackHeight|alive|ko|piece)$/;
 
 interface LayoutNode {
   id: string;
@@ -21,6 +24,26 @@ interface LayoutNode {
   x: number;
   y: number;
   deps: string[];
+  memberIds?: string[];
+}
+
+interface DisplayNode {
+  id: string;
+  name: string;
+  type: string;
+  deps: string[];
+  memberIds?: string[];
+}
+
+interface DisplayModel {
+  nodes: DisplayNode[];
+  edges: GraphEdge[];
+  groupedMembers: number;
+}
+
+interface VisualizerOptions {
+  isActive?: () => boolean;
+  maxFps?: number;
 }
 
 function compactText(value: string, max: number): string {
@@ -38,9 +61,96 @@ function formatNodeValue(value: unknown): string {
   return String(value);
 }
 
-function layoutNodes(graph: CircuitGraph): LayoutNode[] {
+function displayModel(graph: CircuitGraph): DisplayModel {
   const nodes = graph.getNodes();
   const edges = graph.getEdges();
+
+  if (nodes.length < PLAYER_GROUP_THRESHOLD) {
+    return {
+      nodes: nodes.map(node => ({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        deps: node.deps,
+      })),
+      edges,
+      groupedMembers: 0,
+    };
+  }
+
+  const groupByPlayer = new Map<string, GraphNode[]>();
+  const groupedNodeIds = new Set<string>();
+  for (const node of nodes) {
+    if (!PLAYER_METRIC_RE.test(node.name)) continue;
+    const playerId = node.name.split('.')[0];
+    const group = groupByPlayer.get(playerId) ?? [];
+    group.push(node);
+    groupByPlayer.set(playerId, group);
+    groupedNodeIds.add(node.id);
+  }
+
+  if (groupByPlayer.size === 0) {
+    return {
+      nodes: nodes.map(node => ({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        deps: node.deps,
+      })),
+      edges,
+      groupedMembers: 0,
+    };
+  }
+
+  const groupIdByNode = new Map<string, string>();
+  const displayNodes: DisplayNode[] = [];
+  let groupedMembers = 0;
+
+  for (const node of nodes) {
+    if (groupedNodeIds.has(node.id)) continue;
+    displayNodes.push({
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      deps: node.deps,
+    });
+  }
+
+  for (const [playerId, members] of groupByPlayer) {
+    const groupId = `group:${playerId}`;
+    groupedMembers += members.length;
+    for (const member of members) groupIdByNode.set(member.id, groupId);
+    displayNodes.push({
+      id: groupId,
+      name: `${playerId}.metrics`,
+      type: 'derived',
+      deps: unique(members.flatMap(member => member.deps).map(id => groupIdByNode.get(id) ?? id).filter(id => id !== groupId)),
+      memberIds: members.map(member => member.id),
+    });
+  }
+
+  const displayEdges: GraphEdge[] = [];
+  const seenEdges = new Set<string>();
+  for (const edge of edges) {
+    const from = groupIdByNode.get(edge.from) ?? edge.from;
+    const to = groupIdByNode.get(edge.to) ?? edge.to;
+    if (from === to) continue;
+    const key = `${from}->${to}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
+    displayEdges.push({ from, to });
+  }
+
+  return { nodes: displayNodes, edges: displayEdges, groupedMembers };
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
+
+function layoutNodes(model: DisplayModel): LayoutNode[] {
+  const nodes = model.nodes;
+  const edges = model.edges;
 
   // Separate assertion nodes from the rest
   const assertionIds = new Set(nodes.filter(n => n.type === 'assertion').map(n => n.id));
@@ -109,6 +219,7 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
         x: layerX,
         y: PADDING + i * (NODE_H + 20),
         deps: node.deps,
+        memberIds: node.memberIds,
       });
     }
   }
@@ -128,6 +239,7 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
         x: rightmostX,
         y: PADDING + i * (NODE_H + 20),
         deps: node.deps,
+        memberIds: node.memberIds,
       });
     }
   }
@@ -138,8 +250,13 @@ function layoutNodes(graph: CircuitGraph): LayoutNode[] {
 export function createVisualizerPanel(
   container: HTMLElement,
   graph: CircuitGraph,
+  options?: VisualizerOptions,
 ): { dispose: () => void; refresh: () => void } {
   container.style.cssText = 'position:relative; overflow:auto; height:100%;';
+
+  const status = document.createElement('div');
+  status.style.cssText = 'position:sticky; top:0; left:0; z-index:2; display:none; padding:5px 8px; background:rgba(13,17,23,0.9); border-bottom:1px solid #21262d; color:#8b949e; font:11px "SF Mono","Fira Code",monospace;';
+  container.appendChild(status);
 
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'display:block;';
@@ -152,9 +269,39 @@ export function createVisualizerPanel(
 
   let disposed = false;
   let layoutResult: LayoutNode[] = [];
+  let displayEdges: GraphEdge[] = [];
+  let groupedMembers = 0;
+  let layoutDirty = true;
   let frameRequested = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastDrawAt = 0;
+  let pendingWhileInactive = false;
+  const minDrawInterval = Math.max(16, Math.floor(1000 / (options?.maxFps ?? Math.round(1000 / MIN_DRAW_INTERVAL_MS))));
 
-  function scheduleDraw() {
+  function isActive() {
+    return options?.isActive ? options.isActive() : true;
+  }
+
+  function scheduleDraw(forceLayout = false) {
+    if (disposed) return;
+    if (forceLayout) layoutDirty = true;
+    if (!isActive()) {
+      pendingWhileInactive = true;
+      return;
+    }
+    if (frameRequested || timer) return;
+    if (forceLayout) {
+      requestFrame();
+      return;
+    }
+    const delay = Math.max(0, minDrawInterval - (Date.now() - lastDrawAt));
+    timer = setTimeout(() => {
+      timer = null;
+      requestFrame();
+    }, delay);
+  }
+
+  function requestFrame() {
     if (disposed || frameRequested) return;
     frameRequested = true;
     requestAnimationFrame(() => {
@@ -164,8 +311,19 @@ export function createVisualizerPanel(
   }
 
   function draw() {
-    if (disposed) return;
-    layoutResult = layoutNodes(graph);
+    if (disposed || !isActive()) {
+      pendingWhileInactive = true;
+      return;
+    }
+    lastDrawAt = Date.now();
+    pendingWhileInactive = false;
+    if (layoutDirty) {
+      const model = displayModel(graph);
+      layoutResult = layoutNodes(model);
+      displayEdges = model.edges;
+      groupedMembers = model.groupedMembers;
+      layoutDirty = false;
+    }
 
     // Compute canvas size
     let maxX = 0, maxY = 0;
@@ -177,13 +335,21 @@ export function createVisualizerPanel(
     maxY = Math.max(maxY, 200);
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = maxX * dpr;
-    canvas.height = maxY * dpr;
+    const pixelWidth = Math.ceil(maxX * dpr);
+    const pixelHeight = Math.ceil(maxY * dpr);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
     canvas.style.width = `${maxX}px`;
     canvas.style.height = `${maxY}px`;
+    status.style.display = groupedMembers > 0 ? 'block' : 'none';
+    status.textContent = groupedMembers > 0
+      ? `Grouped ${groupedMembers} repeated player metric nodes. Hover a player metrics node for values.`
+      : '';
 
     const ctx = canvas.getContext('2d')!;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, maxX, maxY);
 
     // Background
@@ -196,9 +362,8 @@ export function createVisualizerPanel(
     }
 
     // Draw edges
-    const edges = graph.getEdges();
     ctx.lineWidth = 1;
-    for (const edge of edges) {
+    for (const edge of displayEdges) {
       const from = nodePositions.get(edge.from);
       const to = nodePositions.get(edge.to);
       if (!from || !to) continue;
@@ -263,15 +428,7 @@ export function createVisualizerPanel(
       const displayName = compactText(n.name, 21);
       ctx.fillText(displayName, n.x + 6, n.y + 17);
 
-      const graphNode = graph.getNode(n.id);
-      let valueText = '';
-      if (graphNode?.getValue) {
-        try {
-          valueText = compactText(formatNodeValue(graphNode.getValue()), 24);
-        } catch (_) {
-          valueText = 'unreadable';
-        }
-      }
+      const valueText = compactText(formatLayoutNodeValue(graph, n), 24);
       if (valueText) {
         ctx.fillStyle = 'rgba(201,209,217,0.78)';
         ctx.font = '10px "SF Mono", "Fira Code", monospace';
@@ -302,14 +459,7 @@ export function createVisualizerPanel(
     }
 
     if (found) {
-      const node = graph.getNode(found.id);
-      let valueStr = '';
-      if (node?.getValue) {
-        try {
-          const v = node.getValue();
-          valueStr = `\nValue: ${JSON.stringify(v)}`;
-        } catch (_) { /* ignore */ }
-      }
+      const valueStr = formatTooltipValue(graph, found);
       tip.textContent = `${found.name} (${found.type})${valueStr}\nDeps: ${found.deps.length}`;
       tip.style.display = 'block';
       tip.style.left = `${mx + 12}px`;
@@ -325,7 +475,10 @@ export function createVisualizerPanel(
   const unsubscribe = graph.subscribe((event: GraphEvent) => {
     if (
       event.type === 'node-created' ||
-      event.type === 'node-disposed' ||
+      event.type === 'node-disposed'
+    ) {
+      scheduleDraw(true);
+    } else if (
       event.type === 'signal-change' ||
       event.type === 'derived-recompute' ||
       event.type === 'effect-run' ||
@@ -333,7 +486,7 @@ export function createVisualizerPanel(
       event.type === 'assertion-passed' ||
       event.type === 'assertion-failed'
     ) {
-      scheduleDraw();
+      scheduleDraw(false);
     }
   });
 
@@ -342,9 +495,63 @@ export function createVisualizerPanel(
   return {
     dispose() {
       disposed = true;
+      if (timer) clearTimeout(timer);
       unsubscribe();
       container.innerHTML = '';
     },
-    refresh() { draw(); },
+    refresh() {
+      if (pendingWhileInactive || layoutDirty || isActive()) {
+        draw();
+      }
+    },
   };
+}
+
+function formatLayoutNodeValue(graph: CircuitGraph, node: LayoutNode): string {
+  if (node.memberIds) {
+    const memberByMetric = new Map<string, GraphNode>();
+    for (const memberId of node.memberIds) {
+      const member = graph.getNode(memberId);
+      if (!member) continue;
+      const metric = member.name.split('.')[1];
+      if (metric) memberByMetric.set(metric, member);
+    }
+    const score = memberByMetric.get('score')?.getValue?.();
+    const lines = memberByMetric.get('lines')?.getValue?.();
+    const queue = memberByMetric.get('pendingGarbage')?.getValue?.();
+    const ko = memberByMetric.get('ko')?.getValue?.();
+    return `S ${formatNodeValue(score)} L ${formatNodeValue(lines)} Q ${formatNodeValue(queue)} ${ko ? 'KO' : 'live'}`;
+  }
+
+  const graphNode = graph.getNode(node.id);
+  if (!graphNode?.getValue) return '';
+  try {
+    return formatNodeValue(graphNode.getValue());
+  } catch (_) {
+    return 'unreadable';
+  }
+}
+
+function formatTooltipValue(graph: CircuitGraph, node: LayoutNode): string {
+  if (node.memberIds) {
+    const lines: string[] = [];
+    for (const memberId of node.memberIds) {
+      const member = graph.getNode(memberId);
+      if (!member?.getValue) continue;
+      try {
+        lines.push(`${member.name}: ${formatNodeValue(member.getValue())}`);
+      } catch (_) {
+        lines.push(`${member.name}: unreadable`);
+      }
+    }
+    return lines.length > 0 ? `\n${lines.join('\n')}` : '';
+  }
+
+  const graphNode = graph.getNode(node.id);
+  if (!graphNode?.getValue) return '';
+  try {
+    return `\nValue: ${JSON.stringify(graphNode.getValue())}`;
+  } catch (_) {
+    return '\nValue: unreadable';
+  }
 }
