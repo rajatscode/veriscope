@@ -334,8 +334,8 @@ The extraction plan maps to these Veriscope package responsibilities:
   driving, shrinking, and test-framework integration;
 - `@veriscope/devtools`: graph, waveform, assertion, operation, and coverage
   views over the shared artifact format;
-- `@veriscope/cli`: snapshot capture and graph/timeline diffing over the same
-  artifact format;
+- `@veriscope/cli`: importable snapshot serialization helpers plus graph and
+  timeline diffing over the same artifact format;
 - mutation tooling: optional feedback on whether assertions catch graph-level or
   behavior-level mutations, built on top of graph, coverage, and test results.
 

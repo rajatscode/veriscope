@@ -3,7 +3,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CircuitGraph } from '@veriscope/graph';
-import { diffSnapshots, formatDiff } from '../diff';
+import { diffSnapshots, formatDiff, formatSnapshotSummary, loadSnapshot, validateSnapshot, writeSnapshot } from '../api';
 
 describe('CLI diff', () => {
   function makeTmpDir() {
@@ -101,5 +101,29 @@ describe('CLI diff', () => {
     const diff = CircuitGraph.diffGraphs(g.snapshot(), g.snapshot());
     const output = formatDiff(diff);
     expect(output).toContain('No differences');
+  });
+
+  it('validates snapshot schema before diffing', () => {
+    expect(() => validateSnapshot({ nodes: [] })).toThrow(/edges array/);
+    expect(() => validateSnapshot({ schemaVersion: 999, nodes: [], edges: [] })).toThrow(/unsupported schemaVersion/);
+  });
+
+  it('writes schema v1 snapshots with capture context', () => {
+    const tmp = makeTmpDir();
+    try {
+      const g = new CircuitGraph();
+      g.registerNode({ name: 'x', type: 'signal' });
+      const path = join(tmp, 'nested', 'snapshot.json');
+
+      const snapshot = writeSnapshot(g, path, { harness: 'unit' });
+      const loaded = loadSnapshot(path);
+
+      expect(snapshot.schemaVersion).toBe(1);
+      expect(loaded.schemaVersion).toBe(1);
+      expect(loaded.captureContext?.harness).toBe('unit');
+      expect(formatSnapshotSummary(loaded)).toContain('Nodes: 1');
+    } finally {
+      rmSync(tmp, { recursive: true });
+    }
   });
 });

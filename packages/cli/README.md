@@ -1,6 +1,6 @@
 # @veriscope/cli
 
-Command-line tool for comparing and exporting Veriscope reactive graph snapshots.
+Command-line tool for validating and comparing Veriscope reactive graph snapshots.
 
 ## Installation
 
@@ -13,6 +13,9 @@ npm install @veriscope/cli
 ```bash
 # Compare two graph snapshot files
 veriscope diff before.json after.json
+
+# Validate a snapshot file
+veriscope validate graph.json
 
 # Output:
 # Added nodes:
@@ -68,27 +71,37 @@ Added edges:
   + input -> counter
 ```
 
-### `veriscope snapshot -o <output-path>`
+### `veriscope validate <graph.json>`
 
-Writes a graph snapshot to a JSON file. This command is currently a placeholder -- in production use, the graph would be captured from a running application.
+Validates that a JSON file conforms to the Veriscope snapshot artifact schema and prints a short summary.
 
-**Flags:**
+**Arguments:**
 
-| Flag | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `-o <output-path>` | Yes | File path where the snapshot JSON will be written |
+| `<graph.json>` | Yes | Path to the graph snapshot JSON file |
 
 **Exit codes:**
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Missing `-o` flag or output path |
+| 1 | Missing file path or invalid snapshot schema |
 
 **Example:**
 
 ```bash
-veriscope snapshot -o ./my-graph.json
+veriscope validate ./my-graph.json
+```
+
+### Snapshot Capture
+
+The CLI process cannot inspect a browser app's in-memory `CircuitGraph` by itself. Capture snapshots from the app or test harness that owns the graph:
+
+```ts
+import { writeSnapshot } from '@veriscope/cli';
+
+writeSnapshot(graph, './my-graph.json', { harness: 'checkout-flow' });
 ```
 
 ### No command / unknown command
@@ -101,13 +114,20 @@ Snapshot JSON files conform to the `GraphSnapshot` interface from `@veriscope/gr
 
 ```json
 {
+  "schemaVersion": 1,
+  "capturedAt": "2026-05-04T00:00:00.000Z",
+  "currentTick": 12,
+  "captureContext": { "harness": "checkout-flow" },
   "nodes": [
-    { "id": "0", "name": "count", "type": "signal", "deps": [] },
-    { "id": "1", "name": "doubled", "type": "derived", "deps": ["0"] }
+    { "id": "count", "runtimeId": "count_0", "stablePath": "count", "name": "count", "type": "signal", "deps": [] },
+    { "id": "doubled", "runtimeId": "doubled_1", "stablePath": "doubled", "name": "doubled", "type": "derived", "deps": ["count_0"], "depPaths": ["count"] }
   ],
   "edges": [
-    { "from": "0", "to": "1" }
-  ]
+    { "from": "count", "to": "doubled" }
+  ],
+  "events": [],
+  "waveforms": {},
+  "operations": []
 }
 ```
 
@@ -115,10 +135,13 @@ Each node has:
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Unique node identifier |
+| `id` | `string` | Stable node identifier used in snapshot diffs |
+| `runtimeId` | `string` | Runtime-local node id |
+| `stablePath` | `string` | Stable path across executions |
 | `name` | `string` | Human-readable node name |
 | `type` | `string` | One of `signal`, `derived`, `effect`, `assertion` |
-| `deps` | `string[]` | IDs of nodes this node depends on |
+| `deps` | `string[]` | Runtime IDs of nodes this node depends on |
+| `depPaths` | `string[]` | Stable paths of nodes this node depends on |
 
 Each edge has:
 
@@ -137,15 +160,23 @@ Reads two snapshot JSON files from disk and returns a `GraphDiff` object.
 
 ### `loadSnapshot(path: string): GraphSnapshot`
 
-Reads and parses a single snapshot JSON file.
+Reads, parses, and validates a single snapshot JSON file.
 
 ### `formatDiff(diff: GraphDiff): string`
 
 Formats a `GraphDiff` into the same human-readable string the CLI prints.
 
-### `writeSnapshot(graph: CircuitGraph, outputPath: string): void`
+### `validateSnapshot(value: unknown, source?: string): GraphSnapshot`
 
-Serializes a `CircuitGraph` instance to a JSON file using `graph.snapshot()`.
+Validates an in-memory value and returns it as a `GraphSnapshot`.
+
+### `formatSnapshotSummary(snapshot: GraphSnapshot): string`
+
+Formats a short schema/node/edge/event/waveform/operation summary.
+
+### `writeSnapshot(graph: CircuitGraph, outputPath: string, captureContext?: Record<string, any>): GraphSnapshot`
+
+Serializes a `CircuitGraph` instance to a JSON file using `graph.snapshot(captureContext)`.
 
 ## GraphDiff Structure
 

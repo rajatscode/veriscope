@@ -6,7 +6,50 @@ import type { GraphSnapshot, GraphDiff } from '@veriscope/graph';
 
 export function loadSnapshot(path: string): GraphSnapshot {
   const raw = readFileSync(path, 'utf-8');
-  return JSON.parse(raw) as GraphSnapshot;
+  return validateSnapshot(JSON.parse(raw), path);
+}
+
+export function validateSnapshot(value: unknown, source = 'snapshot'): GraphSnapshot {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`${source} is not a graph snapshot object`);
+  }
+
+  const snapshot = value as Partial<GraphSnapshot>;
+  if (snapshot.schemaVersion !== undefined && snapshot.schemaVersion !== 1) {
+    throw new Error(`${source} uses unsupported schemaVersion ${String(snapshot.schemaVersion)}`);
+  }
+  if (!Array.isArray(snapshot.nodes)) {
+    throw new Error(`${source} is missing a nodes array`);
+  }
+  if (!Array.isArray(snapshot.edges)) {
+    throw new Error(`${source} is missing an edges array`);
+  }
+
+  for (const [idx, node] of snapshot.nodes.entries()) {
+    if (!node || typeof node !== 'object') {
+      throw new Error(`${source} node[${idx}] is not an object`);
+    }
+    if (typeof node.name !== 'string') {
+      throw new Error(`${source} node[${idx}] is missing a string name`);
+    }
+    if (typeof node.type !== 'string') {
+      throw new Error(`${source} node[${idx}] is missing a string type`);
+    }
+    if (!Array.isArray(node.deps)) {
+      throw new Error(`${source} node[${idx}] is missing a deps array`);
+    }
+  }
+
+  for (const [idx, edge] of snapshot.edges.entries()) {
+    if (!edge || typeof edge !== 'object') {
+      throw new Error(`${source} edge[${idx}] is not an object`);
+    }
+    if (typeof edge.from !== 'string' || typeof edge.to !== 'string') {
+      throw new Error(`${source} edge[${idx}] must have string from/to fields`);
+    }
+  }
+
+  return snapshot as GraphSnapshot;
 }
 
 export function diffSnapshots(pathA: string, pathB: string): GraphDiff {
@@ -47,6 +90,30 @@ export function formatDiff(diff: GraphDiff): string {
 
   if (lines.length === 0) {
     lines.push('No differences found.');
+  }
+
+  return lines.join('\n');
+}
+
+export function formatSnapshotSummary(snapshot: GraphSnapshot): string {
+  const waveformCount = snapshot.waveforms ? Object.keys(snapshot.waveforms).length : 0;
+  const lines = [
+    `Veriscope snapshot schema v${snapshot.schemaVersion ?? 1}`,
+    `Nodes: ${snapshot.nodes.length}`,
+    `Edges: ${snapshot.edges.length}`,
+    `Events: ${snapshot.events?.length ?? 0}`,
+    `Waveforms: ${waveformCount}`,
+    `Operations: ${snapshot.operations?.length ?? 0}`,
+  ];
+
+  if (snapshot.disposedNodes && snapshot.disposedNodes.length > 0) {
+    lines.push(`Disposed nodes: ${snapshot.disposedNodes.length}`);
+  }
+  if (snapshot.currentTick !== undefined) {
+    lines.push(`Current tick: ${snapshot.currentTick}`);
+  }
+  if (snapshot.capturedAt) {
+    lines.push(`Captured at: ${snapshot.capturedAt}`);
   }
 
   return lines.join('\n');

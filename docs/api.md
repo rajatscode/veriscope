@@ -807,37 +807,54 @@ Output sections (only printed when differences exist):
 - `+ from -> to` -- added edges
 - `- from -> to` -- removed edges
 
-Exit codes: `0` success, `1` missing arguments.
+Exit codes: `0` success, `1` missing arguments or invalid snapshot schema.
 
-#### `veriscope snapshot -o <output-path>`
+#### `veriscope validate <graph.json>`
 
-Writes a graph snapshot to a JSON file.
+Validates a graph snapshot artifact and prints a short summary.
 
 ```bash
-veriscope snapshot -o ./my-graph.json
+veriscope validate ./my-graph.json
 ```
 
-Exit codes: `0` success, `1` missing `-o` flag.
+Exit codes: `0` success, `1` missing file path or invalid snapshot schema.
+
+Snapshot capture must happen inside the app/test process that owns the graph:
+
+```ts
+import { writeSnapshot } from '@veriscope/cli';
+
+writeSnapshot(graph, './my-graph.json', { harness: 'checkout-flow' });
+```
 
 ### Programmatic API
 
 ```ts
 function diffSnapshots(pathA: string, pathB: string): GraphDiff
 function loadSnapshot(path: string): GraphSnapshot
+function validateSnapshot(value: unknown, source?: string): GraphSnapshot
 function formatDiff(diff: GraphDiff): string
-function writeSnapshot(graph: CircuitGraph, outputPath: string): void
+function formatSnapshotSummary(snapshot: GraphSnapshot): string
+function writeSnapshot(graph: CircuitGraph, outputPath: string, captureContext?: Record<string, any>): GraphSnapshot
 ```
 
 ### Snapshot Format
 
 ```json
 {
+  "schemaVersion": 1,
+  "capturedAt": "2026-05-04T00:00:00.000Z",
+  "currentTick": 12,
+  "captureContext": { "harness": "checkout-flow" },
   "nodes": [
-    { "id": "0", "name": "count", "type": "signal", "deps": [] },
-    { "id": "1", "name": "doubled", "type": "derived", "deps": ["0"] }
+    { "id": "count", "runtimeId": "count_0", "stablePath": "count", "name": "count", "type": "signal", "deps": [] },
+    { "id": "doubled", "runtimeId": "doubled_1", "stablePath": "doubled", "name": "doubled", "type": "derived", "deps": ["count_0"], "depPaths": ["count"] }
   ],
   "edges": [
-    { "from": "0", "to": "1" }
-  ]
+    { "from": "count", "to": "doubled" }
+  ],
+  "events": [],
+  "waveforms": {},
+  "operations": []
 }
 ```

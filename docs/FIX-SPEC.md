@@ -253,7 +253,9 @@ when the above behavior is real:
 - repeated component instances get distinct stable paths in snapshots;
 - disposing a node preserves waveform history with an end marker;
 - updater-form signal setters notify the graph correctly;
-- CLI snapshot writes the shared artifact schema, not a placeholder;
+- CLI diff/validate consume the shared artifact schema, standalone snapshot
+  refuses without a capture harness, and programmatic `writeSnapshot()` writes
+  the shared schema;
 - external operation spans link request and response ticks;
 - operation outcome coverage reports explicit denominators;
 - assertions without explorable metadata are labeled as partial coverage;
