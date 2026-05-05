@@ -269,6 +269,10 @@ when the above behavior is real:
 - the Vitest plugin is tested through a real Vitest run, not only by directly
   calling reporter hooks.
 
+Current implementation note: the Vitest reporter supports `inputFiles` because
+Vitest reporters run outside test workers. Worker tests can write reports with
+`saveCoverageToFile()`, and the reporter merges those files on `onTestRunEnd`.
+
 Minimum derived-chain regression:
 
 ```ts

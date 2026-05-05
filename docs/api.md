@@ -479,11 +479,12 @@ interface VeriscopeCoverageReporterOptions {
   format?: 'console' | 'json' | 'html';  // default: 'console'
   thresholds?: CoverageThresholds;
   outputFile?: string;
+  inputFiles?: string[];                 // worker-emitted reports to merge
   getReport?: () => CoverageReport;       // for testability
 }
 ```
 
-Returns a Vitest-compatible reporter with `name: "veriscope-coverage"` and `onTestRunEnd` hook. Sets `process.exitCode = 1` on threshold failure.
+Returns a Vitest-compatible reporter with `name: "veriscope-coverage"` and `onTestRunEnd` hook. It merges `inputFiles` with the process-local report and sets `process.exitCode = 1` on threshold failure.
 
 ```ts
 // vitest.config.ts

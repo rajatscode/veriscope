@@ -136,7 +136,7 @@ Reads a JSON coverage file from disk and deserializes it back into a `CoverageRe
 Creates a Vitest-compatible reporter object that outputs Veriscope reactive coverage after the test run completes. The returned object has a `name` property (`"veriscope-coverage"`) and an `onTestRunEnd` hook.
 
 Behavior:
-1. When the test run ends, it retrieves the coverage report (from `coverage.getReport()` global singleton, or from `options.getReport` if provided).
+1. When the test run ends, it retrieves the coverage report from `coverage.getReport()` or `options.getReport`, then merges any `options.inputFiles` written by test workers.
 2. Formats the report according to `options.format`.
 3. If `options.outputFile` is set, writes the formatted output to that file; otherwise prints to stdout.
 4. If `options.thresholds` is set, checks thresholds and sets `process.exitCode = 1` on failure, printing failure details to stderr.
@@ -151,10 +151,14 @@ interface VeriscopeCoverageReporterOptions {
   thresholds?: CoverageThresholds;
   /** Output file path for json/html format. */
   outputFile?: string;
+  /** Coverage JSON files emitted by test workers to merge at report time. */
+  inputFiles?: string[];
   /** If provided, called to get the CoverageReport (for testability). Otherwise uses global singleton. */
   getReport?: () => CoverageReport;
 }
 ```
+
+Vitest reporters run outside test workers, so worker-collected coverage should be written with `saveCoverageToFile()` and passed back through `inputFiles` when you need real integration coverage from a full Vitest run.
 
 ### Re-exported Types from `@veriscope/graph`
 

@@ -2,6 +2,8 @@
 
 import type { CoverageReport } from '@veriscope/graph';
 import { coverage } from '@veriscope/graph';
+import { writeFileSync } from 'node:fs';
+import { loadCoverageFromFile, mergeCoverageReports } from './merge.js';
 import { formatConsole, formatJSON, formatHTML } from './reporter.js';
 import { checkThresholds, type CoverageThresholds } from './thresholds.js';
 
@@ -12,6 +14,8 @@ export interface VeriscopeCoverageReporterOptions {
   thresholds?: CoverageThresholds;
   /** Output file path for json/html format. */
   outputFile?: string;
+  /** Coverage JSON files emitted by test workers to merge at report time. */
+  inputFiles?: string[];
   /** If provided, called to get the CoverageReport (for testability). Otherwise uses global singleton. */
   getReport?: () => CoverageReport;
 }
@@ -33,7 +37,11 @@ export function veriscopeCoverageReporter(options: VeriscopeCoverageReporterOpti
     name: 'veriscope-coverage',
 
     onTestRunEnd(_testModules?: any[], _unhandledErrors?: any[], _reason?: string) {
-      const report = options.getReport ? options.getReport() : coverage.getReport();
+      const reports = [
+        options.getReport ? options.getReport() : coverage.getReport(),
+        ...(options.inputFiles ?? []).map(path => loadCoverageFromFile(path)),
+      ];
+      const report = reports.length === 1 ? reports[0] : mergeCoverageReports(...reports);
 
       // Format and output
       let output: string;
@@ -46,13 +54,7 @@ export function veriscopeCoverageReporter(options: VeriscopeCoverageReporterOpti
       }
 
       if (options.outputFile) {
-        // Write to file — dynamic import to keep browser-portability
-        import('fs').then(fs => {
-          fs.writeFileSync(options.outputFile!, output, 'utf-8');
-        }).catch(() => {
-          // Fallback: print to console if fs not available
-          console.log('\n' + output);
-        });
+        writeFileSync(options.outputFile, output, 'utf-8');
       } else {
         console.log('\n' + output);
       }

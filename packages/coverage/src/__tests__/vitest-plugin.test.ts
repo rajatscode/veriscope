@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { veriscopeCoverageReporter } from '../vitest-plugin';
 import type { CoverageReport } from '@veriscope/graph';
 
@@ -103,4 +107,64 @@ describe('veriscopeCoverageReporter', () => {
     consoleSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  it('runs as a real Vitest reporter in a child Vitest process', () => {
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+    const tmp = mkdtempSync(join('/private/tmp', 'veriscope-vitest-reporter-'));
+    try {
+      const configPath = join(tmp, 'vitest.config.mjs');
+      const testPath = join(tmp, 'sample.test.ts');
+      const reportPath = join(tmp, 'veriscope-coverage.json');
+
+      writeFileSync(configPath, `
+        import { veriscopeCoverageReporter } from '${resolve(repoRoot, 'packages/coverage/src/index.ts')}';
+
+        export default {
+          root: '${tmp}',
+          resolve: {
+            alias: {
+              '@veriscope/graph': '${resolve(repoRoot, 'packages/graph/src/index.ts')}',
+              '@veriscope/coverage': '${resolve(repoRoot, 'packages/coverage/src/index.ts')}',
+            },
+          },
+          test: {
+            include: ['sample.test.ts'],
+            reporters: ['default', veriscopeCoverageReporter({
+              inputFiles: ['${reportPath}'],
+              thresholds: { overall: 100 },
+            })],
+          },
+        };
+      `);
+
+      writeFileSync(testPath, `
+        import { expect, it } from 'vitest';
+        import { coverage } from '@veriscope/graph';
+        import { saveCoverageToFile } from '@veriscope/coverage';
+
+        it('records complete toggle coverage', () => {
+          coverage.reset();
+          coverage.enable();
+          coverage.recordToggle('flag', true);
+          coverage.recordToggle('flag', false);
+          expect(coverage.getReport().summary.percentage).toBe(100);
+          saveCoverageToFile(coverage.getReport(), '${reportPath}');
+        });
+      `);
+
+      const vitestBin = resolve(repoRoot, 'node_modules/vitest/vitest.mjs');
+      const result = spawnSync(process.execPath, [vitestBin, 'run', '--config', configPath], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        env: { ...process.env, FORCE_COLOR: '0' },
+      });
+
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      expect(output).toContain('Veriscope Reactive Coverage Report');
+      expect(output).toContain('100.0%');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

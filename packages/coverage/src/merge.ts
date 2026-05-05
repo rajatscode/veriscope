@@ -8,6 +8,7 @@ import type {
   ToggleCoverage,
   TransitionCoverage,
 } from '@veriscope/graph';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 /**
  * Merge multiple coverage reports into a single aggregate report.
@@ -170,17 +171,14 @@ export function saveCoverageToFile(report: CoverageReport, path: string): void {
     summary: report.summary,
   };
 
-  // Use require to keep this synchronous and avoid top-level import
-  const fs = require('fs');
-  fs.writeFileSync(path, JSON.stringify(serializable, null, 2), 'utf-8');
+  writeFileSync(path, JSON.stringify(serializable, null, 2), 'utf-8');
 }
 
 /**
  * Load a coverage report from a JSON file on disk.
  */
 export function loadCoverageFromFile(path: string): CoverageReport {
-  const fs = require('fs');
-  const raw = JSON.parse(fs.readFileSync(path, 'utf-8'));
+  const raw = JSON.parse(readFileSync(path, 'utf-8'));
 
   return {
     toggle: raw.toggle,
