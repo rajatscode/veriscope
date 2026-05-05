@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mutate } from '@veriscope/mutate';
+import { runAutotest } from '@veriscope/test';
 import { advanceArena, garbageFromClearedLines, hardDrop, resetPlayers, sendManualGarbage } from './tetris';
+import { createVsTetrisGraph } from './veriscopeTetris';
 
 describe('vs-tetris engine', () => {
   it('creates one human and three AI players', () => {
@@ -83,5 +86,32 @@ describe('vs-tetris engine', () => {
     const result = hardDrop(human);
 
     expect(result.ko).toBe(true);
+  });
+
+  it('exposes Tetris state to Veriscope autotest as scalar graph nodes and generated cases', async () => {
+    const graph = createVsTetrisGraph(2);
+    const names = graph.getNodes().map(node => node.name);
+
+    expect(names).toContain('p1.score');
+    expect(names).toContain('p2.pendingGarbage');
+    expect(names).toContain('arena.maxStackHeight');
+    expect(names).toContain('p1.canSend2');
+
+    const result = await runAutotest(graph, { budget: 120, name: 'vs-tetris-autotest' });
+
+    expect(result.scenarios.length).toBeGreaterThan(0);
+    expect(result.scenarios.some(scenario => scenario.steps.length > 0)).toBe(true);
+    expect(result.coverage.overall.total).toBeGreaterThan(0);
+    expect(result.assertions.some(assertion => assertion.partialCoverage)).toBe(true);
+  });
+
+  it('registers a real mutation target that autotest can kill', async () => {
+    const result = await mutate(
+      () => createVsTetrisGraph(1),
+      { budget: 160, operators: ['constant-fold', 'invert-comparison'] },
+    );
+
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.killed).toBeGreaterThan(0);
   });
 });

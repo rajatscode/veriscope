@@ -23,6 +23,16 @@ function isAutotestResult(result: AutotestResult | ExploreResult): result is Aut
   return Array.isArray((result as Partial<AutotestResult>).assertions);
 }
 
+function formatScenarioValue(value: unknown): string {
+  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') return '{...}';
+  return String(value);
+}
+
 export function createAssertionsPanel(
   container: HTMLElement,
   graph: CircuitGraph,
@@ -229,6 +239,15 @@ export function createAssertionsPanel(
         <div style="color:#8b949e;">Status: <span style="color:${status === 'failed' ? '#ff5d8f' : '#72f1b8'}">${status}</span> · Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
         <div style="color:#8b949e; margin-top:4px;">Coverage: ${coverage.overall.percentage.toFixed(1)}% (${coverage.overall.covered}/${coverage.overall.total}) · Gaps: ${coverage.gaps.length}</div>
       `;
+      if (isAutotestResult(lastRunResult)) {
+        const partials = lastRunResult.assertions.filter(assertion => assertion.partialCoverage);
+        const partialLine = document.createElement('div');
+        partialLine.style.cssText = `color:${partials.length > 0 ? '#f8d66d' : '#8b949e'}; margin-top:4px;`;
+        partialLine.textContent = partials.length > 0
+          ? `Partial assertions: ${partials.length} (${partials.map(assertion => assertion.name).join(', ')})`
+          : 'Partial assertions: 0';
+        resultBox.appendChild(partialLine);
+      }
       if (v.length > 0) {
         const list = document.createElement('div');
         list.style.cssText = 'margin-top:6px;';
@@ -240,6 +259,55 @@ export function createAssertionsPanel(
           list.appendChild(item);
         }
         resultBox.appendChild(list);
+      }
+      if (lastRunResult.scenarios.length > 0) {
+        const scenarioBox = document.createElement('div');
+        scenarioBox.style.cssText = 'margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;';
+        const scenarioTitle = document.createElement('div');
+        scenarioTitle.style.cssText = 'color:#c9d1d9; margin-bottom:5px; font-weight:600;';
+        scenarioTitle.textContent = `Generated Cases (${lastRunResult.scenarios.length})`;
+        scenarioBox.appendChild(scenarioTitle);
+
+        for (const scenario of lastRunResult.scenarios.slice(0, 10)) {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:5px 6px; margin-top:4px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:3px; font-size:0.68rem;';
+
+          const header = document.createElement('div');
+          header.style.cssText = 'display:flex; justify-content:space-between; gap:8px; color:#8b949e;';
+          const left = document.createElement('span');
+          left.textContent = `${scenario.id} · ${scenario.kind}`;
+          const right = document.createElement('span');
+          right.style.cssText = scenario.violations.length > 0 ? 'color:#ff5d8f;' : 'color:#72f1b8;';
+          right.textContent = scenario.violations.length > 0 ? `${scenario.violations.length} violations` : 'passed';
+          header.appendChild(left);
+          header.appendChild(right);
+          item.appendChild(header);
+
+          const stepsLine = document.createElement('div');
+          stepsLine.style.cssText = 'color:#c9d1d9; margin-top:3px; overflow-wrap:anywhere;';
+          stepsLine.textContent = scenario.steps.length > 0
+            ? scenario.steps.map(step => `${step.signal}=${formatScenarioValue(step.value)}`).join(', ')
+            : '(current state)';
+          item.appendChild(stepsLine);
+
+          if (scenario.assertions.length > 0) {
+            const assertionLine = document.createElement('div');
+            assertionLine.style.cssText = 'color:#666; margin-top:2px; overflow-wrap:anywhere;';
+            assertionLine.textContent = `checks ${scenario.assertions.join(', ')}`;
+            item.appendChild(assertionLine);
+          }
+
+          scenarioBox.appendChild(item);
+        }
+
+        if (lastRunResult.scenarios.length > 10) {
+          const more = document.createElement('div');
+          more.style.cssText = 'color:#666; margin-top:5px;';
+          more.textContent = `Showing 10 of ${lastRunResult.scenarios.length} generated cases.`;
+          scenarioBox.appendChild(more);
+        }
+
+        resultBox.appendChild(scenarioBox);
       }
       container.appendChild(resultBox);
     }

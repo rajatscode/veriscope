@@ -187,6 +187,8 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('loadUser');
     expect(host.textContent).toContain('Autotest Results');
     expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
+    expect(host.textContent).toContain('Generated Cases (1)');
+    expect(host.textContent).toContain('scenario-1');
 
     handle.dispose();
   });

@@ -10,8 +10,8 @@ const NODE_COLORS: Record<string, string> = {
   assertion: '#ff5d8f',
 };
 
-const NODE_W = 120;
-const NODE_H = 36;
+const NODE_W = 168;
+const NODE_H = 50;
 const PADDING = 40;
 
 interface LayoutNode {
@@ -21,6 +21,21 @@ interface LayoutNode {
   x: number;
   y: number;
   deps: string[];
+}
+
+function compactText(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}\u2026` : value;
+}
+
+function formatNodeValue(value: unknown): string {
+  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') return '{...}';
+  if (typeof value === 'function') return 'fn';
+  return String(value);
 }
 
 function layoutNodes(graph: CircuitGraph): LayoutNode[] {
@@ -240,18 +255,34 @@ export function createVisualizerPanel(
       ctx.fillRect(n.x + 1, n.y + 1, NODE_W - 2, NODE_H - 2);
       ctx.globalAlpha = 1;
 
-      // Label
+      // Label and current value. Showing values in-canvas makes graph redraws
+      // visibly live without requiring hover/tooltips.
       ctx.fillStyle = color;
       ctx.font = '11px "SF Mono", "Fira Code", monospace';
-      ctx.textBaseline = 'middle';
-      const displayName = n.name.length > 14 ? n.name.slice(0, 13) + '\u2026' : n.name;
-      ctx.fillText(displayName, n.x + 6, n.y + NODE_H / 2);
+      ctx.textBaseline = 'alphabetic';
+      const displayName = compactText(n.name, 21);
+      ctx.fillText(displayName, n.x + 6, n.y + 17);
+
+      const graphNode = graph.getNode(n.id);
+      let valueText = '';
+      if (graphNode?.getValue) {
+        try {
+          valueText = compactText(formatNodeValue(graphNode.getValue()), 24);
+        } catch (_) {
+          valueText = 'unreadable';
+        }
+      }
+      if (valueText) {
+        ctx.fillStyle = 'rgba(201,209,217,0.78)';
+        ctx.font = '10px "SF Mono", "Fira Code", monospace';
+        ctx.fillText(valueText, n.x + 6, n.y + 34);
+      }
 
       // Type indicator (small text)
       ctx.fillStyle = 'rgba(154,168,189,0.5)';
       ctx.font = '8px system-ui';
       ctx.textAlign = 'right';
-      ctx.fillText(n.type, n.x + NODE_W - 4, n.y + NODE_H / 2);
+      ctx.fillText(n.type, n.x + NODE_W - 4, n.y + NODE_H - 6);
       ctx.textAlign = 'left';
     }
   }

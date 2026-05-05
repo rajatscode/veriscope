@@ -151,6 +151,25 @@ describe('generateMutations', () => {
 });
 
 describe('mutate', () => {
+  it('applies generated mutations to fresh factory graphs by stable node identity', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let ready = true;
+      const readyId = g.registerNode({ name: 'ready', type: 'signal', stablePath: 'form/ready' });
+      g.setNodeValue(readyId, () => ready);
+      g.setNodeSetter(readyId, (v: boolean) => { ready = v; });
+
+      const assertId = g.registerNode({ name: 'ready-required', type: 'assertion', deps: [readyId] });
+      g.setAssertionFn(assertId, () => ready, 'always');
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 20, operators: ['negate'] });
+
+    expect(result.killed).toBeGreaterThan(0);
+    expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:form/ready')).toBe(true);
+  });
+
   it('detects well-asserted graphs (mutations killed)', async () => {
     const factory = () => {
       const g = new CircuitGraph();

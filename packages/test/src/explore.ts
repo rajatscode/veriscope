@@ -1,6 +1,6 @@
 // explore.ts — Main explore() function: backward-cone-driven state exploration
 
-import { coverage, type CircuitGraph, type CoverageReport } from '@veriscope/graph';
+import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
 import { parseComputeFn } from './fn-parser.js';
 import type { ExploreOptions, ExploreResult, Violation } from './types.js';
@@ -60,7 +60,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         return typeof v === 'boolean';
       });
 
-      const nonBoolRoots = rootNodes.filter(n => {
+      const nonBoolRootCandidates = rootNodes.filter(n => {
         if (!n.getValue) return false;
         const v = n.getValue();
         return typeof v !== 'boolean';
@@ -80,14 +80,20 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       }
 
       const nonBoolDomains = new Map<string, any[]>();
-      for (const node of nonBoolRoots) {
+      const nonBoolRoots: typeof nonBoolRootCandidates = [];
+      for (const node of nonBoolRootCandidates) {
         const declaredDomain = domainForNode(assertion.metadata?.domains, node);
         if (declaredDomain && declaredDomain.length > 0) {
           nonBoolDomains.set(node.id, declaredDomain);
+          nonBoolRoots.push(node);
           continue;
         }
 
         const currentVal = node.getValue?.();
+        if (isOpaqueRootValue(currentVal)) {
+          continue;
+        }
+
         if (nonNullSignals.has(node.name)) {
           nonBoolDomains.set(node.id, [
             typeof currentVal === 'string' ? 'error' : 1,
@@ -101,20 +107,37 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             typeof currentVal === 'string' ? 'value' : 1,
           ]);
         }
+        nonBoolRoots.push(node);
       }
 
+      const boolDomains = new Map<string, any[]>();
+      for (const node of boolRoots) {
+        const declaredDomain = domainForNode(assertion.metadata?.domains, node);
+        const domain = declaredDomain && declaredDomain.length > 0
+          ? declaredDomain.filter(value => typeof value === 'boolean')
+          : [false, true];
+        boolDomains.set(node.id, domain.length > 0 ? domain : [false, true]);
+      }
+
+      const boolComboCount = boolRoots.reduce(
+        (total, node) => total * Math.max(boolDomains.get(node.id)?.length ?? 0, 1),
+        1,
+      );
       const nonBoolComboCount = nonBoolRoots.reduce(
         (total, node) => total * Math.max(nonBoolDomains.get(node.id)?.length ?? 0, 1),
         1,
       );
-      const totalCombos = Math.max(1, (1 << boolRoots.length) * nonBoolComboCount);
+      const totalCombos = Math.max(1, boolComboCount * nonBoolComboCount);
 
       if ((boolRoots.length > 0 || nonBoolRoots.length > 0) && rootNodes.length <= 15) {
         // 4. Enumerate combinations of booleans × non-boolean value variants
         for (let i = 0; i < totalCombos && steps < budget; i++) {
-          const boolIdx = i % (1 << boolRoots.length);
-          const nonBoolIdx = Math.floor(i / (1 << boolRoots.length));
-          const boolCombo = boolRoots.map((_, j) => !!(boolIdx & (1 << j)));
+          const boolIdx = i % boolComboCount;
+          const nonBoolIdx = Math.floor(i / boolComboCount);
+          const boolCombo = boolRoots.map((node, j) => {
+            const values = boolDomains.get(node.id) ?? [false, true];
+            return valueForDomainIndex(boolIdx, boolRoots, boolDomains, j, values);
+          });
 
           graph.openTick();
 
@@ -227,8 +250,11 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         const currentVal = node.getValue?.();
 
         if (typeof currentVal === 'boolean') {
-          // Toggle to both true and false
-          for (const val of [true, false]) {
+          // Toggle through declared assertion domain values when present,
+          // otherwise cover both boolean values.
+          const values = coverageDomainForNode(assertions, node)
+            ?.filter((value): value is boolean => typeof value === 'boolean') ?? [true, false];
+          for (const val of values.length > 0 ? values : [true, false]) {
             graph.openTick();
             graph.driveNodeValue(node.id, val);
             await flush();
@@ -280,7 +306,10 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     graph.openTick();
     for (const node of signalNodes) {
       if (node.setValue && savedValues.has(node.id)) {
-        graph.driveNodeValue(node.id, savedValues.get(node.id));
+        const savedValue = savedValues.get(node.id);
+        if (!Object.is(node.getValue?.(), savedValue)) {
+          graph.driveNodeValue(node.id, savedValue);
+        }
       }
     }
     graph.closeTick();
@@ -290,6 +319,45 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
 
 function domainForNode(domains: Record<string, any[]> | undefined, node: NonNullable<ReturnType<CircuitGraph['getNode']>>): any[] | undefined {
   return domains?.[node.id] ?? domains?.[node.stablePath] ?? domains?.[node.name];
+}
+
+function coverageDomainForNode(
+  assertions: Array<{ metadata?: AssertionMetadata }>,
+  node: NonNullable<ReturnType<CircuitGraph['getNode']>>,
+): any[] | undefined {
+  const values: any[] = [];
+  for (const assertion of assertions) {
+    const domain = domainForNode(assertion.metadata?.domains, node);
+    if (!domain) continue;
+    for (const value of domain) {
+      if (!values.some(existing => Object.is(existing, value))) values.push(value);
+    }
+  }
+  return values.length > 0 ? values : undefined;
+}
+
+function isOpaqueRootValue(value: unknown): boolean {
+  return value !== null && (typeof value === 'object' || typeof value === 'function' || typeof value === 'symbol');
+}
+
+function driveValueForAssertion(
+  metadata: AssertionMetadata | undefined,
+  node: NonNullable<ReturnType<CircuitGraph['getNode']>>,
+  desiredValue: unknown,
+): { driveable: true; value: unknown } | { driveable: false } {
+  const declaredDomain = domainForNode(metadata?.domains, node);
+  if (declaredDomain && declaredDomain.length > 0) {
+    const value = declaredDomain.some(domainValue => Object.is(domainValue, desiredValue))
+      ? desiredValue
+      : declaredDomain[0];
+    return { driveable: true, value };
+  }
+
+  if (isOpaqueRootValue(node.getValue?.())) {
+    return { driveable: false };
+  }
+
+  return { driveable: true, value: desiredValue };
 }
 
 function valueForDomainIndex(
@@ -523,7 +591,7 @@ interface AdversarialResult {
  */
 async function adversarialPass(
   graph: CircuitGraph,
-  assertions: Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[] }>,
+  assertions: Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[]; metadata?: AssertionMetadata }>,
   flush: () => void | Promise<void>,
   remainingBudget: number,
 ): Promise<AdversarialResult> {
@@ -577,16 +645,20 @@ async function adversarialPass(
         // Extract signal.val references first
         for (const m of inner.matchAll(/(\w+)\.val\b/g)) {
           const name = m[1];
-          if (nodeByName.has(name)) {
-            targetValues.set(name, comparisonValues.get(name) ?? true);
+          const node = nodeByName.get(name);
+          if (node) {
+            const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(name) ?? true);
+            if (drive.driveable) targetValues.set(name, drive.value);
           }
         }
         // If no .val refs found, try plain identifiers (headless test mode)
         if (targetValues.size === 0) {
           for (const m of inner.matchAll(/\b(\w+)\b/g)) {
             const name = m[1];
-            if (nodeByName.has(name)) {
-              targetValues.set(name, comparisonValues.get(name) ?? true);
+            const node = nodeByName.get(name);
+            if (node) {
+              const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(name) ?? true);
+              if (drive.driveable) targetValues.set(name, drive.value);
             }
           }
         }
@@ -595,8 +667,10 @@ async function adversarialPass(
       // Fallback: use parsed signals with comparison-aware values
       if (targetValues.size === 0) {
         for (const sigName of parsed.signals) {
-          if (nodeByName.has(sigName)) {
-            targetValues.set(sigName, comparisonValues.get(sigName) ?? true);
+          const node = nodeByName.get(sigName);
+          if (node) {
+            const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(sigName) ?? true);
+            if (drive.driveable) targetValues.set(sigName, drive.value);
           }
         }
       }
@@ -604,7 +678,8 @@ async function adversarialPass(
       // Last resort: try setting all signals in cone to true
       if (targetValues.size === 0) {
         for (const node of coneNodes) {
-          targetValues.set(node.name, comparisonValues.get(node.name) ?? true);
+          const drive = driveValueForAssertion(assertion.metadata, node, comparisonValues.get(node.name) ?? true);
+          if (drive.driveable) targetValues.set(node.name, drive.value);
         }
       }
 

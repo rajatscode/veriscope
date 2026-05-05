@@ -1,7 +1,33 @@
 // operators.ts — Mutation operators for reactive graphs
 
-import type { CircuitGraph } from '@veriscope/graph';
+import type { CircuitGraph, GraphNode, NodeType } from '@veriscope/graph';
 import type { Mutation } from './types.js';
+
+interface NodeRef {
+  id: string;
+  stablePath: string;
+  name: string;
+  type: NodeType;
+}
+
+function refFor(node: GraphNode): NodeRef {
+  return {
+    id: node.id,
+    stablePath: node.stablePath,
+    name: node.name,
+    type: node.type,
+  };
+}
+
+function labelFor(ref: NodeRef): string {
+  return ref.stablePath || ref.name || ref.id;
+}
+
+function findNode(graph: CircuitGraph, ref: NodeRef): GraphNode | undefined {
+  return graph.getNode(ref.id)
+    ?? graph.getNodes().find(node => node.stablePath === ref.stablePath)
+    ?? graph.getNodes().find(node => node.name === ref.name && node.type === ref.type);
+}
 
 /**
  * Generate all possible mutations for a reactive graph.
@@ -19,19 +45,20 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   for (const edge of edges) {
     const sourceNode = graph.getNode(edge.from);
     if (sourceNode?.getValue) {
-      const sourceId = edge.from;
-      const targetId = edge.to;
+      const targetNode = graph.getNode(edge.to);
+      const sourceRef = refFor(sourceNode);
+      const targetRef = targetNode ? refFor(targetNode) : sourceRef;
       mutations.push({
-        name: `sever-edge:${sourceId}->${targetId}`,
-        description: `Sever dependency from ${sourceNode.name} to ${graph.getNode(targetId)?.name ?? targetId}`,
+        name: `sever-edge:${labelFor(sourceRef)}->${labelFor(targetRef)}`,
+        description: `Sever dependency from ${sourceNode.name} to ${targetNode?.name ?? edge.to}`,
         apply: (g) => {
-          const node = g.getNode(sourceId);
+          const node = findNode(g, sourceRef);
           const original = node?.getValue;
-          if (!original) return () => {};
+          if (!node || !original) return () => {};
           const currentVal = original();
           const defaultVal = typeof currentVal === 'boolean' ? false : 0;
-          g.setNodeValue(sourceId, () => defaultVal);
-          return () => g.setNodeValue(sourceId, original);
+          g.setNodeValue(node.id, () => defaultVal);
+          return () => g.setNodeValue(node.id, original);
         },
       });
     }
@@ -42,16 +69,16 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
     if (node.type === 'signal' && node.getValue) {
       const val = node.getValue();
       if (typeof val === 'boolean') {
-        const nodeId = node.id;
+        const nodeRef = refFor(node);
         mutations.push({
-          name: `negate:${nodeId}`,
+          name: `negate:${labelFor(nodeRef)}`,
           description: `Negate boolean signal ${node.name}`,
           apply: (g) => {
-            const n = g.getNode(nodeId);
+            const n = findNode(g, nodeRef);
             const original = n?.getValue;
-            if (!original) return () => {};
-            g.setNodeValue(nodeId, () => !original());
-            return () => g.setNodeValue(nodeId, original);
+            if (!n || !original) return () => {};
+            g.setNodeValue(n.id, () => !original());
+            return () => g.setNodeValue(n.id, original);
           },
         });
       }
@@ -63,27 +90,23 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
     if (node.type === 'derived' && node.getValue) {
       const val = node.getValue();
       const constant = typeof val === 'boolean' ? !val : 0;
-      const nodeId = node.id;
+      const nodeRef = refFor(node);
       mutations.push({
-        name: `constant-fold:${nodeId}`,
+        name: `constant-fold:${labelFor(nodeRef)}`,
         description: `Replace ${node.name} with constant ${constant}`,
         apply: (g) => {
-          const n = g.getNode(nodeId);
+          const n = findNode(g, nodeRef);
           const original = n?.getValue;
           const originalCompute = n?.computeFn;
-          if (!original) return () => {};
-          g.setNodeValue(nodeId, () => constant);
-          if (n) {
-            n.computeFn = () => constant;
-            n.currentValue = constant;
-            n.hasCurrentValue = true;
-          }
+          if (!n || !original) return () => {};
+          g.setNodeValue(n.id, () => constant);
+          n.computeFn = () => constant;
+          n.currentValue = constant;
+          n.hasCurrentValue = true;
           return () => {
-            g.setNodeValue(nodeId, original);
-            if (n) {
-              n.computeFn = originalCompute;
-              n.hasCurrentValue = false;
-            }
+            g.setNodeValue(n.id, original);
+            n.computeFn = originalCompute;
+            n.hasCurrentValue = false;
           };
         },
       });
@@ -99,19 +122,19 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       const aVal = a.getValue!();
       const bVal = b.getValue!();
       if (typeof aVal === typeof bVal) {
-        const aId = a.id;
-        const bId = b.id;
+        const aRef = refFor(a);
+        const bRef = refFor(b);
         mutations.push({
-          name: `swap-edge:${aId}<->${bId}`,
+          name: `swap-edge:${labelFor(aRef)}<->${labelFor(bRef)}`,
           description: `Swap signal ${a.name} to read ${b.name}'s value`,
           apply: (g) => {
-            const na = g.getNode(aId);
-            const nb = g.getNode(bId);
+            const na = findNode(g, aRef);
+            const nb = findNode(g, bRef);
             const originalA = na?.getValue;
-            if (!originalA || !nb?.getValue) return () => {};
+            if (!na || !nb?.getValue || !originalA) return () => {};
             const bGetter = nb.getValue!;
-            g.setNodeValue(aId, bGetter);
-            return () => g.setNodeValue(aId, originalA);
+            g.setNodeValue(na.id, bGetter);
+            return () => g.setNodeValue(na.id, originalA);
           },
         });
       }
@@ -121,16 +144,16 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   // Skip effect: for each effect node, wrap its action with a no-op
   for (const node of nodes) {
     if (node.type === 'effect') {
-      const nodeId = node.id;
+      const nodeRef = refFor(node);
       mutations.push({
-        name: `skip-effect:${nodeId}`,
+        name: `skip-effect:${labelFor(nodeRef)}`,
         description: `Skip effect ${node.name} (replace with no-op)`,
         apply: (g) => {
-          const n = g.getNode(nodeId);
+          const n = findNode(g, nodeRef);
           const original = n?.getValue;
-          if (!original) return () => {};
-          g.setNodeValue(nodeId, () => {});
-          return () => g.setNodeValue(nodeId, original);
+          if (!n || !original) return () => {};
+          g.setNodeValue(n.id, () => {});
+          return () => g.setNodeValue(n.id, original);
         },
       });
     }
@@ -141,29 +164,26 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
     if (node.type === 'derived' && node.getValue) {
       const val = node.getValue();
       if (typeof val === 'boolean') {
-        const nodeId = node.id;
+        const nodeRef = refFor(node);
         mutations.push({
-          name: `invert-comparison:${nodeId}`,
+          name: `invert-comparison:${labelFor(nodeRef)}`,
           description: `Invert boolean derived ${node.name}`,
-        apply: (g) => {
-          const n = g.getNode(nodeId);
-          const original = n?.getValue;
-          const originalCompute = n?.computeFn;
-          if (!original) return () => {};
-          g.setNodeValue(nodeId, () => !original());
-          if (n) {
-            n.computeFn = () => !original();
+          apply: (g) => {
+            const n = findNode(g, nodeRef);
+            const original = n?.getValue;
+            const originalCompute = n?.computeFn;
+            if (!n || !original) return () => {};
+            const readOriginal = originalCompute ? () => originalCompute() : original;
+            g.setNodeValue(n.id, () => !readOriginal());
+            n.computeFn = () => !readOriginal();
             n.hasCurrentValue = false;
-          }
-          return () => {
-            g.setNodeValue(nodeId, original);
-            if (n) {
+            return () => {
+              g.setNodeValue(n.id, original);
               n.computeFn = originalCompute;
               n.hasCurrentValue = false;
-            }
-          };
-        },
-      });
+            };
+          },
+        });
       }
     }
   }
@@ -171,18 +191,18 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   // Remove assertion: for each assertion node, disable it
   for (const node of nodes) {
     if (node.type === 'assertion') {
-      const nodeId = node.id;
+      const nodeRef = refFor(node);
       mutations.push({
-        name: `remove-assertion:${nodeId}`,
+        name: `remove-assertion:${labelFor(nodeRef)}`,
         description: `Disable assertion ${node.name}`,
         apply: (g) => {
-          const n = g.getNode(nodeId);
+          const n = findNode(g, nodeRef);
           const originalFn = n?.assertionFn;
           const originalKind = n?.assertionKind;
           if (!n || !originalFn) return () => {};
           // Disable by making it always pass
-          g.setAssertionFn(nodeId, () => true, originalKind ?? 'always');
-          return () => g.setAssertionFn(nodeId, originalFn, originalKind ?? 'always');
+          g.setAssertionFn(n.id, () => true, originalKind ?? 'always');
+          return () => g.setAssertionFn(n.id, originalFn, originalKind ?? 'always');
         },
       });
     }
@@ -191,18 +211,18 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   // Delay effect: for each effect, queue its action to fire on next tick
   for (const node of nodes) {
     if (node.type === 'effect') {
-      const nodeId = node.id;
+      const nodeRef = refFor(node);
       mutations.push({
-        name: `delay-effect:${nodeId}`,
+        name: `delay-effect:${labelFor(nodeRef)}`,
         description: `Delay effect ${node.name} to next tick`,
         apply: (g) => {
-          const n = g.getNode(nodeId);
+          const n = findNode(g, nodeRef);
           const original = n?.getValue;
-          if (!original) return () => {};
-          g.setNodeValue(nodeId, () => {
+          if (!n || !original) return () => {};
+          g.setNodeValue(n.id, () => {
             setTimeout(() => original(), 0);
           });
-          return () => g.setNodeValue(nodeId, original);
+          return () => g.setNodeValue(n.id, original);
         },
       });
     }

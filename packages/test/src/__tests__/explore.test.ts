@@ -272,6 +272,55 @@ describe('explore', () => {
     expect(result.scenarios.some(s => s.steps.some(step => step.signal === 'mode' && step.value === 'edit'))).toBe(true);
   });
 
+  it('uses declared assertion domains for boolean roots', async () => {
+    const g = new CircuitGraph();
+    let pulseVal = false;
+
+    const pulse = g.registerNode({ name: 'pulse', type: 'signal' });
+    g.setNodeValue(pulse, () => pulseVal);
+    g.setNodeSetter(pulse, (v: boolean) => {
+      pulseVal = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'pulse-low-only',
+      type: 'assertion',
+      deps: [pulse],
+      assertionMetadata: {
+        domains: { pulse: [false] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => !pulseVal, 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.violations).toHaveLength(0);
+    expect(result.scenarios.some(s => s.steps.some(step => step.signal === 'pulse' && step.value === true))).toBe(false);
+  });
+
+  it('does not invent values for opaque object roots without declared domains', async () => {
+    const g = new CircuitGraph();
+    let stateVal: unknown = { ready: true };
+    const drivenValues: unknown[] = [];
+
+    const state = g.registerNode({ name: 'state', type: 'signal' });
+    g.setNodeValue(state, () => stateVal);
+    g.setNodeSetter(state, (v: unknown) => {
+      drivenValues.push(v);
+      stateVal = v;
+    });
+
+    const assertId = g.registerNode({ name: 'opaque-state-valid', type: 'assertion', deps: [state] });
+    g.setAssertionFn(assertId, () => typeof stateVal === 'object' && stateVal !== null, 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.violations).toHaveLength(0);
+    expect(drivenValues).toEqual([]);
+    expect(result.scenarios.every(scenario => scenario.steps.every(step => step.signal !== 'state'))).toBe(true);
+  });
+
   it('reports no violations when assertions hold', async () => {
     const g = new CircuitGraph();
     let aVal = false;

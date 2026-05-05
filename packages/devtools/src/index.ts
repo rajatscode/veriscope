@@ -13,6 +13,14 @@ export type { TabId } from './layout.js';
 
 export interface ExploreResult {
   violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
+  scenarios: Array<{
+    id: string;
+    kind: 'enumerated' | 'current-state' | 'coverage-completion' | 'adversarial';
+    tick: number;
+    steps: Array<{ signal: string; value: any }>;
+    assertions: string[];
+    violations: string[];
+  }>;
   coverage: {
     toggle: { covered: number; total: number; percentage: number };
     transitions: { covered: number; total: number; percentage: number };
