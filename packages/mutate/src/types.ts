@@ -9,7 +9,7 @@ export interface Mutation {
 }
 
 export interface MutateOptions {
-  /** Total exploration budget across all mutations. Default: 500. */
+  /** Autotest exploration budget used for each mutation. Default: 500. */
   budget?: number;
   /** Which operators to apply: 'all' or a list of operator names. */
   operators?: 'all' | string[];
@@ -30,6 +30,12 @@ export interface MutateResult {
   invalid: Array<{ mutation: string; description: string; error: string }>;
   equivalent: Array<{ mutation: string; description: string; reason: string }>;
   score: number; // 0-100
+  /** Autotest budget used for every generated mutant. */
+  budgetPerMutation: number;
+  /** Number of mutated graphs autotested. */
+  autotestRuns: number;
+  /** Sum of autotest exploration steps across all mutants. */
+  autotestSteps: number;
   /** Present only when a randomized/fuzzing runner is used. The default runner is deterministic. */
   seed?: string | number;
 }

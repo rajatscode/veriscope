@@ -66,6 +66,9 @@ function mutationResult(): MutateResult {
     invalid: [],
     equivalent: [],
     score: 50,
+    budgetPerMutation: 1000,
+    autotestRuns: 2,
+    autotestSteps: 73,
   };
 }
 
@@ -565,6 +568,9 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Last run: #1 completed');
     expect(host.textContent).toContain('Generated mutants: 2');
     expect(host.textContent).toContain('Seed: deterministic/no seed reported');
+    expect(host.textContent).toContain('Budget per mutant: 1000');
+    expect(host.textContent).toContain('Autotest runs: 2');
+    expect(host.textContent).toContain('Autotest steps: 73');
     expect(host.textContent).toContain('Rerun Mutants');
     expect(host.textContent).toContain('Mutation testing is rerunnable');
     expect(host.textContent).toContain('negate:canSubmit');
@@ -593,7 +599,7 @@ describe('mountDevtools', () => {
     buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Run #1 running');
     expect(host.textContent).toContain('Elapsed:');
-    expect(host.textContent).toContain('Applying generated mutations and rerunning generated autotest cases.');
+    expect(host.textContent).toContain('Applying generated mutations and running the full autotest budget against each mutant.');
 
     await flushPromises();
     expect(mutate).toHaveBeenCalledTimes(1);

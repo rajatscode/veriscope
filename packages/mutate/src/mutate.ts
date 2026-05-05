@@ -16,7 +16,7 @@ export async function mutate(
   factory: () => CircuitGraph,
   options: MutateOptions = {},
 ): Promise<MutateResult> {
-  const budget = options.budget ?? 500;
+  const budgetPerMutation = options.budget ?? 500;
 
   // Get mutation list from a reference graph
   const refGraph = factory();
@@ -40,8 +40,8 @@ export async function mutate(
   const invalid: MutateResult['invalid'] = [];
   const equivalent: MutateResult['equivalent'] = [];
   let killed = 0;
-
-  const budgetPerMutation = mutations.length > 0 ? Math.max(4, Math.floor(budget / mutations.length)) : budget;
+  let autotestRuns = 0;
+  let autotestSteps = 0;
 
   for (const mutation of mutations) {
     // Fresh graph for each mutation
@@ -57,6 +57,8 @@ export async function mutate(
         budget: budgetPerMutation,
         name: mutation.name,
       });
+      autotestRuns++;
+      autotestSteps += result.steps;
 
       if (result.status === 'failed') {
         killed++;
@@ -89,5 +91,8 @@ export async function mutate(
     invalid,
     equivalent,
     score: scoredTotal > 0 ? (killed / scoredTotal) * 100 : 100,
+    budgetPerMutation,
+    autotestRuns,
+    autotestSteps,
   };
 }

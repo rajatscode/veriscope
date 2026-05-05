@@ -12,6 +12,9 @@ interface MutationRunStatus {
   finishedAt?: Date;
   durationMs?: number;
   generatedMutants?: number;
+  budgetPerMutation?: number;
+  autotestRuns?: number;
+  autotestSteps?: number;
   seed?: string | number;
 }
 
@@ -113,6 +116,9 @@ export function createMutantsPanel(
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
         generatedMutants: nextResult.total,
+        budgetPerMutation: nextResult.budgetPerMutation,
+        autotestRuns: nextResult.autotestRuns,
+        autotestSteps: nextResult.autotestSteps,
         seed: nextResult.seed,
       };
     } catch (err) {
@@ -153,7 +159,7 @@ export function createMutantsPanel(
         <div style="color:#f8d66d; font-weight:600;">Run #${status.number} running</div>
         <div>Started: ${escapeHtml(formatClock(status.startedAt))}</div>
         <div>Elapsed: ${escapeHtml(formatDuration(performance.now() - status.startedAtMs))}</div>
-        <div>Applying generated mutations and rerunning generated autotest cases.</div>
+        <div>Applying generated mutations and running the full autotest budget against each mutant.</div>
         ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
       `;
       return box;
@@ -161,10 +167,14 @@ export function createMutantsPanel(
 
     const finished = status.finishedAt ? formatClock(status.finishedAt) : 'n/a';
     const generated = status.generatedMutants === undefined ? 'n/a' : String(status.generatedMutants);
+    const budget = status.budgetPerMutation === undefined ? 'n/a' : String(status.budgetPerMutation);
+    const runs = status.autotestRuns === undefined ? 'n/a' : String(status.autotestRuns);
+    const steps = status.autotestSteps === undefined ? 'n/a' : String(status.autotestSteps);
     box.innerHTML = `
       <div style="font-weight:600;">Last run: #${status.number} ${status.status}</div>
       <div>Started: ${escapeHtml(formatClock(status.startedAt))} · Finished: ${escapeHtml(finished)} · Duration: ${escapeHtml(formatDuration(status.durationMs))}</div>
       <div>Generated mutants: ${escapeHtml(generated)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
+      <div>Autotest runs: ${escapeHtml(runs)} · Budget per mutant: ${escapeHtml(budget)} · Total autotest steps: ${escapeHtml(steps)}</div>
     `;
     return box;
   }
@@ -257,7 +267,7 @@ export function createMutantsPanel(
     if (!result) {
       const hint = document.createElement('div');
       hint.style.cssText = 'color:#666; padding:20px; text-align:center;';
-      hint.textContent = running ? 'Applying generated mutations and rerunning autotest...' : 'Run mutation testing to see killed and surviving generated mutations.';
+      hint.textContent = running ? 'Applying generated mutations and running full autotests per mutant...' : 'Run mutation testing to see killed and surviving generated mutations.';
       container.appendChild(hint);
       return;
     }
@@ -271,6 +281,9 @@ export function createMutantsPanel(
       <span style="color:#8b949e;">Total: ${result.total}</span>
       <span style="color:#8b949e;">Invalid: ${result.invalid?.length ?? 0}</span>
       <span style="color:#8b949e;">Equivalent: ${result.equivalent?.length ?? 0}</span>
+      ${result.budgetPerMutation !== undefined ? `<span style="color:#8b949e;">Budget/mutant: ${escapeHtml(result.budgetPerMutation)}</span>` : ''}
+      ${result.autotestRuns !== undefined ? `<span style="color:#8b949e;">Autotest runs: ${escapeHtml(result.autotestRuns)}</span>` : ''}
+      ${result.autotestSteps !== undefined ? `<span style="color:#8b949e;">Autotest steps: ${escapeHtml(result.autotestSteps)}</span>` : ''}
     `;
     container.appendChild(summary);
 

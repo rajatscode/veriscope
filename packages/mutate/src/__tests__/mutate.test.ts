@@ -192,6 +192,36 @@ describe('mutate', () => {
     expect(result.score).toBeGreaterThan(0);
   });
 
+  it('uses the full autotest budget for each mutant instead of splitting it globally', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      const values: Record<string, boolean> = { a: false, b: false, c: false, d: false };
+      const ids = Object.keys(values).map(name => {
+        const id = g.registerNode({ name, type: 'signal', stablePath: name });
+        g.setNodeValue(id, () => values[name]);
+        g.setNodeSetter(id, (v: boolean) => {
+          values[name] = v;
+        });
+        return id;
+      });
+
+      const assertId = g.registerNode({ name: 'late-a-integrity', type: 'assertion', deps: ids });
+      g.setAssertionFn(assertId, () => {
+        const [a, b, c, d] = ids.map(id => g.getNode(id)!.getValue!());
+        return !(b && c && d) || a === values.a;
+      }, 'always');
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 16, operators: ['negate'] });
+
+    expect(result.total).toBe(4);
+    expect(result.budgetPerMutation).toBe(16);
+    expect(result.autotestRuns).toBe(4);
+    expect(result.autotestSteps).toBeGreaterThan(16);
+    expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:a')).toBe(true);
+  });
+
   it('reports survived mutations for weak assertions', async () => {
     const factory = () => {
       const g = new CircuitGraph();

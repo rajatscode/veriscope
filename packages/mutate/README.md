@@ -30,13 +30,14 @@ const factory = () => {
 
 const result = await mutate(factory, { budget: 200 });
 console.log(`Score: ${result.score}/100  (${result.killed}/${result.total} killed)`);
+console.log(`Autotest runs: ${result.autotestRuns}, steps: ${result.autotestSteps}`);
 console.log('Survived:', result.survived);
 ```
 
 ## How It Works
 
 1. A reference `CircuitGraph` is created from `factory` to enumerate all possible mutations via `generateMutations`.
-2. For each mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `explore()` within a per-mutation budget.
+2. For each mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `explore()` with the full configured per-mutant budget.
 3. If exploration triggers any assertion violation, the mutation is **killed**. Otherwise it **survived**, indicating a gap in your assertions.
 4. The final score is `(killed / total) * 100`.
 
@@ -87,7 +88,7 @@ interface MutateOptions {
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `budget` | `number` | `500` | Total exploration budget across all mutations. Divided evenly among mutations (minimum 4 per mutation). |
+| `budget` | `number` | `500` | Autotest exploration budget for each generated mutant. A run with 20 mutants and `budget: 500` may execute up to 20 full 500-step autotest explorations, with early completion when exploration exhausts reachable cases. |
 | `operators` | `'all' \| string[]` | `'all'` | Which operator classes to apply. Pass `'all'` for every operator, or an array of operator name prefixes (e.g. `['negate', 'sever-edge']`) to restrict the set. |
 
 ---
@@ -100,6 +101,9 @@ interface MutateResult {
   killed: number;
   survived: Array<{ mutation: string; description: string }>;
   score: number;
+  budgetPerMutation: number;
+  autotestRuns: number;
+  autotestSteps: number;
 }
 ```
 
@@ -109,6 +113,9 @@ interface MutateResult {
 | `killed` | `number` | Number of mutations detected by assertions. |
 | `survived` | `Array<{ mutation: string; description: string }>` | List of mutations that were **not** caught. Each entry contains the mutation `name` (e.g. `"negate:nodeId"`) and a human-readable `description`. |
 | `score` | `number` | Kill rate as a percentage (0--100). `100` means every mutation was caught. |
+| `budgetPerMutation` | `number` | Autotest budget supplied to every mutated graph. |
+| `autotestRuns` | `number` | Number of mutated graphs autotested. |
+| `autotestSteps` | `number` | Sum of exploration steps reported by all mutant autotest runs. |
 
 ---
 

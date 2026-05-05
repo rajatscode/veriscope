@@ -64,6 +64,9 @@ export interface MutateResult {
   invalid?: Array<{ mutation: string; description: string; error: string }>;
   equivalent?: Array<{ mutation: string; description: string; reason: string }>;
   score: number;
+  budgetPerMutation?: number;
+  autotestRuns?: number;
+  autotestSteps?: number;
   /** Optional seed for randomized or fuzzing-backed mutation runners. */
   seed?: string | number;
 }
