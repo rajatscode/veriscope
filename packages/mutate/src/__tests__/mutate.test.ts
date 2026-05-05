@@ -244,7 +244,7 @@ describe('mutate', () => {
 
     expect(result.total).toBe(4);
     expect(result.budgetPerMutation).toBe(16);
-    expect(result.autotestRuns).toBe(4);
+    expect(result.autotestRuns).toBe(5);
     expect(result.autotestSteps).toBeGreaterThan(16);
     expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:a')).toBe(true);
   });
@@ -338,6 +338,45 @@ describe('mutate', () => {
 
     expect(result.survived.some(m => m.mutation.startsWith('remove-assertion:'))).toBe(false);
     expect(result.killedMutations.some(m => m.mutation.startsWith('remove-assertion:'))).toBe(false);
+  });
+
+  it('classifies unchanged broad structural mutants as equivalent', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let visible = true;
+      let hidden = false;
+      const visibleId = g.registerNode({ name: 'visible', type: 'signal', stablePath: 'visible' });
+      g.setNodeValue(visibleId, () => visible);
+      g.setNodeSetter(visibleId, (v: boolean) => {
+        visible = v;
+      });
+      const hiddenId = g.registerNode({ name: 'hidden', type: 'signal', stablePath: 'hidden' });
+      g.setNodeValue(hiddenId, () => hidden);
+      g.setNodeSetter(hiddenId, (v: boolean) => {
+        hidden = v;
+      });
+      const hiddenDerived = g.registerNode({
+        name: 'hiddenDerived',
+        type: 'derived',
+        deps: [hiddenId],
+        stablePath: 'hiddenDerived',
+        computeFn: () => hidden,
+      });
+      const assertId = g.registerNode({ name: 'visible-observed', type: 'assertion', deps: [visibleId] });
+      g.setAssertionFn(assertId, () => true, 'always');
+      g.registerNode({ name: 'analytics-effect', type: 'effect', stablePath: 'analytics-effect' });
+      g.propagate();
+      // Keep the hidden derived node outside the assertion cone but still
+      // present for broad structural operators.
+      expect(hiddenDerived).toBeTruthy();
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 20, operators: 'all' });
+
+    expect(result.equivalent.some(mutation => mutation.mutation === 'skip-effect:analytics-effect')).toBe(true);
+    expect(result.skipped.some(mutation => mutation.reason === 'outside every assertion backward cone')).toBe(false);
+    expect(result.autotestRuns).toBe(result.total + 1);
   });
 
   it('filters by operator type', async () => {

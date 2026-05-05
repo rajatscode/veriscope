@@ -216,6 +216,7 @@ export function createMutantsPanel(
         <div>Progress: ${escapeHtml(completed)}/${escapeHtml(total || '?')} scored mutants · Generated ${escapeHtml(status.generatedMutants ?? 'n/a')} · Skipped ${escapeHtml(skipped)}</div>
         <div>Killed ${escapeHtml(status.killed ?? 0)} · Survived ${escapeHtml(status.survived ?? 0)} · Invalid ${escapeHtml(status.invalid ?? 0)} · Equivalent ${escapeHtml(status.equivalent ?? 0)}</div>
         <div>Autotest runs: ${escapeHtml(runs)} · Steps: ${escapeHtml(steps)} · Budget per mutant: ${escapeHtml(status.budgetPerMutation ?? 'n/a')}</div>
+        <div>Autotest runs include the baseline behavior run plus each selected mutant.</div>
         <div>Applying generated mutations and running the full autotest budget against each mutant.</div>
         ${status.currentMutation ? `<div>Now: ${escapeHtml(status.currentMutation)}</div>` : ''}
         ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
@@ -235,6 +236,7 @@ export function createMutantsPanel(
       <div>Started: ${escapeHtml(formatClock(status.startedAt))} · Finished: ${escapeHtml(finished)} · Duration: ${escapeHtml(formatDuration(status.durationMs))}</div>
       <div>Generated mutants: ${escapeHtml(generated)} · Scored: ${escapeHtml(selected)} · Skipped: ${escapeHtml(skipped)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
       <div>Autotest runs: ${escapeHtml(runs)} · Budget per mutant: ${escapeHtml(budget)} · Total autotest steps: ${escapeHtml(steps)}</div>
+      <div>Autotest runs include one baseline run used for equivalent-mutant classification.</div>
     `;
     return box;
   }
