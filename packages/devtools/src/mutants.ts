@@ -8,6 +8,7 @@ interface MutationRunStatus {
   number: number;
   status: 'running' | 'completed' | 'failed';
   startedAt: Date;
+  startedAtMs: number;
   finishedAt?: Date;
   durationMs?: number;
   generatedMutants?: number;
@@ -68,6 +69,21 @@ export function createMutantsPanel(
   let runNumber = 0;
   let activeRun: MutationRunStatus | null = null;
   let lastRun: MutationRunStatus | null = null;
+  let liveTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopLiveTimer() {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+  }
+
+  function startLiveTimer() {
+    stopLiveTimer();
+    liveTimer = setInterval(() => {
+      if (!disposed && activeRun) render();
+    }, 250);
+  }
 
   async function run() {
     if (!options?.mutate || running) return;
@@ -78,10 +94,12 @@ export function createMutantsPanel(
       number: runNumber,
       status: 'running',
       startedAt,
+      startedAtMs,
     };
     running = true;
     error = null;
     render();
+    startLiveTimer();
     try {
       await waitForPaint();
       if (disposed) return;
@@ -91,6 +109,7 @@ export function createMutantsPanel(
         number: runNumber,
         status: 'completed',
         startedAt,
+        startedAtMs,
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
         generatedMutants: nextResult.total,
@@ -102,10 +121,12 @@ export function createMutantsPanel(
         number: runNumber,
         status: 'failed',
         startedAt,
+        startedAtMs,
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
       };
     } finally {
+      stopLiveTimer();
       activeRun = null;
       running = false;
       render();
@@ -131,7 +152,8 @@ export function createMutantsPanel(
       box.innerHTML = `
         <div style="color:#f8d66d; font-weight:600;">Run #${status.number} running</div>
         <div>Started: ${escapeHtml(formatClock(status.startedAt))}</div>
-        <div>Applying generated mutations and rerunning autotest.</div>
+        <div>Elapsed: ${escapeHtml(formatDuration(performance.now() - status.startedAtMs))}</div>
+        <div>Applying generated mutations and rerunning generated autotest cases.</div>
         ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
       `;
       return box;
@@ -272,6 +294,7 @@ export function createMutantsPanel(
   return {
     dispose() {
       disposed = true;
+      stopLiveTimer();
       container.innerHTML = '';
     },
     refresh() {

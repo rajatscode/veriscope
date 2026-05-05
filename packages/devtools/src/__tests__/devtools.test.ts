@@ -590,7 +590,8 @@ describe('mountDevtools', () => {
 
     buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Run #1 running');
-    expect(host.textContent).toContain('Applying generated mutations and rerunning autotest.');
+    expect(host.textContent).toContain('Elapsed:');
+    expect(host.textContent).toContain('Applying generated mutations and rerunning generated autotest cases.');
 
     await flushPromises();
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -601,6 +602,7 @@ describe('mountDevtools', () => {
 
     buttonByText(host, 'Rerun Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Run #2 running');
+    expect(host.textContent).toContain('Elapsed:');
     expect(host.textContent).toContain('Showing the previous completed result until this run finishes.');
     expect(host.textContent).toContain('Score: 50.0%');
 
