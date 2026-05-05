@@ -193,6 +193,42 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('keeps Circuit flow selection active while live graph events update', () => {
+    const graph = new CircuitGraph();
+    let ready = false;
+    const readyId = graph.registerNode({ name: 'ready', type: 'signal' });
+    graph.setNodeValue(readyId, () => ready);
+    graph.setNodeSetter(readyId, value => {
+      ready = value;
+    });
+    const canStartId = graph.registerNode({
+      name: 'canStart',
+      type: 'derived',
+      deps: [readyId],
+      computeFn: () => ready,
+    });
+    const assertId = graph.registerNode({ name: 'can-start-observed', type: 'assertion', deps: [canStartId] });
+    graph.setAssertionFn(assertId, () => true, 'always');
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
+    const canvas = host.querySelector('canvas')!;
+
+    canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 50, clientY: 50 }));
+    handle.refresh();
+
+    expect(host.textContent).toContain('Selected ready: 0 upstream, 2 downstream');
+
+    graph.driveNodeValue(readyId, true);
+    handle.refresh();
+
+    expect(host.textContent).toContain('derived-recompute · canStart');
+    expect(host.textContent).toContain('Selected ready: 0 upstream, 2 downstream');
+
+    handle.dispose();
+  });
+
   it('does not redraw hidden Circuit work until the tab is active again', () => {
     const graph = new CircuitGraph();
     graph.registerNode({ name: 'first', type: 'signal' });
