@@ -32,7 +32,7 @@ for (const v of result.violations) {
 
 ### `explore(graph, options?)`
 
-Main entry point. Explores the state space of a reactive graph by finding assertions, computing backward cones to identify relevant root signals, enumerating boolean combinations, resolving pending `eventually` assertions, running an adversarial pass to break assertions, and collecting coverage data.
+Main entry point. Explores the state space of a reactive graph by finding assertions, computing backward cones to identify relevant root signals, enumerating reachable signal domains, exercising temporal sequences and external operation outcomes, running coverage-directed and adversarial passes, and collecting coverage data.
 
 ```ts
 function explore(
@@ -51,10 +51,10 @@ function explore(
 1. Calls `graph.enterTestMode()`.
 2. Discovers all assertions via `graph.getAssertions()`.
 3. For each assertion, computes its backward cone of root signals.
-4. If the cone contains 1--12 boolean-valued roots, enumerates all `2^n` input combinations, driving each through `graph.openTick()` / `graph.closeTick()` cycles and checking assertions after each.
-5. Attempts to resolve pending `eventually` (`after`-kind) assertions by parsing check functions and driving signals toward satisfaction. Falls back to observational brute-force if parsing fails.
-6. Runs an adversarial pass that analyzes assertion check functions and actively tries to break them (drives `always` assertions toward violation; triggers edges then prevents property satisfaction for `after` assertions).
-7. Returns violations, coverage counters, and total steps consumed.
+4. Enumerates boolean roots and declared/non-boolean reachable domains, driving each case through `graph.driveNodeValue()` so derived propagation, events, and coverage all use the same path.
+5. Exercises temporal `assertAfter` sequences and declared external operation outcome models.
+6. Runs coverage-directed and adversarial passes to close reachable coverage gaps and try to falsify assertions.
+7. Emits optional progress callbacks and returns violations, scenario traces, explicit coverage denominators/gaps, and total steps consumed.
 
 ---
 
@@ -221,6 +221,19 @@ interface ExploreOptions {
   /** Flush function for framework integration
       (React: () => act(() => {}), Solid: () => {}). */
   flush?: () => void | Promise<void>;
+  /** Called as deterministic generated cases execute. */
+  onProgress?: (progress: ExploreProgress) => void | Promise<void>;
+}
+
+interface ExploreProgress {
+  phase: 'setup' | 'enumerated' | 'current-state' | 'sequence'
+    | 'operation-outcome' | 'coverage-directed' | 'coverage-completion'
+    | 'adversarial' | 'complete';
+  steps: number;
+  budget: number;
+  generatedCases: number;
+  hiddenDuplicateCases: number;
+  stoppedByBudget: boolean;
 }
 ```
 
@@ -230,11 +243,32 @@ interface ExploreOptions {
 interface ExploreResult {
   violations: Violation[];
   coverage: {
-    toggle: number;
-    transitions: number;
-    cross: number;
+    toggle: CoverageMetric;
+    transitions: CoverageMetric;
+    cross: CoverageMetric;
+    operations: CoverageMetric;
+    overall: CoverageMetric;
+    gaps: Array<{ kind: string; id: string; missing: string[] }>;
   };
   steps: number;
+  scenarios: ScenarioTrace[];
+  plan: {
+    deterministic: boolean;
+    seed?: string | number;
+    budget: number;
+    exhausted: boolean;
+    stoppedByBudget: boolean;
+    generatedCases: number;
+    hiddenDuplicateCases: number;
+    generatedReachableCoverage: CoverageMetric;
+    phaseCounts: Record<string, number>;
+  };
+}
+
+interface CoverageMetric {
+  covered: number;
+  total: number;
+  percentage: number;
 }
 ```
 

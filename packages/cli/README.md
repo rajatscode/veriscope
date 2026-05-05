@@ -127,7 +127,9 @@ Snapshot JSON files conform to the `GraphSnapshot` interface from `@veriscope/gr
   ],
   "events": [],
   "waveforms": {},
-  "operations": []
+  "disposedNodes": [],
+  "operations": [],
+  "operationModels": []
 }
 ```
 

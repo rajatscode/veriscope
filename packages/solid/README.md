@@ -40,7 +40,7 @@ function Counter() {
 
 ## API Reference
 
-All hooks accept an optional `options` object with a `graph` field. When omitted, the default singleton `CircuitGraph` from `@veriscope/graph` is used.
+All hooks accept an optional `options` object with a `graph` field plus `stablePath`/`scope` identity metadata. When omitted, the default singleton `CircuitGraph` from `@veriscope/graph` is used.
 
 ---
 
@@ -52,7 +52,7 @@ Create a tracked signal that registers in the CircuitGraph. Wraps Solid's `creat
 function useSignal<T>(
   initial: T,
   name: string,
-  options?: { states?: string[]; graph?: CircuitGraph },
+  options?: { states?: string[]; graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): Signal<T>
 ```
 
@@ -64,10 +64,12 @@ function useSignal<T>(
 | `name` | `string` | Human-readable name shown in the graph and devtools |
 | `options.states` | `string[]` | Optional enumerated state names (stored in graph node metadata) |
 | `options.graph` | `CircuitGraph` | Optional graph instance (defaults to the global singleton) |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs |
+| `options.scope` | `string` | Component/module scope metadata |
 
 **Returns:** `Signal<T>` -- an object with:
 - `val` (getter) -- reads the current value (triggers Solid's reactive tracking)
-- `set(next: T)` -- updates the value; no-ops on `Object.is` equality; opens a graph tick and records the change
+- `set(next: T | ((prev: T) => T))` -- updates the value; no-ops on `Object.is` equality; opens a graph tick and records the change
 - `nodeId: string` -- the node's ID in the CircuitGraph
 - `name: string` -- the node's name
 
@@ -84,7 +86,7 @@ function useDerived<T>(
   fn: () => T,
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): ReadonlySignal<T>
 ```
 
@@ -96,6 +98,8 @@ function useDerived<T>(
 | `deps` | `Array<Signal \| ReadonlySignal>` | Signals this derivation depends on (used for both Solid tracking and graph edge registration) |
 | `name` | `string` | Human-readable name for the graph node |
 | `options.graph` | `CircuitGraph` | Optional graph instance |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs |
+| `options.scope` | `string` | Component/module scope metadata |
 
 **Returns:** `ReadonlySignal<T>` -- an object with:
 - `val` (getter) -- reads the current derived value (triggers Solid tracking via `createMemo`)
@@ -115,7 +119,7 @@ function useTrackedEffect(
   fn: () => void | (() => void),
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): void
 ```
 
@@ -127,6 +131,8 @@ function useTrackedEffect(
 | `deps` | `Array<Signal \| ReadonlySignal>` | Signals this effect depends on |
 | `name` | `string` | Human-readable name for the graph node |
 | `options.graph` | `CircuitGraph` | Optional graph instance |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs |
+| `options.scope` | `string` | Component/module scope metadata |
 
 **Returns:** `void`
 
@@ -144,7 +150,7 @@ function useEdgeEffect(
   edge: 'posedge' | 'negedge',
   action: () => void,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): void
 ```
 
@@ -157,6 +163,8 @@ function useEdgeEffect(
 | `action` | `() => void` | Callback invoked when the specified edge is detected |
 | `name` | `string` | Human-readable name for the graph node |
 | `options.graph` | `CircuitGraph` | Optional graph instance |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs |
+| `options.scope` | `string` | Component/module scope metadata |
 
 **Returns:** `void`
 
@@ -176,7 +184,7 @@ interface ReadonlySignal<T> {
 }
 
 interface Signal<T> extends ReadonlySignal<T> {
-  set(next: T): void;
+  set(next: T | ((prev: T) => T)): void;
 }
 ```
 

@@ -44,10 +44,11 @@ console.log('Survived:', result.survived);
 
 1. A reference `CircuitGraph` is created from `factory` to enumerate all possible mutations via `generateMutations`.
 2. By default, the runner scores semantic, assertion-reachable mutants only (`negate`, `constant-fold`, and `invert-comparison`). Broad structural operators such as `sever-edge` and `swap-edge` are still available with `operators: 'all'`, but are excluded from the default score because they often mutate display projections or graph topology in ways the app code cannot observe.
-3. For each selected mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `explore()` with the full configured per-mutant budget.
-4. The runner yields to the host between mutants and calls `onProgress`, so browser devtools can repaint and remain interactive during long runs.
-5. If exploration triggers any assertion violation, the mutation is **killed**. Otherwise it **survived**, indicating a gap in your assertions.
-6. The final score is `(killed / total) * 100`.
+3. A baseline autotest run records the unmutated behavior signature used for broad equivalent-mutant classification.
+4. For each selected mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `runAutotest()` with the full configured per-mutant budget.
+5. The runner yields to the host between mutants and calls `onProgress`, so browser devtools can repaint and remain interactive during long runs.
+6. If exploration triggers any assertion violation, the mutation is **killed**. Broad structural/effect mutants with the same behavior signature as the baseline are classified as **equivalent** rather than survived.
+7. The final score is `killed / (total - invalid - equivalent) * 100`.
 
 ## API Reference
 
@@ -113,11 +114,15 @@ interface MutateOptions {
 interface MutateResult {
   total: number;
   killed: number;
+  killedMutations: Array<{ mutation: string; description: string; scenarioId?: string; assertionName?: string }>;
   survived: Array<{ mutation: string; description: string }>;
+  invalid: Array<{ mutation: string; description: string; error: string }>;
+  equivalent: Array<{ mutation: string; description: string; reason: string }>;
   score: number;
   budgetPerMutation: number;
   autotestRuns: number;
   autotestSteps: number;
+  seed?: string | number;
   generatedMutants: number;
   skipped: Array<{ mutation: string; description: string; reason: string }>;
 }
@@ -127,11 +132,15 @@ interface MutateResult {
 |-------|------|-------------|
 | `total` | `number` | Number of selected mutations tested and scored. |
 | `killed` | `number` | Number of mutations detected by assertions. |
+| `killedMutations` | `Array<{ mutation: string; description: string; scenarioId?: string; assertionName?: string }>` | Killed mutations with the generated scenario/assertion that detected them when available. |
 | `survived` | `Array<{ mutation: string; description: string }>` | List of mutations that were **not** caught. Each entry contains the mutation `name` (e.g. `"negate:nodeId"`) and a human-readable `description`. |
-| `score` | `number` | Kill rate as a percentage (0--100). `100` means every mutation was caught. |
+| `invalid` | `Array<{ mutation: string; description: string; error: string }>` | Mutations that could not be applied or executed. |
+| `equivalent` | `Array<{ mutation: string; description: string; reason: string }>` | Broad structural/effect mutations whose generated behavior signature matches the baseline run. |
+| `score` | `number` | Kill rate as a percentage over scored mutants after invalid/equivalent classification. `100` means every scored mutation was caught. |
 | `budgetPerMutation` | `number` | Autotest budget supplied to every mutated graph. |
-| `autotestRuns` | `number` | Number of mutated graphs autotested. |
-| `autotestSteps` | `number` | Sum of exploration steps reported by all mutant autotest runs. |
+| `autotestRuns` | `number` | Number of autotest runs, including one baseline behavior run plus each selected mutant. |
+| `autotestSteps` | `number` | Sum of exploration steps reported by the baseline and mutant autotest runs. |
+| `seed` | `string \| number \| undefined` | Present only when a randomized/fuzzing-backed runner is used. The default runner is deterministic. |
 | `generatedMutants` | `number` | Number of candidate mutants generated before scoring filters. |
 | `skipped` | `Array<{ mutation: string; description: string; reason: string }>` | Candidate mutants skipped before scoring, with the reason each was skipped. |
 

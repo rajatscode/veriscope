@@ -73,11 +73,14 @@ registerNode(info: {
   name: string;
   type: NodeType;          // 'signal' | 'derived' | 'effect' | 'assertion'
   deps?: string[];         // IDs of upstream dependencies
+  stablePath?: string;     // stable identity for snapshots/diffs
   metadata?: Record<string, any>;
+  assertionMetadata?: AssertionMetadata;
+  computeFn?: () => any;   // headless derived recomputation
 }): string
 ```
 
-Edges from each dependency to the new node are added automatically.
+Edges from each dependency to the new node are added automatically. Derived nodes with `computeFn` can be recomputed by graph-driven tooling without replacing the framework runtime.
 
 ##### `addEdge(from: string, to: string): void`
 
@@ -91,13 +94,21 @@ Attaches a value getter to a node, used by waveform recording and external intro
 
 Attaches a value setter to a node, stored on `node.setValue`.
 
+##### `driveNodeValue(id: string, value: any): void`
+
+Sets a signal through its registered setter, emits a change event if the setter did not, and propagates downstream derived `computeFn` nodes in topological order.
+
+##### `propagate(fromNodeId?: string): void`
+
+Recomputes derived nodes downstream from `fromNodeId` (or all derived nodes when omitted) and emits `derived-recompute` events for changed values.
+
 ##### `setAssertionFn(id: string, fn: () => boolean, kind: 'always' | 'never' | 'after'): void`
 
 Attaches an assertion check function and kind to an assertion node.
 
 ##### `disposeNode(id: string): void`
 
-Removes a node and all edges connected to it. Also deletes its waveform data.
+Removes a node and all edges connected to it. The disposed node and an ended waveform marker are preserved for snapshots and history.
 
 #### Event Notifications
 
@@ -163,13 +174,13 @@ Subscribes to all graph events. Returns an unsubscribe function.
 
 #### Snapshots and Diffing
 
-##### `snapshot(): GraphSnapshot`
+##### `snapshot(captureContext?: Record<string, any>): GraphSnapshot`
 
-Captures the current graph topology (node names, types, deps, and edges) as a serializable object.
+Captures a schema-versioned graph artifact with stable node paths, dependency paths, metadata, recent events, waveform history, disposed nodes, operation spans, operation models, and optional capture context.
 
 ##### `static diffGraphs(a: GraphSnapshot, b: GraphSnapshot): GraphDiff`
 
-Compares two snapshots and returns structural differences: added/removed/changed nodes and added/removed edges. Comparison is by node name, not ID.
+Compares two snapshots and returns structural differences: added/removed/changed nodes and added/removed edges. Comparison uses stable paths when present.
 
 #### Tick Management
 
@@ -195,7 +206,7 @@ Closes the current tick and increments `currentTick`.
 
 ##### `flushTick(settle?: () => void | Promise<void>): Promise<void>`
 
-Closes the current tick, awaits a microtask, then awaits an optional framework/test settle callback.
+Closes the current tick, awaits a microtask, awaits an optional framework/test settle callback, then closes again so post-settle updates land in a deterministic tick.
 
 ##### `exitTestMode(): void`
 
@@ -225,6 +236,31 @@ Returns the context (`'sync'` or `'async'`) in which a signal was last set.
 
 Subscribes to CDC warnings. A warning fires when a signal set from an async context feeds a derived node that has no synchronous guard signal among its other dependencies. Returns an unsubscribe function.
 
+#### External Operations
+
+```ts
+registerOperationModel(info: {
+  name: string;
+  outcomes: OperationStatus[];
+  triggerDeps?: string[];
+  outputDeps?: string[];
+  metadata?: Record<string, any>;
+  handleOutcome?: (outcome: OperationStatus, context: OperationModelContext) => void | Promise<void>;
+}): string
+beginOperation(name: string, metadata?: Record<string, any>): string
+resolveOperation(id: string, value?: any): void
+rejectOperation(id: string, error?: any): void
+abortOperation(id: string, reason?: any): void
+timeoutOperation(id: string): void
+markOperationStale(id: string, newerId?: string): void
+completeOperationOutcome(id: string, status: OperationStatus, payload?: any): void
+withOperation<T>(id: string, fn: () => T): T
+getOperations(): OperationSpan[]
+getOperationModels(): OperationModel[]
+```
+
+Operation spans link request and response ticks without merging them. Events emitted inside `withOperation()` carry the active operation ID/name, and registered operation models provide outcome domains for autotest and coverage.
+
 #### Waveform Recording
 
 ##### `startRecording(): void`
@@ -243,7 +279,7 @@ Returns a copy of all recorded waveform data, keyed by node ID.
 
 ##### `reset(): void`
 
-Clears all state: nodes, edges, events, listeners, waveforms, tick counter, coverage, CDC state, and CDC warning listeners.
+ Clears all state: nodes, edges, events, listeners, waveforms, disposed node history, operation spans/models, tick counter, coverage, CDC state, and CDC warning listeners.
 
 ---
 
@@ -259,11 +295,12 @@ A default `CircuitGraph` instance for convenience. The assertion helper function
 
 ### Class: `CoverageCollector`
 
-HDL-style coverage collection for measuring test completeness. Tracks three coverage types:
+HDL-style coverage collection for measuring test completeness. Tracks:
 
 - **Toggle** -- has every boolean signal been both `true` and `false`?
 - **Transition** -- which FSM state transitions have been exercised?
 - **Cross** -- which combinations of boolean signal values have been observed?
+- **Operation outcomes** -- which declared external operation outcomes were observed?
 
 A default singleton is exported as `coverage`.
 
@@ -291,6 +328,10 @@ Records a boolean signal value for toggle coverage.
 
 Records an FSM state transition. Tracks all observed states and transition counts.
 
+##### `declareTransitionStates(fsmId: string, states: string[]): void`
+
+Declares the finite state domain used to report missing transition bins.
+
 ##### `registerCrossGroup(groupId: string, signalIds: string[]): void`
 
 Registers a cross-coverage group. Must be called before `recordCross`. The `total` field is set to `2^n` for `n` signals.
@@ -298,6 +339,14 @@ Registers a cross-coverage group. Must be called before `recordCross`. The `tota
 ##### `recordCross(groupId: string, values: boolean[]): void`
 
 Records an observation of boolean signal values for a previously registered cross-coverage group.
+
+##### `declareOperationOutcomes(operationName: string, outcomes: string[]): void`
+
+Declares the finite outcome domain for an external operation.
+
+##### `recordOperationOutcome(operationName: string, outcome: string): void`
+
+Records an observed external operation outcome.
 
 ##### `getPreviousValue(signalId: string): any`
 
@@ -309,7 +358,7 @@ Stores the current value of a signal for future transition detection.
 
 ##### `getReport(): CoverageReport`
 
-Generates a coverage report with toggle, transition, and cross data plus a summary with `totalPoints`, `coveredPoints`, and `percentage`.
+Generates a coverage report with toggle, transition, cross, operation outcome, explicit gap data, and a summary with `totalPoints`, `coveredPoints`, and `percentage`.
 
 ##### `reset(): void`
 
@@ -319,15 +368,17 @@ Clears all collected coverage data.
 
 ### Assertion Functions
 
-#### `assertAlways(checkFn: () => boolean, name: string, targetGraph?: CircuitGraph): string`
+#### `assertAlways(checkFn, name, targetGraph?, deps?, metadata?): string`
 
 Registers an assertion that must hold every time `checkAssertions()` is called. Returns the assertion node ID.
 
 - `checkFn` -- returns `true` if the property holds.
 - `name` -- human-readable assertion name.
 - `targetGraph` -- defaults to the `graph` singleton.
+- `deps` -- optional `{ nodeId }[]` dependency metadata for graph exploration.
+- `metadata` -- optional domains, partial coverage status, and reason metadata.
 
-#### `assertNever(checkFn: () => boolean, name: string, targetGraph?: CircuitGraph): string`
+#### `assertNever(checkFn, name, targetGraph?, deps?, metadata?): string`
 
 Registers an assertion that must **never** hold. Internally inverts `checkFn` and delegates to `assertAlways`. Returns the assertion node ID.
 
@@ -345,6 +396,11 @@ assertAfter(
     name: string;
     edgeValue?: any;
     devWatchdogMs?: number;
+    checkDeps?: Array<{ nodeId: string }> | string[];
+    domains?: Record<string, any[]>;
+    operationDomains?: Record<string, string[]>;
+    partial?: boolean;
+    reason?: string;
   },
   targetGraph?: CircuitGraph,  // defaults to `graph` singleton
 ): string
@@ -353,6 +409,7 @@ assertAfter(
 - `'immediately'` -- `checkFn` must be true in the same tick as the edge.
 - `'eventually'` -- `checkFn` must become true at some point. If `devWatchdogMs` is set, a timer fires a failure after that many milliseconds.
 - `{ withinTicks: N }` -- `checkFn` must become true within `N` ticks of the edge.
+- `checkDeps`, `domains`, and `operationDomains` tell autotest what property dependencies and domains are explorable without relying on source parsing.
 
 Returns the assertion node ID.
 
@@ -372,7 +429,7 @@ Registers an operation assertion that fails when a matching operation is marked 
 
 ```ts
 interface Signal<T> extends ReadonlySignal<T> {
-  set(next: T): void;
+  set(next: T | ((prev: T) => T)): void;
 }
 ```
 
@@ -397,14 +454,20 @@ type NodeType = 'signal' | 'derived' | 'effect' | 'assertion';
 ```ts
 interface GraphNode {
   id: string;
+  stablePath: string;
   name: string;
   type: NodeType;
   deps: string[];
   getValue: (() => any) | null;
   setValue: ((v: any) => void) | null;
+  computeFn?: () => any;
+  currentValue?: any;
   assertionFn?: () => boolean;
   assertionKind?: 'always' | 'never' | 'after';
+  assertionMetadata?: AssertionMetadata;
   metadata?: Record<string, any>;
+  createdAtTick: number;
+  disposedAtTick?: number;
   trigger?: { element: string; action: 'click' | 'type' | 'select'; value?: string };
 }
 ```
@@ -422,12 +485,20 @@ interface GraphEdge {
 
 ```ts
 interface GraphEvent {
-  type: 'signal-change' | 'derived-recompute' | 'effect-run'
-      | 'assertion-armed' | 'assertion-passed' | 'assertion-failed';
+  seq?: number;
+  type: 'node-created' | 'node-disposed'
+      | 'signal-change' | 'derived-recompute' | 'effect-run'
+      | 'assertion-armed' | 'assertion-passed' | 'assertion-failed'
+      | 'operation-begin' | 'operation-resolve' | 'operation-reject'
+      | 'operation-abort' | 'operation-timeout' | 'operation-stale';
   nodeId: string;
   tick: number;
+  stablePath?: string;
   oldValue?: any;
   newValue?: any;
+  operationId?: string;
+  operationName?: string;
+  status?: OperationStatus;
 }
 ```
 
@@ -435,8 +506,27 @@ interface GraphEvent {
 
 ```ts
 interface GraphSnapshot {
-  nodes: Array<{ id: string; name: string; type: string; deps: string[] }>;
+  schemaVersion?: 1;
+  capturedAt?: string;
+  currentTick?: number;
+  captureContext?: Record<string, any>;
+  nodes: Array<{
+    id: string;
+    runtimeId?: string;
+    stablePath?: string;
+    name: string;
+    type: string;
+    deps: string[];
+    depPaths?: string[];
+    metadata?: Record<string, any>;
+    assertionMetadata?: AssertionMetadata;
+  }>;
   edges: GraphEdge[];
+  events?: GraphEvent[];
+  waveforms?: Record<string, WaveformPoint[]>;
+  disposedNodes?: GraphSnapshot['nodes'];
+  operations?: OperationSpan[];
+  operationModels?: OperationModel[];
 }
 ```
 
@@ -514,6 +604,8 @@ interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
   cross: CrossCoverage[];
+  operations: OperationOutcomeCoverage[];
+  gaps: CoverageGap[];
   summary: { totalPoints: number; coveredPoints: number; percentage: number };
 }
 ```

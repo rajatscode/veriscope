@@ -63,21 +63,33 @@ function mountDevtools(
 ```ts
 interface DevtoolsOptions {
   coverage?: CoverageCollector;
-  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
-  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
-  mutate?: () => Promise<MutateResult>;
-  initialTab?: 'circuit' | 'waveform' | 'autotest' | 'mutants';
+  autotest?: (graph: CircuitGraph, options?: {
+    budget?: number;
+    flush?: () => void | Promise<void>;
+    name?: string;
+    onProgress?: (progress: AutotestProgress) => void | Promise<void>;
+  }) => Promise<AutotestResult>;
+  explore?: (graph: CircuitGraph, options?: {
+    budget?: number;
+    flush?: () => void | Promise<void>;
+    onProgress?: (progress: AutotestProgress) => void | Promise<void>;
+  }) => Promise<ExploreResult>;
+  mutate?: (options?: {
+    mode?: 'semantic' | 'broad';
+    onProgress?: (progress: MutateProgress) => void | Promise<void>;
+  }) => Promise<MutateResult>;
+  initialTab?: 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants';
   height?: string;
 }
 ```
 
 | Property     | Type                                                    | Default      | Description                                                                                      |
 |--------------|---------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------|
-| `coverage`   | `CoverageCollector`                                     | `undefined`  | A `CoverageCollector` instance from `@veriscope/graph`; runtime coverage is shown inside Autotest. |
+| `coverage`   | `CoverageCollector`                                     | `undefined`  | A `CoverageCollector` instance from `@veriscope/graph`; runtime coverage is shown inside Live Assertions. |
 | `autotest`   | `runAutotest`-compatible callback                       | `undefined`  | Enables the Autotest tab to drive exploration and report assertions, coverage, and gaps.         |
 | `explore`    | `explore`-compatible callback                           | `undefined`  | Fallback exploration runner when no autotest callback is supplied.                               |
 | `mutate`     | mutation runner callback                                | `undefined`  | Enables the Mutants tab. Usually wraps `@veriscope/mutate` with an app-specific graph factory.   |
-| `initialTab` | `'circuit' \| 'waveform' \| 'autotest' \| 'mutants'`   | `'circuit'`  | Which tab is active on mount. Legacy aliases `graph`, `assertions`, and `coverage` are accepted by `mountDevtools`. |
+| `initialTab` | `'circuit' \| 'waveform' \| 'live-assertions' \| 'autotest' \| 'mutants'` | `'circuit'` | Which tab is active on mount. Legacy aliases `graph`, `assertions`, and `coverage` are accepted by `mountDevtools`. |
 | `height`     | `string`                                                | `'360px'`    | CSS height of the devtools panel.                                                                |
 
 ---
@@ -90,7 +102,7 @@ Returned by `mountDevtools`. Provides programmatic control over the panel.
 interface DevtoolsHandle {
   dispose: () => void;
   refresh: () => void;
-  setTab: (tab: 'circuit' | 'waveform' | 'autotest' | 'mutants') => void;
+  setTab: (tab: 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants') => void;
 }
 ```
 
@@ -107,7 +119,7 @@ interface DevtoolsHandle {
 Re-exported type representing valid tab identifiers.
 
 ```ts
-type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
+type TabId = 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants';
 ```
 
 ---
@@ -192,23 +204,26 @@ function createVisualizerPanel(
 
 ---
 
-### Autotest Panel
+### Live Assertions Panel
 
-Live assertion/autotest monitor that subscribes to graph events and tracks pass/fail/armed status.
+Runtime assertion monitor that subscribes to graph events and tracks pass/fail/armed status from the actual running graph.
 
 **Features:**
 
 - Subscribes to the graph's event stream (`graph.subscribe`) and listens for `assertion-armed`, `assertion-passed`, and `assertion-failed` events.
 - Displays a summary bar showing counts of passed, failed, armed, and unchecked assertions.
 - Each assertion row shows: status indicator (colored dot), assertion name, kind badge, and cumulative pass/fail counts.
-- "Run Autotest" drives `runAutotest()` when provided, then reports status, violations, coverage percentage, and gap count.
 - Runtime `CoverageCollector` summaries are shown in this panel when provided.
+
+### Autotest Panel
+
+Generated-case autotest monitor. "Run Autotest" drives `runAutotest()` when provided, shows live progress from `onProgress`, then reports generated scenarios, assertion results, reachable coverage, runtime counters, and explicit gaps. Live assertion pass/fail counts from the running app are intentionally not mixed into this tab.
 
 ---
 
 ### Mutants Panel
 
-Mutation testing surface for generated graph mutations. Pass a callback backed by `@veriscope/mutate` to enable the button; the panel reports total, killed, survived, invalid, equivalent, and score after the runner completes.
+Mutation testing surface for generated graph mutations. Pass a callback backed by `@veriscope/mutate` to enable the button; the panel supports Semantic Score and Broad Sweep modes, shows live progress from `onProgress`, and reports total, killed, survived, invalid, equivalent, skipped, autotest runs, and score after the runner completes.
 
 ---
 
@@ -261,9 +276,13 @@ Time-series waveform viewer. Shows all `signal` and `derived` nodes from the `Ci
 
 Dependency graph visualizer. Displays all graph nodes as color-coded boxes arranged in topological layers with bezier-curve edges showing data flow. Hover any node to see its current value and dependency count. Redraws live from graph events.
 
+### Live Assertions
+
+Runtime assertion monitor. Lists every assertion node from the graph with pass/fail/armed counts from actual graph events and shows runtime coverage counters when a collector is supplied.
+
 ### Autotest
 
-Live assertion status and autotest monitor. Lists every assertion node from the graph with its current state and cumulative pass/fail counts. Runs exploration/autotest when supplied and reports coverage/gaps.
+Generated-case autotest monitor. Runs exploration/autotest when supplied, shows progress, and reports generated cases, assertion outcomes, coverage, and gaps.
 
 ### Mutants
 

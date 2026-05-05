@@ -31,7 +31,7 @@ interface ReadonlySignal<T> {
 }
 
 interface Signal<T> extends ReadonlySignal<T> {
-  set(next: T): void;
+  set(next: T | ((prev: T) => T)): void;
 }
 
 type NodeType = 'signal' | 'derived' | 'effect' | 'assertion';
@@ -50,14 +50,17 @@ function useSignal<T>(
   options?: {
     states?: string[];
     graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
   },
 ): Signal<T>;
 ```
 
 - `.val` -- synchronous read (ref-backed, never stale)
-- `.set(next)` -- updates the value, skips on `Object.is` equality, triggers React re-render + `graph.notifyChange()`
+- `.set(next)` -- accepts a value or updater function, skips on `Object.is` equality, triggers React re-render + `graph.notifyChange()`
 - `options.states` -- optional FSM state enumeration for coverage
 - `options.graph` -- defaults to the global singleton
+- `options.stablePath` / `options.scope` -- stable artifact identity for snapshots and repeated component instances
 
 #### `useDerived<T>(computeFn, deps, name, options?)`
 
@@ -68,7 +71,7 @@ function useDerived<T>(
   computeFn: () => T,
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): ReadonlySignal<T>;
 ```
 
@@ -83,7 +86,7 @@ function useTrackedEffect(
   fn: () => void | (() => void),
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): void;
 ```
 
@@ -99,7 +102,7 @@ function useEdgeEffect(
   edge: 'posedge' | 'negedge',
   action: () => void,
   name: string,
-  options?: { graph?: CircuitGraph },
+  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
 ): void;
 ```
 
@@ -125,10 +128,10 @@ const { result } = renderHook(() => {
 Identical API signatures to the React hooks:
 
 ```ts
-function useSignal<T>(initial: T, name: string, options?: { states?: string[]; graph?: CircuitGraph }): Signal<T>
-function useDerived<T>(fn: () => T, deps: Array<Signal<any> | ReadonlySignal<any>>, name: string, options?: { graph?: CircuitGraph }): ReadonlySignal<T>
-function useTrackedEffect(fn: () => void | (() => void), deps: Array<Signal<any> | ReadonlySignal<any>>, name: string, options?: { graph?: CircuitGraph }): void
-function useEdgeEffect(signal: Signal<any> | ReadonlySignal<any>, edge: 'posedge' | 'negedge', action: () => void, name: string, options?: { graph?: CircuitGraph }): void
+function useSignal<T>(initial: T, name: string, options?: { states?: string[]; graph?: CircuitGraph; stablePath?: string; scope?: string }): Signal<T>
+function useDerived<T>(fn: () => T, deps: Array<Signal<any> | ReadonlySignal<any>>, name: string, options?: { graph?: CircuitGraph; stablePath?: string; scope?: string }): ReadonlySignal<T>
+function useTrackedEffect(fn: () => void | (() => void), deps: Array<Signal<any> | ReadonlySignal<any>>, name: string, options?: { graph?: CircuitGraph; stablePath?: string; scope?: string }): void
+function useEdgeEffect(signal: Signal<any> | ReadonlySignal<any>, edge: 'posedge' | 'negedge', action: () => void, name: string, options?: { graph?: CircuitGraph; stablePath?: string; scope?: string }): void
 ```
 
 **Key Solid-specific differences:**
@@ -148,7 +151,7 @@ function useEdgeEffect(signal: Signal<any> | ReadonlySignal<any>, edge: 'posedge
 
 HDL-inspired assertion primitives for invariant checking and temporal properties.
 
-### `assertAlways(checkFn, name, targetGraph?)` (`@veriscope/graph`)
+### `assertAlways(checkFn, name, targetGraph?, deps?, metadata?)` (`@veriscope/graph`)
 
 Registers an assertion that must hold every time `checkAssertions()` is called.
 
@@ -157,10 +160,12 @@ function assertAlways(
   checkFn: () => boolean,
   name: string,
   targetGraph?: CircuitGraph,
+  deps?: Array<{ nodeId: string }>,
+  metadata?: AssertionMetadata,
 ): string  // returns assertion node ID
 ```
 
-### `assertNever(checkFn, name, targetGraph?)` (`@veriscope/graph`)
+### `assertNever(checkFn, name, targetGraph?, deps?, metadata?)` (`@veriscope/graph`)
 
 Registers an assertion that must **never** hold. Internally inverts `checkFn` and delegates to `assertAlways`.
 
@@ -169,6 +174,8 @@ function assertNever(
   checkFn: () => boolean,
   name: string,
   targetGraph?: CircuitGraph,
+  deps?: Array<{ nodeId: string }>,
+  metadata?: AssertionMetadata,
 ): string
 ```
 
@@ -186,6 +193,11 @@ function assertAfter(
     name: string;
     edgeValue?: any;
     devWatchdogMs?: number;
+    checkDeps?: Array<{ nodeId: string }> | string[];
+    domains?: Record<string, any[]>;
+    operationDomains?: Record<string, string[]>;
+    partial?: boolean;
+    reason?: string;
   },
   targetGraph?: CircuitGraph,
 ): string
@@ -194,6 +206,7 @@ function assertAfter(
 - `'immediately'` -- `checkFn` must be true in the same tick as the edge
 - `'eventually'` -- must become true at some point; `devWatchdogMs` fires a failure timer
 - `{ withinTicks: N }` -- must become true within `N` ticks of the edge
+- `deps`, `checkDeps`, `domains`, and `operationDomains` provide explorable metadata for autotest without relying on function-source parsing.
 
 ### `assertOperationStatus(operationName, allowedStatuses, name?, targetGraph?)` (`@veriscope/graph`)
 
@@ -252,10 +265,20 @@ import { CircuitGraph, graph } from '@veriscope/graph';
 #### Node Management
 
 ```ts
-registerNode(info: { name: string; type: NodeType; deps?: string[]; metadata?: Record<string, any> }): string
+registerNode(info: {
+  name: string;
+  type: NodeType;
+  deps?: string[];
+  stablePath?: string;
+  metadata?: Record<string, any>;
+  assertionMetadata?: AssertionMetadata;
+  computeFn?: () => any;
+}): string
 addEdge(from: string, to: string): void
 setNodeValue(id: string, getter: () => any): void
 setNodeSetter(id: string, setter: (v: any) => void): void
+driveNodeValue(id: string, value: any): void
+propagate(fromNodeId?: string): void
 setAssertionFn(id: string, fn: () => boolean, kind: 'always' | 'never' | 'after'): void
 disposeNode(id: string): void
 ```
@@ -278,9 +301,11 @@ notifyAssertionFailed(nodeId: string): void
 getNodes(): GraphNode[]
 getEdges(): GraphEdge[]
 getNode(id: string): GraphNode | undefined
-getAssertions(): Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[] }>
+getAssertions(): Array<{ id: string; stablePath: string; name: string; kind: string; checkFn: () => boolean; deps: string[]; metadata?: AssertionMetadata }>
 checkAssertions(): AssertionViolation[]
 getRecentEvents(n?: number): GraphEvent[]  // default 50, max 256
+getOperations(): OperationSpan[]
+getOperationModels(): OperationModel[]
 ```
 
 #### Subscriptions
@@ -292,8 +317,31 @@ subscribe(listener: (event: GraphEvent) => void): () => void
 #### Snapshots and Diffing
 
 ```ts
-snapshot(): GraphSnapshot
+snapshot(captureContext?: Record<string, any>): GraphSnapshot
 static diffGraphs(a: GraphSnapshot, b: GraphSnapshot): GraphDiff
+```
+
+Snapshots are schema-versioned artifacts with stable paths, dependency paths, metadata, recent events, waveforms, disposed nodes, operation spans, and operation models.
+
+#### External Operations
+
+```ts
+registerOperationModel(info: {
+  name: string;
+  outcomes: OperationStatus[];
+  triggerDeps?: string[];
+  outputDeps?: string[];
+  metadata?: Record<string, any>;
+  handleOutcome?: (outcome: OperationStatus, context: OperationModelContext) => void | Promise<void>;
+}): string
+beginOperation(name: string, metadata?: Record<string, any>): string
+completeOperationOutcome(id: string, status: OperationStatus, payload?: any): void
+resolveOperation(id: string, value?: any): void
+rejectOperation(id: string, error?: any): void
+abortOperation(id: string, reason?: any): void
+timeoutOperation(id: string): void
+markOperationStale(id: string, newerId?: string): void
+withOperation<T>(id: string, fn: () => T): T
 ```
 
 #### Tick Management
@@ -344,14 +392,20 @@ reset(): void  // clears all state
 ```ts
 interface GraphNode {
   id: string;
+  stablePath: string;
   name: string;
   type: NodeType;
   deps: string[];
   getValue: (() => any) | null;
   setValue: ((v: any) => void) | null;
+  computeFn?: () => any;
+  currentValue?: any;
   assertionFn?: () => boolean;
   assertionKind?: 'always' | 'never' | 'after';
+  assertionMetadata?: AssertionMetadata;
   metadata?: Record<string, any>;
+  createdAtTick: number;
+  disposedAtTick?: number;
   trigger?: { element: string; action: 'click' | 'type' | 'select'; value?: string };
 }
 
@@ -361,17 +415,44 @@ interface GraphEdge {
 }
 
 interface GraphEvent {
-  type: 'signal-change' | 'derived-recompute' | 'effect-run'
-      | 'assertion-armed' | 'assertion-passed' | 'assertion-failed';
+  seq?: number;
+  type: 'node-created' | 'node-disposed'
+      | 'signal-change' | 'derived-recompute' | 'effect-run'
+      | 'assertion-armed' | 'assertion-passed' | 'assertion-failed'
+      | 'operation-begin' | 'operation-resolve' | 'operation-reject'
+      | 'operation-abort' | 'operation-timeout' | 'operation-stale';
   nodeId: string;
   tick: number;
+  stablePath?: string;
   oldValue?: any;
   newValue?: any;
+  operationId?: string;
+  operationName?: string;
+  status?: OperationStatus;
 }
 
 interface GraphSnapshot {
-  nodes: Array<{ id: string; name: string; type: string; deps: string[] }>;
+  schemaVersion?: 1;
+  capturedAt?: string;
+  currentTick?: number;
+  captureContext?: Record<string, any>;
+  nodes: Array<{
+    id: string;
+    runtimeId?: string;
+    stablePath?: string;
+    name: string;
+    type: string;
+    deps: string[];
+    depPaths?: string[];
+    metadata?: Record<string, any>;
+    assertionMetadata?: AssertionMetadata;
+  }>;
   edges: GraphEdge[];
+  events?: GraphEvent[];
+  waveforms?: Record<string, WaveformPoint[]>;
+  disposedNodes?: GraphSnapshot['nodes'];
+  operations?: OperationSpan[];
+  operationModels?: OperationModel[];
 }
 
 interface GraphDiff {
@@ -419,8 +500,11 @@ disable(): void
 isEnabled(): boolean
 recordToggle(signalId: string, value: boolean): void
 recordTransition(fsmId: string, from: string, to: string): void
+declareTransitionStates(fsmId: string, states: string[]): void
 registerCrossGroup(groupId: string, signalIds: string[]): void
 recordCross(groupId: string, values: boolean[]): void
+declareOperationOutcomes(operationName: string, outcomes: string[]): void
+recordOperationOutcome(operationName: string, outcome: string): void
 getPreviousValue(signalId: string): any
 setPreviousValue(signalId: string, value: any): void
 getReport(): CoverageReport
@@ -434,6 +518,8 @@ interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
   cross: CrossCoverage[];
+  operations: OperationOutcomeCoverage[];
+  gaps: CoverageGap[];
   summary: { totalPoints: number; coveredPoints: number; percentage: number };
 }
 
@@ -454,6 +540,18 @@ interface CrossCoverage {
   signals: string[];
   observed: Map<string, number>;  // "1,0,1" -> count
   total: number;                  // 2^n possible combos
+}
+
+interface OperationOutcomeCoverage {
+  operationName: string;
+  declaredOutcomes: Set<string>;
+  observedOutcomes: Map<string, number>;
+}
+
+interface CoverageGap {
+  kind: 'toggle' | 'transition' | 'cross' | 'operation' | 'assertion';
+  id: string;
+  missing: string[];
 }
 ```
 
@@ -537,12 +635,49 @@ function explore(graph: CircuitGraph, options?: ExploreOptions): Promise<Explore
 interface ExploreOptions {
   budget?: number;                      // default: 1000
   flush?: () => void | Promise<void>;   // framework integration (React: () => act(() => {}))
+  onProgress?: (progress: ExploreProgress) => void | Promise<void>;
+}
+
+interface ExploreProgress {
+  phase: 'setup' | 'enumerated' | 'current-state' | 'sequence'
+    | 'operation-outcome' | 'coverage-directed' | 'coverage-completion'
+    | 'adversarial' | 'complete';
+  steps: number;
+  budget: number;
+  generatedCases: number;
+  hiddenDuplicateCases: number;
+  stoppedByBudget: boolean;
 }
 
 interface ExploreResult {
   violations: Violation[];
-  coverage: { toggle: number; transitions: number; cross: number };
+  coverage: {
+    toggle: CoverageMetric;
+    transitions: CoverageMetric;
+    cross: CoverageMetric;
+    operations: CoverageMetric;
+    overall: CoverageMetric;
+    gaps: Array<{ kind: string; id: string; missing: string[] }>;
+  };
   steps: number;
+  scenarios: ScenarioTrace[];
+  plan: {
+    deterministic: boolean;
+    seed?: string | number;
+    budget: number;
+    exhausted: boolean;
+    stoppedByBudget: boolean;
+    generatedCases: number;
+    hiddenDuplicateCases: number;
+    generatedReachableCoverage: CoverageMetric;
+    phaseCounts: Record<string, number>;
+  };
+}
+
+interface CoverageMetric {
+  covered: number;
+  total: number;
+  percentage: number;
 }
 
 interface Violation {
@@ -668,24 +803,37 @@ function mutate(
 ): Promise<MutateResult>
 
 interface MutateOptions {
-  budget?: number;                 // default: 500, divided among mutations (min 4 each)
-  operators?: 'all' | string[];   // default: 'all'; or e.g. ['negate', 'sever-edge']
+  budget?: number;                // default: 500 per mutant
+  operators?: 'all' | string[];   // default: semantic scored set; 'all' enables broad mode
+  includeMetaMutations?: boolean;
+  onProgress?: (progress: MutateProgress) => void | Promise<void>;
+  yieldEvery?: number;
 }
 
 interface MutateResult {
   total: number;
   killed: number;
+  killedMutations: Array<{ mutation: string; description: string; scenarioId?: string; assertionName?: string }>;
   survived: Array<{ mutation: string; description: string }>;
-  score: number;  // 0-100 kill rate
+  invalid: Array<{ mutation: string; description: string; error: string }>;
+  equivalent: Array<{ mutation: string; description: string; reason: string }>;
+  score: number;  // 0-100 kill rate over scored mutants
+  budgetPerMutation: number;
+  autotestRuns: number;   // baseline + selected mutants
+  autotestSteps: number;
+  seed?: string | number;
+  generatedMutants: number;
+  skipped: Array<{ mutation: string; description: string; reason: string }>;
 }
 ```
 
 **How it works:**
 
 1. Creates a reference graph from `factory` to enumerate mutations via `generateMutations`
-2. For each mutation, creates a fresh graph, applies the mutation, runs `explore()`
-3. If any assertion fires, the mutation is **killed**; otherwise it **survived**
-4. Score = `(killed / total) * 100`
+2. Runs one baseline autotest for behavior-signature comparison
+3. For each selected mutation, creates a fresh graph, applies the mutation, runs `runAutotest()`
+4. If any assertion fires, the mutation is **killed**; invalid and broad equivalent mutants are classified separately from survived mutants
+5. Score = `killed / (total - invalid - equivalent) * 100`
 
 ### `generateMutations(graph)` (`@veriscope/mutate`)
 
@@ -728,10 +876,13 @@ function mountDevtools(
 ): DevtoolsHandle;
 
 interface DevtoolsOptions {
-  coverage?: CoverageCollector; // shown inside Autotest runtime coverage
-  autotest?: typeof runAutotest;
-  explore?: typeof explore;     // fallback when no autotest runner is provided
-  mutate?: () => Promise<MutateResult>;
+  coverage?: CoverageCollector; // shown inside Live Assertions runtime coverage
+  autotest?: (graph: CircuitGraph, options?: ExploreOptions & { name?: string }) => Promise<AutotestResult>;
+  explore?: (graph: CircuitGraph, options?: ExploreOptions) => Promise<ExploreResult>;
+  mutate?: (options?: {
+    mode?: 'semantic' | 'broad';
+    onProgress?: (progress: MutateProgress) => void | Promise<void>;
+  }) => Promise<MutateResult>;
   initialTab?: TabId;           // default: 'circuit'
   height?: string;              // default: '360px'
 }
@@ -742,7 +893,7 @@ interface DevtoolsHandle {
   setTab(tab: TabId): void;
 }
 
-type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
+type TabId = 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants';
 ```
 
 ### Tabs
@@ -764,13 +915,17 @@ Time-series viewer for all signal and derived nodes. Features:
 - Export to JSON, zoom controls, keyboard shortcuts (`+`/`-` zoom, arrows pan, Home fit, Esc clear markers)
 - Persistence via `localStorage`
 
+#### Live Assertions
+
+Runtime assertion surface. Subscribes to graph events for real-time pass/fail/armed tracking and shows runtime `CoverageCollector` counters when provided.
+
 #### Autotest
 
-Live assertion/autotest surface. Subscribes to graph events for real-time pass/fail/armed tracking. When provided, `runAutotest()` drives exploration and reports assertion status, coverage percentage, and explicit coverage gaps. Runtime `CoverageCollector` summaries are shown here too.
+Generated-case autotest surface. When provided, `runAutotest()` drives deterministic exploration, reports live progress, generated scenarios, assertion status, coverage percentages, explicit coverage gaps, and operation outcome evidence.
 
 #### Mutants
 
-Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to run generated mutations, rerun autotest, and report killed, survived, invalid, and equivalent mutations.
+Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to run semantic or broad generated mutations, rerun autotest, show live progress, and report killed, survived, skipped, invalid, and equivalent mutations.
 
 ### Panel Constructors
 
@@ -778,6 +933,8 @@ Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to ru
 function createTabLayout(container: HTMLElement): TabLayout
 function createWaveformPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
 function createVisualizerPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
+function createLiveAssertionsPanel(container: HTMLElement, graph: CircuitGraph, options?: { coverage?: CoverageCollector }): { dispose: () => void; refresh: () => void }
+function createMutantsPanel(container: HTMLElement, options?: { mutate?: DevtoolsOptions['mutate'] }): { dispose: () => void; refresh: () => void }
 ```
 
 ### Types
@@ -884,6 +1041,8 @@ function writeSnapshot(graph: CircuitGraph, outputPath: string, captureContext?:
   ],
   "events": [],
   "waveforms": {},
-  "operations": []
+  "disposedNodes": [],
+  "operations": [],
+  "operationModels": []
 }
 ```

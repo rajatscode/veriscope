@@ -47,6 +47,8 @@ function useSignal<T>(
   options?: {
     states?: string[];
     graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
   },
 ): Signal<T>;
 ```
@@ -59,11 +61,13 @@ function useSignal<T>(
 | `name` | `string` | Human-readable name used in graph registration, waveform display, and diffs. |
 | `options.states` | `string[]` | Optional finite state enumeration (e.g. `['idle', 'loading', 'done']`). Stored as node metadata for coverage collection. |
 | `options.graph` | `CircuitGraph` | Optional graph instance. Defaults to the singleton `graph` from `@veriscope/graph`. |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs. |
+| `options.scope` | `string` | Component/module scope metadata; used to derive stable paths when one is not supplied. |
 
 **Returns:** `Signal<T>` -- an object with:
 
 - `.val` -- getter that synchronously returns the current value (ref-backed, never stale).
-- `.set(next: T)` -- sets a new value. Skips the update if `Object.is(old, next)` is true. Otherwise updates the ref, triggers a React state update, and calls `graph.notifyChange()`.
+- `.set(next: T | ((prev: T) => T))` -- sets a new value. Skips the update if `Object.is(old, next)` is true. Otherwise updates the ref, triggers a React state update, and calls `graph.notifyChange()`.
 - `.nodeId` -- the graph node ID assigned at registration.
 - `.name` -- the name string passed in.
 
@@ -82,6 +86,8 @@ function useDerived<T>(
   name: string,
   options?: {
     graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
   },
 ): ReadonlySignal<T>;
 ```
@@ -94,6 +100,8 @@ function useDerived<T>(
 | `deps` | `Array<Signal \| ReadonlySignal>` | Signals this derivation depends on. Their `.val` properties are read during render so React tracks re-renders, and their `.nodeId` values are registered as graph edges. |
 | `name` | `string` | Human-readable name for graph registration. |
 | `options.graph` | `CircuitGraph` | Optional graph instance. Defaults to the singleton. |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs. |
+| `options.scope` | `string` | Component/module scope metadata. |
 
 **Returns:** `ReadonlySignal<T>` -- an object with:
 
@@ -116,6 +124,8 @@ function useTrackedEffect(
   name: string,
   options?: {
     graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
   },
 ): void;
 ```
@@ -128,6 +138,8 @@ function useTrackedEffect(
 | `deps` | `Array<Signal \| ReadonlySignal>` | Signals to track. Their `.val` values are used as the React effect dependency array. |
 | `name` | `string` | Human-readable name for graph registration. |
 | `options.graph` | `CircuitGraph` | Optional graph instance. Defaults to the singleton. |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs. |
+| `options.scope` | `string` | Component/module scope metadata. |
 
 Each time the effect fires, `graph.notifyEffect(nodeId)` is called, creating a waveform event. The node is disposed on unmount.
 
@@ -145,6 +157,8 @@ function useEdgeEffect(
   name: string,
   options?: {
     graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
   },
 ): void;
 ```
@@ -158,6 +172,8 @@ function useEdgeEffect(
 | `action` | `() => void` | Callback invoked when the specified edge is detected. |
 | `name` | `string` | Human-readable name for graph registration. |
 | `options.graph` | `CircuitGraph` | Optional graph instance. Defaults to the singleton. |
+| `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs. |
+| `options.scope` | `string` | Component/module scope metadata. |
 
 The initial render is skipped -- only actual transitions fire the action. The node is disposed on unmount.
 
@@ -167,7 +183,7 @@ The initial render is skipped -- only actual transitions fire the action. The no
 
 ```ts
 interface Signal<T> extends ReadonlySignal<T> {
-  set(next: T): void;
+  set(next: T | ((prev: T) => T)): void;
 }
 
 interface ReadonlySignal<T> {

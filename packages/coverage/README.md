@@ -1,6 +1,6 @@
 # @veriscope/coverage
 
-Formats, merges, threshold-checks, and persists Veriscope reactive coverage reports (toggle, FSM transition, and cross coverage) with built-in Vitest integration.
+Formats, merges, threshold-checks, and persists Veriscope reactive coverage reports (toggle, FSM transition, cross, and external operation outcome coverage) with built-in Vitest integration.
 
 ## Installation
 
@@ -52,7 +52,7 @@ export default {
 
 #### `formatConsole(report: CoverageReport): string`
 
-Formats a coverage report as aligned, human-readable text for terminal output. Includes sections for toggle coverage (signal / true / false / covered), FSM transition coverage (observed/possible counts per FSM), cross coverage (observed combinations per group with percentages), and a summary with total points, covered points, and overall percentage.
+Formats a coverage report as aligned, human-readable text for terminal output. Includes sections for toggle coverage (signal / true / false / covered), FSM transition coverage (observed/possible counts per FSM), cross coverage (observed combinations per group with percentages), operation outcome coverage, explicit gaps, and a summary with total points, covered points, and overall percentage.
 
 #### `formatJSON(report: CoverageReport): string`
 
@@ -76,6 +76,7 @@ Coverage calculation per category:
 - **Toggle**: each signal contributes 2 points (seenTrue + seenFalse). Percentage = covered points / (signals * 2) * 100.
 - **Transitions**: percentage = total observed transitions / total possible transitions across all FSMs, where possible = states * (states - 1) per FSM.
 - **Cross**: percentage = total observed combinations / total possible combinations across all groups.
+- **Operations**: percentage = observed declared outcomes / declared outcomes for tracked external operations.
 - **Overall**: uses the report's built-in `summary.percentage`.
 
 If no coverage points exist for a given category, that category is treated as 100% (passes any threshold).
@@ -169,6 +170,8 @@ interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
   cross: CrossCoverage[];
+  operations: OperationOutcomeCoverage[];
+  gaps: CoverageGap[];
   summary: { totalPoints: number; coveredPoints: number; percentage: number };
 }
 
@@ -189,5 +192,17 @@ interface CrossCoverage {
   signals: string[];
   observed: Map<string, number>; // "1,0,1" -> count
   total: number; // 2^n possible combos for n boolean signals
+}
+
+interface OperationOutcomeCoverage {
+  operationName: string;
+  declaredOutcomes: Set<string>;
+  observedOutcomes: Map<string, number>;
+}
+
+interface CoverageGap {
+  kind: 'toggle' | 'transition' | 'cross' | 'operation' | 'assertion';
+  id: string;
+  missing: string[];
 }
 ```

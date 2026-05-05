@@ -125,16 +125,19 @@ may be useful as meta-tests, but they are not application behavior mutants.
 The package devtools should be the only devtools visible in VS Tetris. Demo-local
 graph, coverage, autotest, or mutation panels must not fake product behavior.
 
-The devtools product surface should converge on four tabs:
+The devtools product surface should keep live runtime monitoring separate from
+generated tests:
 
 - Circuit
 - Waveform
+- Live Assertions
 - Autotest
 - Mutants
 
 Circuit and Waveform must live-update from the graph/timeline artifact.
-Autotest must combine assertion results with coverage progress. Mutants must run
-through the same scenario runner used by Autotest.
+Live Assertions must show only actual running graph events. Autotest must show
+generated-case assertion results with live progress and coverage gaps. Mutants
+must run through the same scenario runner used by Autotest.
 
 Devtools need browser-level regression coverage. Canvas and DOM-heavy panels are
 part of the product, so unit tests around pure helpers are not enough.
@@ -222,11 +225,11 @@ Required behavior:
 Veriscope should verify UI handling of external operations, not remote server
 correctness.
 
-Current implementation note: operation lifecycle APIs, outcome coverage,
-Autotest-tab operation visibility, and basic operation assertions
-(`assertOperationStatus`, `assertNoStaleOperations`) are implemented. Richer
-request/response ordering assertions and operation-aware failure traces still
-need deeper scenario support.
+Current implementation note: operation lifecycle APIs, operation models,
+outcome coverage, Autotest operation-outcome scenarios, operation event
+observations, and basic operation assertions (`assertOperationStatus`,
+`assertNoStaleOperations`) are implemented. Richer request/response ordering
+assertion helpers can still be added on top of the span/event model.
 
 ## 11. Signal API Parity
 
