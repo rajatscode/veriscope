@@ -276,7 +276,10 @@ static diffGraphs(a: GraphSnapshot, b: GraphSnapshot): GraphDiff
 ```ts
 enterTestMode(): void    // manual tick control
 openTick(): void
+runInTick<T>(fn: () => T): T
+batch<T>(fn: () => T): T
 closeTick(): void
+flushTick(settle?: () => void | Promise<void>): Promise<void>
 exitTestMode(): void     // auto-tick resumes
 ```
 

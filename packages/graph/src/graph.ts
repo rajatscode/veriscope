@@ -786,6 +786,19 @@ export class CircuitGraph {
     this.ensureTickOpen();
   }
 
+  runInTick<T>(fn: () => T): T {
+    this.openTick();
+    try {
+      return fn();
+    } finally {
+      this.closeTick();
+    }
+  }
+
+  batch<T>(fn: () => T): T {
+    return this.runInTick(fn);
+  }
+
   closeTick(): void {
     if (this.tickOpen) {
       this.checkAssertions();
@@ -795,9 +808,10 @@ export class CircuitGraph {
     }
   }
 
-  async flushTick(): Promise<void> {
+  async flushTick(settle?: () => void | Promise<void>): Promise<void> {
     this.closeTick();
     await Promise.resolve();
+    if (settle) await settle();
   }
 
   exitTestMode(): void {

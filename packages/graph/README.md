@@ -181,9 +181,21 @@ Enters test mode. In test mode, ticks do not auto-advance on `notifyChange` — 
 
 Opens a new tick. Changes notified between `openTick()` and `closeTick()` share the same tick number.
 
+##### `runInTick<T>(fn: () => T): T`
+
+Runs synchronous work inside one explicit causality tick and closes that tick in a `finally` block. If `fn` returns a promise, the tick closes before awaited continuations run, so async follow-up work lands in later ticks.
+
+##### `batch<T>(fn: () => T): T`
+
+Alias for `runInTick()`.
+
 ##### `closeTick(): void`
 
 Closes the current tick and increments `currentTick`.
+
+##### `flushTick(settle?: () => void | Promise<void>): Promise<void>`
+
+Closes the current tick, awaits a microtask, then awaits an optional framework/test settle callback.
 
 ##### `exitTestMode(): void`
 

@@ -193,6 +193,11 @@ Required behavior:
 This remains weaker than Comb scheduling; it records framework behavior rather
 than replacing the framework scheduler.
 
+Current implementation note: `CircuitGraph.runInTick()` and `batch()` now close
+the initiating tick before any returned promise continuation runs, and
+`flushTick(settle?)` accepts a deterministic settle callback. Adapter-specific
+settle wrappers still need to call these APIs consistently.
+
 ## 10. External Operation Spans
 
 External request/response flows are central to the spec and are mostly missing

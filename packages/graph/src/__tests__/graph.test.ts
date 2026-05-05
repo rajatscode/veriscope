@@ -154,6 +154,50 @@ describe('CircuitGraph', () => {
     expect(events[1].tick).toBe(0);
   });
 
+  it('runInTick batches synchronous causality and closes deterministically', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const events: any[] = [];
+    g.subscribe(event => {
+      if (event.type === 'signal-change') events.push(event);
+    });
+
+    g.runInTick(() => {
+      g.notifyChange(a, 0, 1);
+      g.notifyChange(a, 1, 2);
+      expect(g.currentTick).toBe(0);
+    });
+
+    expect(g.currentTick).toBe(1);
+    expect(events).toHaveLength(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(0);
+  });
+
+  it('runInTick does not merge awaited continuations into the initiating tick', async () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const events: any[] = [];
+    g.subscribe(event => {
+      if (event.type === 'signal-change') events.push(event);
+    });
+
+    const task = g.runInTick(async () => {
+      g.notifyChange(a, 0, 1);
+      await Promise.resolve();
+      g.notifyChange(a, 1, 2);
+    });
+
+    expect(g.currentTick).toBe(1);
+    await task;
+    await g.flushTick();
+
+    expect(g.currentTick).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(1);
+  });
+
   it('does not auto-manage ticks in test mode', () => {
     const g = new CircuitGraph();
     g.enterTestMode();
