@@ -110,6 +110,33 @@ describe('generateMutations', () => {
     expect(g.getNode(d)!.getValue!()).toBe(true);
   });
 
+  it('propagates derived mutations to downstream derived readers', () => {
+    const g = new CircuitGraph();
+    const root = g.registerNode({ name: 'root', type: 'signal' });
+    const flag = g.registerNode({
+      name: 'flag',
+      type: 'derived',
+      deps: [root],
+      computeFn: () => false,
+    });
+    const dependent = g.registerNode({
+      name: 'dependent',
+      type: 'derived',
+      deps: [flag],
+      computeFn: () => g.getNode(flag)!.getValue!() === true,
+    });
+    g.setNodeValue(root, () => 0);
+    g.propagate();
+
+    const mutation = generateMutations(g).find(m => m.name === 'constant-fold:flag')!;
+    const undo = mutation.apply(g);
+
+    expect(g.getNode(flag)!.getValue!()).toBe(true);
+    expect(g.getNode(dependent)!.getValue!()).toBe(true);
+
+    undo();
+  });
+
   it('generates remove-assertion mutations', () => {
     const g = new CircuitGraph();
     const a = g.registerNode({ name: 'a', type: 'signal' });

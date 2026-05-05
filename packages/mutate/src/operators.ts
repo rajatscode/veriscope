@@ -132,10 +132,12 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
           n.computeFn = () => constant;
           n.currentValue = constant;
           n.hasCurrentValue = true;
+          g.propagate(n.id);
           return () => {
             g.setNodeValue(n.id, original);
             n.computeFn = originalCompute;
             n.hasCurrentValue = false;
+            g.propagate(n.id);
           };
         },
       }));
@@ -214,10 +216,12 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
             g.setNodeValue(n.id, () => !readOriginal());
             n.computeFn = () => !readOriginal();
             n.hasCurrentValue = false;
+            g.propagate(n.id);
             return () => {
               g.setNodeValue(n.id, original);
               n.computeFn = originalCompute;
               n.hasCurrentValue = false;
+              g.propagate(n.id);
             };
           },
         }));

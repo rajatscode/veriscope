@@ -111,9 +111,12 @@ describe('vs-tetris engine', () => {
     expect(result.assertions.map(assertion => assertion.name)).toEqual([
       'scores-and-garbage-nonnegative',
       'human-target-domain-valid',
+      'control-signal-bridge-consistent',
       'garbage-queue-bounded',
       'attack-bank-gates-send-buttons',
+      'send-button-availability-exact',
       'garbage-pulse-has-recipient',
+      'recipient-projection-matches-players',
       'after-garbage-pulse-recipient-eventually-visible',
       'never-can-send-with-empty-bank',
       'ko-has-valid-reason',

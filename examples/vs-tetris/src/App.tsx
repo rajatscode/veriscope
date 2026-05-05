@@ -224,6 +224,10 @@ export function App() {
     const assertions = registerTetrisAssertions(graph, {
       playersNodeId: arenaPlayers.nodeId,
       getPlayers: () => arenaPlayers.val,
+      startedNodeId: started.nodeId,
+      getStarted: () => started.val,
+      pausedNodeId: paused.nodeId,
+      getPaused: () => paused.val,
       humanTargetNodeId: humanTarget.nodeId,
       getHumanTarget: () => humanTarget.val,
       targetDomain,

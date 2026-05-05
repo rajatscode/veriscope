@@ -80,6 +80,10 @@ export function registerTetrisTelemetry(
 interface TetrisAssertionBindings {
   playersNodeId: string;
   getPlayers: () => PlayerState[];
+  startedNodeId: string;
+  getStarted: () => boolean;
+  pausedNodeId: string;
+  getPaused: () => boolean;
   humanTargetNodeId: string;
   getHumanTarget: () => string;
   targetDomain: string[];
@@ -134,6 +138,45 @@ export function registerTetrisAssertions(
     partial: false,
   });
 
+  const bridgeId = register(
+    'control-signal-bridge-consistent',
+    [
+      bindings.startedNodeId,
+      bindings.pausedNodeId,
+      bindings.humanTargetNodeId,
+      bindings.attackBankNodeId,
+      bindings.garbagePulseNodeId,
+    ],
+    () =>
+      targetGraph.getNode(bindings.startedNodeId)?.getValue?.() === bindings.getStarted()
+      && targetGraph.getNode(bindings.pausedNodeId)?.getValue?.() === bindings.getPaused()
+      && targetGraph.getNode(bindings.humanTargetNodeId)?.getValue?.() === bindings.getHumanTarget()
+      && targetGraph.getNode(bindings.attackBankNodeId)?.getValue?.() === bindings.getAttackBank()
+      && targetGraph.getNode(bindings.garbagePulseNodeId)?.getValue?.() === bindings.getGarbagePulse(),
+  );
+  targetGraph.setAssertionMetadata(bridgeId, {
+    checkDeps: [
+      bindings.startedNodeId,
+      bindings.pausedNodeId,
+      bindings.humanTargetNodeId,
+      bindings.attackBankNodeId,
+      bindings.garbagePulseNodeId,
+    ],
+    domains: {
+      [bindings.startedNodeId]: [false, true],
+      'arena.started': [false, true],
+      [bindings.pausedNodeId]: [false, true],
+      'arena.paused': [false, true],
+      [bindings.humanTargetNodeId]: bindings.targetDomain,
+      'arena.humanTarget': bindings.targetDomain,
+      [bindings.attackBankNodeId]: [0, 1, 2, 4],
+      'p1.attackBank': [0, 1, 2, 4],
+      [bindings.garbagePulseNodeId]: [false],
+      'arena.garbagePulse': [false],
+    },
+    partial: false,
+  });
+
   const garbageId = register(
     'garbage-queue-bounded',
     [bindings.playersNodeId],
@@ -161,6 +204,55 @@ export function registerTetrisAssertions(
     partial: false,
   });
 
+  const availabilityId = register(
+    'send-button-availability-exact',
+    [
+      bindings.playersNodeId,
+      bindings.startedNodeId,
+      bindings.pausedNodeId,
+      bindings.humanTargetNodeId,
+      bindings.attackBankNodeId,
+      bindings.canSend2NodeId,
+      bindings.canSend4NodeId,
+    ],
+    () => {
+      const players = safePlayers(bindings.getPlayers());
+      const target = players.find(player => player.id === bindings.getHumanTarget());
+      const human = players.find(player => player.id === 'p1');
+      const base =
+        bindings.getStarted()
+        && !bindings.getPaused()
+        && bindings.targetDomain.includes(bindings.getHumanTarget())
+        && Boolean(target && !target.ko)
+        && Boolean(human && !human.ko);
+      return bindings.getCanSend2() === (base && bindings.getAttackBank() >= 2)
+        && bindings.getCanSend4() === (base && bindings.getAttackBank() >= 4);
+    },
+  );
+  targetGraph.setAssertionMetadata(availabilityId, {
+    checkDeps: [
+      bindings.playersNodeId,
+      bindings.startedNodeId,
+      bindings.pausedNodeId,
+      bindings.humanTargetNodeId,
+      bindings.attackBankNodeId,
+      bindings.canSend2NodeId,
+      bindings.canSend4NodeId,
+    ],
+    domains: {
+      [bindings.startedNodeId]: [false, true],
+      'arena.started': [false, true],
+      [bindings.pausedNodeId]: [false, true],
+      'arena.paused': [false, true],
+      [bindings.humanTargetNodeId]: bindings.targetDomain,
+      'arena.humanTarget': bindings.targetDomain,
+      [bindings.attackBankNodeId]: [0, 1, 2, 4],
+      'p1.attackBank': [0, 1, 2, 4],
+    },
+    partial: true,
+    reason: 'checks exact button availability against the current PlayerState array; scalar controls are enumerated',
+  });
+
   const pulseId = register(
     'garbage-pulse-has-recipient',
     [bindings.garbagePulseNodeId, bindings.sendHasRecipientNodeId],
@@ -174,6 +266,22 @@ export function registerTetrisAssertions(
     },
     partial: true,
     reason: 'recipient state is derived from arena.players; the trigger signal is enumerated',
+  });
+
+  const recipientProjectionId = register(
+    'recipient-projection-matches-players',
+    [bindings.playersNodeId, bindings.sendHasRecipientNodeId],
+    () => {
+      const expected = safePlayers(bindings.getPlayers()).some(player =>
+        player.pendingGarbage > 0 || player.lastReceived > 0,
+      );
+      return bindings.getSendHasRecipient() === expected;
+    },
+  );
+  targetGraph.setAssertionMetadata(recipientProjectionId, {
+    checkDeps: [bindings.playersNodeId, bindings.sendHasRecipientNodeId],
+    partial: true,
+    reason: 'checks the recipient projection against the observed PlayerState array',
   });
 
   const temporalDeliveryId = assertAfter(
@@ -305,6 +413,10 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
   registerTetrisAssertions(targetGraph, {
     playersNodeId: playersSignal.id,
     getPlayers: () => players,
+    startedNodeId: startedSignal.id,
+    getStarted: () => started,
+    pausedNodeId: pausedSignal.id,
+    getPaused: () => paused,
     humanTargetNodeId: targetSignal.id,
     getHumanTarget: () => humanTarget,
     targetDomain,
