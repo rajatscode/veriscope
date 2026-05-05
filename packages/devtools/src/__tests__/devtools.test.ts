@@ -353,7 +353,7 @@ describe('mountDevtools', () => {
 
     expect(autotest).toHaveBeenCalledWith(graph, expect.objectContaining({ name: 'devtools-autotest' }));
     expect(host.textContent).toContain('Autotest Results');
-    expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
+    expect(host.textContent).toContain('Generated reachable coverage: 100.0% (2/2)');
     expect(host.textContent).toContain('@veriscope/test runAutotest generated these cases from the graph and assertion metadata.');
     expect(host.textContent).toContain('Assertion Results (1 passed, 0 failed)');
     expect(host.textContent).toContain('Generated Cases (1 passed, 0 failed)');
@@ -501,8 +501,8 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('case-fail');
     expect(host.textContent).toContain('failed: fails, fails-late');
     expect(host.textContent).toContain('failed assertions: fails, fails-late');
-    expect(host.textContent).toContain('Breakdown: toggles 1/2, transitions 1/2');
-    expect(host.textContent).toContain('Missing coverage: toggle:mode missing false');
+    expect(host.textContent).toContain('Runtime counters: toggles 1/2, transitions 1/2');
+    expect(host.textContent).toContain('Runtime counter gaps: toggle:mode missing false');
     expect(host.textContent).toContain('propagated: canSubmit false -> true');
     expect(host.textContent).toContain('assertion events: armed:fails, failed:fails');
 
@@ -564,6 +564,7 @@ describe('mountDevtools', () => {
     await flushPromises();
 
     expect(mutate).toHaveBeenCalledOnce();
+    expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'semantic' }));
     expect(host.textContent).toContain('Score: 50.0%');
     expect(host.textContent).toContain('Last run: #1 completed');
     expect(host.textContent).toContain('Generated mutants: 2');
@@ -572,9 +573,27 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Autotest runs: 2');
     expect(host.textContent).toContain('Autotest steps: 73');
     expect(host.textContent).toContain('Rerun Mutants');
-    expect(host.textContent).toContain('Mutation testing is rerunnable');
+    expect(host.textContent).toContain('Semantic mode scores assertion-reachable behavior mutants.');
     expect(host.textContent).toContain('negate:canSubmit');
     expect(host.textContent).toContain('swap-edge:a:b');
+
+    handle.dispose();
+  });
+
+  it('passes broad mutation mode from the panel toggle', async () => {
+    const graph = new CircuitGraph();
+    const mutate = vi.fn(async () => mutationResult());
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
+
+    buttonByText(host, 'Broad').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'broad' }));
+    expect(host.textContent).toContain('Broad mode includes structural and effect candidates');
 
     handle.dispose();
   });
@@ -620,6 +639,50 @@ describe('mountDevtools', () => {
     await flushPromises();
     expect(host.textContent).toContain('Last run: #2 completed');
     expect(host.textContent).toContain('Seed: fuzz-seed-1');
+
+    handle.dispose();
+  });
+
+  it('renders live mutation progress from the runner callback', async () => {
+    const graph = new CircuitGraph();
+    let resolveRun: ((value: MutateResult) => void) | undefined;
+    const mutate = vi.fn(async (options?: { mode?: 'semantic' | 'broad'; onProgress?: (progress: any) => void | Promise<void> }) => {
+      await options?.onProgress?.({
+        total: 2,
+        completed: 1,
+        generatedMutants: 3,
+        skipped: 1,
+        currentMutation: 'negate:ready',
+        killed: 1,
+        survived: 0,
+        invalid: 0,
+        equivalent: 0,
+        budgetPerMutation: 100,
+        autotestRuns: 1,
+        autotestSteps: 9,
+      });
+      return new Promise<MutateResult>(resolve => {
+        resolveRun = resolve;
+      });
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'mutants', mutate });
+
+    buttonByText(host, 'Run Mutants').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(host.textContent).toContain('Progress: 1/2 scored mutants');
+    expect(host.textContent).toContain('Generated 3');
+    expect(host.textContent).toContain('Skipped 1');
+    expect(host.textContent).toContain('Now: negate:ready');
+    expect(host.textContent).toContain('Autotest runs: 1 · Steps: 9');
+
+    resolveRun?.(mutationResult());
+    await flushPromises();
+    expect(host.textContent).toContain('Last run: #1 completed');
 
     handle.dispose();
   });

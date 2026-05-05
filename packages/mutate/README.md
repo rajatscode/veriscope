@@ -28,18 +28,26 @@ const factory = () => {
   return g;
 };
 
-const result = await mutate(factory, { budget: 200 });
+const result = await mutate(factory, {
+  budget: 200,
+  onProgress: p => {
+    console.log(`${p.completed}/${p.total}: ${p.currentMutation ?? 'done'}`);
+  },
+});
 console.log(`Score: ${result.score}/100  (${result.killed}/${result.total} killed)`);
 console.log(`Autotest runs: ${result.autotestRuns}, steps: ${result.autotestSteps}`);
+console.log(`Generated: ${result.generatedMutants}, skipped: ${result.skipped.length}`);
 console.log('Survived:', result.survived);
 ```
 
 ## How It Works
 
 1. A reference `CircuitGraph` is created from `factory` to enumerate all possible mutations via `generateMutations`.
-2. For each mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `explore()` with the full configured per-mutant budget.
-3. If exploration triggers any assertion violation, the mutation is **killed**. Otherwise it **survived**, indicating a gap in your assertions.
-4. The final score is `(killed / total) * 100`.
+2. By default, the runner scores semantic, assertion-reachable mutants only (`negate`, `constant-fold`, and `invert-comparison`). Broad structural operators such as `sever-edge` and `swap-edge` are still available with `operators: 'all'`, but are excluded from the default score because they often mutate display projections or graph topology in ways the app code cannot observe.
+3. For each selected mutation, a **fresh** graph is created (another `factory()` call), the mutation is applied, and the graph is explored using `@veriscope/test`'s `explore()` with the full configured per-mutant budget.
+4. The runner yields to the host between mutants and calls `onProgress`, so browser devtools can repaint and remain interactive during long runs.
+5. If exploration triggers any assertion violation, the mutation is **killed**. Otherwise it **survived**, indicating a gap in your assertions.
+6. The final score is `(killed / total) * 100`.
 
 ## API Reference
 
@@ -83,13 +91,19 @@ Generate all possible mutations for a reactive graph. Enumerates the graph's nod
 interface MutateOptions {
   budget?: number;
   operators?: 'all' | string[];
+  includeMetaMutations?: boolean;
+  onProgress?: (progress: MutateProgress) => void | Promise<void>;
+  yieldEvery?: number;
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `budget` | `number` | `500` | Autotest exploration budget for each generated mutant. A run with 20 mutants and `budget: 500` may execute up to 20 full 500-step autotest explorations, with early completion when exploration exhausts reachable cases. |
-| `operators` | `'all' \| string[]` | `'all'` | Which operator classes to apply. Pass `'all'` for every operator, or an array of operator name prefixes (e.g. `['negate', 'sever-edge']`) to restrict the set. |
+| `operators` | `'all' \| string[]` | semantic scored set | Which operator classes to apply. Omit for the default semantic scored set, pass `'all'` for every operator, or pass an array of operator name prefixes (e.g. `['negate', 'sever-edge']`) to restrict the set. |
+| `includeMetaMutations` | `boolean` | `false` | Include meta-mutations such as `remove-assertion`. |
+| `onProgress` | `(progress) => void \| Promise<void>` | `undefined` | Receives an initial event and one event after each selected mutant completes. Awaited callbacks can update browser UI before the next mutant starts. |
+| `yieldEvery` | `number` | `1` | Yield to the host after every N selected mutants. The default keeps browser devtools responsive. |
 
 ---
 
@@ -104,18 +118,22 @@ interface MutateResult {
   budgetPerMutation: number;
   autotestRuns: number;
   autotestSteps: number;
+  generatedMutants: number;
+  skipped: Array<{ mutation: string; description: string; reason: string }>;
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `total` | `number` | Total number of mutations tested. |
+| `total` | `number` | Number of selected mutations tested and scored. |
 | `killed` | `number` | Number of mutations detected by assertions. |
 | `survived` | `Array<{ mutation: string; description: string }>` | List of mutations that were **not** caught. Each entry contains the mutation `name` (e.g. `"negate:nodeId"`) and a human-readable `description`. |
 | `score` | `number` | Kill rate as a percentage (0--100). `100` means every mutation was caught. |
 | `budgetPerMutation` | `number` | Autotest budget supplied to every mutated graph. |
 | `autotestRuns` | `number` | Number of mutated graphs autotested. |
 | `autotestSteps` | `number` | Sum of exploration steps reported by all mutant autotest runs. |
+| `generatedMutants` | `number` | Number of candidate mutants generated before scoring filters. |
+| `skipped` | `Array<{ mutation: string; description: string; reason: string }>` | Candidate mutants skipped before scoring, with the reason each was skipped. |
 
 ---
 

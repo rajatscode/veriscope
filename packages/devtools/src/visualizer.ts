@@ -55,6 +55,14 @@ interface ActivityPulse {
   label: string;
 }
 
+interface FlowSelection {
+  selected: string;
+  upstreamNodes: Set<string>;
+  downstreamNodes: Set<string>;
+  upstreamEdges: Set<string>;
+  downstreamEdges: Set<string>;
+}
+
 function compactText(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}\u2026` : value;
 }
@@ -304,6 +312,7 @@ export function createVisualizerPanel(
   const nodeActivity = new Map<string, ActivityPulse>();
   const edgeActivity = new Map<string, ActivityPulse>();
   const minDrawInterval = Math.max(16, Math.floor(1000 / (options?.maxFps ?? Math.round(1000 / MIN_DRAW_INTERVAL_MS))));
+  let selectedDisplayId: string | null = null;
 
   function isActive() {
     return options?.isActive ? options.isActive() : true;
@@ -343,6 +352,77 @@ export function createVisualizerPanel(
 
   function edgeKey(from: string, to: string): string {
     return `${from}->${to}`;
+  }
+
+  function findNodeAt(mx: number, my: number): LayoutNode | null {
+    for (const n of layoutResult) {
+      if (mx >= n.x && mx <= n.x + NODE_W && my >= n.y && my <= n.y + NODE_H) {
+        return n;
+      }
+    }
+    return null;
+  }
+
+  function computeFlowSelection(selected: string | null): FlowSelection | null {
+    if (!selected) return null;
+    const upstreamNodes = new Set<string>();
+    const downstreamNodes = new Set<string>();
+    const upstreamEdges = new Set<string>();
+    const downstreamEdges = new Set<string>();
+
+    const upstreamQueue = [selected];
+    while (upstreamQueue.length > 0) {
+      const current = upstreamQueue.shift()!;
+      for (const edge of displayEdges) {
+        if (edge.to !== current || upstreamNodes.has(edge.from)) continue;
+        upstreamNodes.add(edge.from);
+        upstreamEdges.add(edgeKey(edge.from, edge.to));
+        upstreamQueue.push(edge.from);
+      }
+    }
+
+    const downstreamQueue = [selected];
+    while (downstreamQueue.length > 0) {
+      const current = downstreamQueue.shift()!;
+      for (const edge of displayEdges) {
+        if (edge.from !== current || downstreamNodes.has(edge.to)) continue;
+        downstreamNodes.add(edge.to);
+        downstreamEdges.add(edgeKey(edge.from, edge.to));
+        downstreamQueue.push(edge.to);
+      }
+    }
+
+    return { selected, upstreamNodes, downstreamNodes, upstreamEdges, downstreamEdges };
+  }
+
+  function flowRole(flow: FlowSelection | null, nodeId: string): 'selected' | 'both' | 'upstream' | 'downstream' | 'outside' {
+    if (!flow) return 'outside';
+    if (flow.selected === nodeId) return 'selected';
+    const upstream = flow.upstreamNodes.has(nodeId);
+    const downstream = flow.downstreamNodes.has(nodeId);
+    if (upstream && downstream) return 'both';
+    if (upstream) return 'upstream';
+    if (downstream) return 'downstream';
+    return 'outside';
+  }
+
+  function flowColor(role: ReturnType<typeof flowRole>, fallback: string): string {
+    if (role === 'selected') return '#ffffff';
+    if (role === 'both') return '#f8d66d';
+    if (role === 'upstream') return '#f8d66d';
+    if (role === 'downstream') return '#72f1b8';
+    return fallback;
+  }
+
+  function flowEdgeRole(flow: FlowSelection | null, edge: GraphEdge): 'both' | 'upstream' | 'downstream' | 'outside' {
+    if (!flow) return 'outside';
+    const key = edgeKey(edge.from, edge.to);
+    const upstream = flow.upstreamEdges.has(key);
+    const downstream = flow.downstreamEdges.has(key);
+    if (upstream && downstream) return 'both';
+    if (upstream) return 'upstream';
+    if (downstream) return 'downstream';
+    return 'outside';
   }
 
   function colorForEvent(event: GraphEvent): string {
@@ -411,8 +491,12 @@ export function createVisualizerPanel(
       displayEdges = model.edges;
       displayIdByNodeId = model.displayIdByNodeId;
       groupedMembers = model.groupedMembers;
+      if (selectedDisplayId && !model.nodes.some(node => node.id === selectedDisplayId)) {
+        selectedDisplayId = null;
+      }
       layoutDirty = false;
     }
+    const flow = computeFlowSelection(selectedDisplayId);
 
     // Compute canvas size
     let maxX = 0, maxY = 0;
@@ -434,9 +518,13 @@ export function createVisualizerPanel(
     canvas.style.height = `${maxY}px`;
     status.style.display = 'block';
     const activityText = `Live tick ${graph.currentTick} · ${lastEventLabel} · ${nodeActivity.size} active nodes · ${edgeActivity.size} active edges`;
+    const selectedNode = selectedDisplayId ? layoutResult.find(node => node.id === selectedDisplayId) : null;
+    const flowText = flow && selectedNode
+      ? ` · Selected ${selectedNode.name}: ${flow.upstreamNodes.size} upstream, ${flow.downstreamNodes.size} downstream`
+      : ' · Click a node to highlight flow';
     status.textContent = groupedMembers > 0
-      ? `${activityText} · Grouped ${groupedMembers} repeated player metric nodes`
-      : activityText;
+      ? `${activityText}${flowText} · Grouped ${groupedMembers} repeated player metric nodes`
+      : `${activityText}${flowText}`;
 
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -459,10 +547,19 @@ export function createVisualizerPanel(
       if (!from || !to) continue;
 
       const active = edgeActivity.get(edgeKey(edge.from, edge.to));
+      const edgeRole = flowEdgeRole(flow, edge);
+      const edgeInFlow = edgeRole !== 'outside';
       if (active) {
         const alpha = pulseAlpha(active, now);
         ctx.strokeStyle = hexToRgba(active.color, 0.28 + alpha * 0.62);
-        ctx.lineWidth = 1.2 + alpha * 2.2;
+        ctx.lineWidth = (edgeInFlow ? 2.4 : 1.2) + alpha * 2.2;
+      } else if (edgeInFlow) {
+        const color = edgeRole === 'downstream' ? '#72f1b8' : '#f8d66d';
+        ctx.strokeStyle = hexToRgba(color, 0.8);
+        ctx.lineWidth = 2.6;
+      } else if (flow) {
+        ctx.strokeStyle = 'rgba(110,231,249,0.08)';
+        ctx.lineWidth = 0.8;
       } else {
         ctx.strokeStyle = 'rgba(110,231,249,0.25)';
         ctx.lineWidth = 1;
@@ -480,7 +577,13 @@ export function createVisualizerPanel(
 
       // Arrow head
       const angle = Math.atan2(y2 - (y2 - (y2 - y1) * 0.1), x2 - (x2 - cp));
-      ctx.fillStyle = active ? hexToRgba(active.color, 0.42 + pulseAlpha(active, now) * 0.44) : 'rgba(110,231,249,0.4)';
+      ctx.fillStyle = active
+        ? hexToRgba(active.color, 0.42 + pulseAlpha(active, now) * 0.44)
+        : edgeInFlow
+          ? hexToRgba(edgeRole === 'downstream' ? '#72f1b8' : '#f8d66d', 0.86)
+          : flow
+            ? 'rgba(110,231,249,0.12)'
+            : 'rgba(110,231,249,0.4)';
       ctx.beginPath();
       ctx.moveTo(x2, y2);
       ctx.lineTo(x2 - 8 * Math.cos(angle - 0.3), y2 - 8 * Math.sin(angle - 0.3));
@@ -494,11 +597,15 @@ export function createVisualizerPanel(
       const color = NODE_COLORS[n.type] ?? '#c9d1d9';
       const active = nodeActivity.get(n.id);
       const activeAlpha = active ? pulseAlpha(active, now) : 0;
+      const role = flowRole(flow, n.id);
+      const inFlow = !flow || role !== 'outside';
+      const displayColor = flowColor(role, color);
 
       // Box
       ctx.fillStyle = '#161b22';
-      ctx.strokeStyle = active ? active.color : color;
-      ctx.lineWidth = active ? 1.8 + activeAlpha * 2.2 : 1.5;
+      if (flow && role === 'outside') ctx.globalAlpha = 0.32;
+      ctx.strokeStyle = active ? active.color : displayColor;
+      ctx.lineWidth = active ? 1.8 + activeAlpha * 2.2 : role === 'selected' ? 3.2 : inFlow ? 2.3 : 1.5;
       ctx.shadowColor = active ? active.color : 'transparent';
       ctx.shadowBlur = active ? 14 * activeAlpha : 0;
       ctx.beginPath();
@@ -518,10 +625,11 @@ export function createVisualizerPanel(
       ctx.shadowBlur = 0;
 
       // Type badge
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = displayColor;
+      ctx.globalAlpha = flow && role !== 'outside' ? 0.22 : flow ? 0.08 : 0.15;
       ctx.fillRect(n.x + 1, n.y + 1, NODE_W - 2, NODE_H - 2);
       ctx.globalAlpha = 1;
+      if (flow && role === 'outside') ctx.globalAlpha = 0.32;
 
       if (active) {
         ctx.fillStyle = hexToRgba(active.color, 0.18 + activeAlpha * 0.24);
@@ -534,7 +642,7 @@ export function createVisualizerPanel(
 
       // Label and current value. Showing values in-canvas makes graph redraws
       // visibly live without requiring hover/tooltips.
-      ctx.fillStyle = color;
+      ctx.fillStyle = displayColor;
       ctx.font = '11px "SF Mono", "Fira Code", monospace';
       ctx.textBaseline = 'alphabetic';
       const displayName = compactText(n.name, 21);
@@ -553,6 +661,7 @@ export function createVisualizerPanel(
       ctx.textAlign = 'right';
       ctx.fillText(n.type, n.x + NODE_W - 4, n.y + NODE_H - 6);
       ctx.textAlign = 'left';
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -562,17 +671,12 @@ export function createVisualizerPanel(
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
-    let found: LayoutNode | null = null;
-    for (const n of layoutResult) {
-      if (mx >= n.x && mx <= n.x + NODE_W && my >= n.y && my <= n.y + NODE_H) {
-        found = n;
-        break;
-      }
-    }
+    const found = findNodeAt(mx, my);
+    canvas.style.cursor = found ? 'pointer' : 'default';
 
     if (found) {
       const valueStr = formatTooltipValue(graph, found);
-      tip.textContent = `${found.name} (${found.type})${valueStr}\nDeps: ${found.deps.length}`;
+      tip.textContent = `${found.name} (${found.type})${valueStr}\nDeps: ${found.deps.length}\nClick to ${selectedDisplayId === found.id ? 'clear' : 'highlight'} flow`;
       tip.style.display = 'block';
       tip.style.left = `${mx + 12}px`;
       tip.style.top = `${my + 12}px`;
@@ -583,6 +687,13 @@ export function createVisualizerPanel(
   });
 
   canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const found = findNodeAt(e.clientX - rect.left, e.clientY - rect.top);
+    selectedDisplayId = found && selectedDisplayId !== found.id ? found.id : null;
+    scheduleDraw(false);
+  });
 
   const unsubscribe = graph.subscribe((event: GraphEvent) => {
     if (

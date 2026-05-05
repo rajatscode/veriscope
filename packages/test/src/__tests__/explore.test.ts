@@ -422,11 +422,12 @@ describe('explore', () => {
     const assertId = g.registerNode({ name: 'flag-observed', type: 'assertion', deps: [flag] });
     g.setAssertionFn(assertId, () => true, 'always');
 
-    const result = await explore(g, { budget: 2 });
+    const result = await explore(g, { budget: 1 });
 
     expect(result.coverage.toggle.total).toBe(2);
     expect(result.coverage.toggle.covered).toBeLessThan(result.coverage.toggle.total);
     expect(result.coverage.gaps.some(gap => gap.kind === 'toggle' && gap.id === flag)).toBe(true);
+    expect(result.plan.stoppedByBudget).toBe(true);
     expect(result.snapshot?.captureContext?.tool).toBe('@veriscope/test/explore');
   });
 

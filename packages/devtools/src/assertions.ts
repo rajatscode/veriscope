@@ -278,22 +278,38 @@ export function createAssertionsPanel(
       const v = lastRunResult.violations;
       const s = lastRunResult.steps;
       const coverage = lastRunResult.coverage;
+      const plan = lastRunResult.plan;
+      const generatedCoverage = plan?.generatedReachableCoverage ?? coverage.overall;
       const status = 'status' in lastRunResult ? lastRunResult.status : (v.length > 0 ? 'failed' : 'passed');
       const generatedBy = isAutotestResult(lastRunResult)
         ? '@veriscope/test runAutotest generated these cases from the graph and assertion metadata.'
         : '@veriscope/test explore generated these cases from the graph and assertion metadata.';
+      const determinismText = plan
+        ? `${plan.deterministic ? 'deterministic' : 'seeded'}${plan.seed === undefined ? '' : ` · seed ${plan.seed}`} · ${plan.exhausted ? 'generated space exhausted' : 'stopped by budget'}`
+        : 'deterministic · generated space status unavailable';
       resultBox.innerHTML = `
         <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Autotest Results</div>
         <div style="color:#8b949e;">Status: <span style="color:${status === 'failed' ? '#ff5d8f' : '#72f1b8'}">${status}</span> · Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
-        <div style="color:#8b949e; margin-top:4px;">Coverage: ${coverage.overall.percentage.toFixed(1)}% (${coverage.overall.covered}/${coverage.overall.total}) · Gaps: ${coverage.gaps.length}</div>
-        <div style="color:#8b949e; margin-top:4px;">Breakdown: toggles ${coverage.toggle.covered}/${coverage.toggle.total}, transitions ${coverage.transitions.covered}/${coverage.transitions.total}, cross ${coverage.cross.covered}/${coverage.cross.total}, operations ${coverage.operations.covered}/${coverage.operations.total}</div>
+        <div style="color:#8b949e; margin-top:4px;">Run: ${determinismText}${plan ? ` · budget ${plan.budget}` : ''}</div>
+        <div style="color:#8b949e; margin-top:4px;">Generated reachable coverage: ${generatedCoverage.percentage.toFixed(1)}% (${generatedCoverage.covered}/${generatedCoverage.total})${plan?.stoppedByBudget ? ' · incomplete because the cap was reached' : ''}</div>
+        <div style="color:#8b949e; margin-top:4px;">Runtime counters: toggles ${coverage.toggle.covered}/${coverage.toggle.total}, transitions ${coverage.transitions.covered}/${coverage.transitions.total}, cross ${coverage.cross.covered}/${coverage.cross.total}, operations ${coverage.operations.covered}/${coverage.operations.total}</div>
         <div style="color:#8b949e; margin-top:4px;">${generatedBy}</div>
         <div style="color:#8b949e; margin-top:4px;">Each case lists driven roots, propagated derived recomputes, temporal assertion events, and failed assertions when present.</div>
       `;
+      if (plan) {
+        const phaseLine = document.createElement('div');
+        phaseLine.style.cssText = 'color:#8b949e; margin-top:4px; overflow-wrap:anywhere;';
+        const phases = Object.entries(plan.phaseCounts)
+          .filter(([, count]) => count > 0)
+          .map(([phase, count]) => `${phase} ${count}`)
+          .join(', ');
+        phaseLine.textContent = `Cases: ${plan.generatedCases} shown${plan.hiddenDuplicateCases > 0 ? `, ${plan.hiddenDuplicateCases} duplicate generated cases collapsed` : ''}${phases ? ` · ${phases}` : ''}.`;
+        resultBox.appendChild(phaseLine);
+      }
       if (coverage.gaps.length > 0) {
         const gapList = document.createElement('div');
         gapList.style.cssText = 'color:#f8d66d; margin-top:4px; overflow-wrap:anywhere;';
-        gapList.textContent = `Missing coverage: ${coverage.gaps.slice(0, 6).map(gap =>
+        gapList.textContent = `Runtime counter gaps: ${coverage.gaps.slice(0, 6).map(gap =>
           `${gap.kind}:${gap.id} missing ${gap.missing.slice(0, 4).join('|')}${gap.missing.length > 4 ? '+more' : ''}`,
         ).join('; ')}${coverage.gaps.length > 6 ? `; +${coverage.gaps.length - 6} more gaps` : ''}`;
         resultBox.appendChild(gapList);
@@ -340,11 +356,23 @@ export function createAssertionsPanel(
       if (v.length > 0) {
         const list = document.createElement('div');
         list.style.cssText = 'margin-top:6px;';
+        const byAssertion = new Map<string, typeof v>();
         for (const viol of v) {
+          const entries = byAssertion.get(viol.assertionName) ?? [];
+          entries.push(viol);
+          byAssertion.set(viol.assertionName, entries);
+        }
+        for (const [assertionName, entries] of byAssertion) {
           const item = document.createElement('div');
-          item.style.cssText = 'padding:4px 6px; margin-top:3px; background:rgba(255,93,143,0.08); border:1px solid rgba(255,93,143,0.2); border-radius:3px; font-size:0.68rem;';
-          const vals = Object.entries(viol.signalValues).map(([k, v]) => `${k}=${v}`).join(', ');
-          item.innerHTML = `<span style="color:#ff5d8f;">${viol.assertionName}</span> <span style="color:#666;">tick ${viol.tick}</span>${vals ? ` <span style="color:#8b949e;">[${vals}]</span>` : ''}`;
+          item.style.cssText = 'padding:6px 8px; margin-top:4px; background:rgba(255,93,143,0.08); border:1px solid rgba(255,93,143,0.2); border-radius:3px; font-size:0.68rem;';
+          const examples = entries.slice(0, 3).map(viol => {
+            const vals = Object.entries(viol.signalValues).map(([key, value]) => `${key}=${formatScenarioValue(value)}`).join(', ');
+            return `tick ${viol.tick}${vals ? ` [${vals}]` : ''}`;
+          }).join(' · ');
+          item.innerHTML = `
+            <div><span style="color:#ff5d8f;">${assertionName}</span> <span style="color:#8b949e;">failed ${entries.length} case${entries.length === 1 ? '' : 's'}</span></div>
+            <div style="color:#666; margin-top:2px; overflow-wrap:anywhere;">${examples}${entries.length > 3 ? ` · +${entries.length - 3} more` : ''}</div>
+          `;
           list.appendChild(item);
         }
         resultBox.appendChild(list);
@@ -373,6 +401,10 @@ export function createAssertionsPanel(
           evidenceTitle.style.cssText = 'color:#a78bfa; margin-top:6px; font-weight:600;';
           evidenceTitle.textContent = `Evidence Cases (${evidenceScenarios.length})`;
           scenarioBox.appendChild(evidenceTitle);
+          const evidenceNote = document.createElement('div');
+          evidenceNote.style.cssText = 'color:#8b949e; margin-top:3px; font-size:0.66rem; line-height:1.4;';
+          evidenceNote.textContent = 'Evidence cases are generated cases with useful proof signals: temporal events, coverage-directed drives, propagation, or failures. They are not hand-written tests.';
+          scenarioBox.appendChild(evidenceNote);
           for (const scenario of evidenceScenarios.slice(0, 8)) {
             scenarioBox.appendChild(renderScenarioItem(scenario));
           }

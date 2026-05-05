@@ -598,9 +598,13 @@ function EmbeddedDevtools({ opponentCount }: { opponentCount: OpponentCount }) {
         createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
         options,
       ),
-      mutate: () => runMutationTest(
+      mutate: options => runMutationTest(
         () => createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
-        { budget: 1200 },
+        {
+          budget: 1200,
+          operators: options?.mode === 'broad' ? 'all' : undefined,
+          onProgress: options?.onProgress,
+        },
       ),
       initialTab: 'circuit',
       height: '380px',

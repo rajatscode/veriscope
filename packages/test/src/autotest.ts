@@ -44,10 +44,13 @@ export async function runAutotest(
     scenarios: result.scenarios,
     coverage: result.coverage,
     steps: result.steps,
+    plan: result.plan,
     snapshot: graph.snapshot({
       ...(result.snapshot?.captureContext ?? {}),
       tool: '@veriscope/test/autotest',
       name: options.name,
+      deterministic: result.plan.deterministic,
+      stoppedByBudget: result.plan.stoppedByBudget,
     }),
   };
 }

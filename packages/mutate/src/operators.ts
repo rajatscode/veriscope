@@ -29,6 +29,19 @@ function findNode(graph: CircuitGraph, ref: NodeRef): GraphNode | undefined {
     ?? graph.getNodes().find(node => node.name === ref.name && node.type === ref.type);
 }
 
+function mutation(
+  info: Omit<Mutation, 'operator' | 'category' | 'targetIds'> & {
+    operator: NonNullable<Mutation['operator']>;
+    category?: NonNullable<Mutation['category']>;
+    targetIds?: string[];
+  },
+): Mutation {
+  return {
+    category: 'semantic',
+    ...info,
+  };
+}
+
 /**
  * Generate all possible mutations for a reactive graph.
  * Three operator classes:
@@ -48,7 +61,10 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       const targetNode = graph.getNode(edge.to);
       const sourceRef = refFor(sourceNode);
       const targetRef = targetNode ? refFor(targetNode) : sourceRef;
-      mutations.push({
+      mutations.push(mutation({
+        operator: 'sever-edge',
+        category: 'structural',
+        targetIds: [sourceNode.id, edge.to],
         name: `sever-edge:${labelFor(sourceRef)}->${labelFor(targetRef)}`,
         description: `Sever dependency from ${sourceNode.name} to ${targetNode?.name ?? edge.to}`,
         apply: (g) => {
@@ -60,7 +76,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
           g.setNodeValue(node.id, () => defaultVal);
           return () => g.setNodeValue(node.id, original);
         },
-      });
+      }));
     }
   }
 
@@ -70,17 +86,28 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       const val = node.getValue();
       if (typeof val === 'boolean') {
         const nodeRef = refFor(node);
-        mutations.push({
+        mutations.push(mutation({
+          operator: 'negate',
+          targetIds: [node.id],
           name: `negate:${labelFor(nodeRef)}`,
           description: `Negate boolean signal ${node.name}`,
           apply: (g) => {
             const n = findNode(g, nodeRef);
-            const original = n?.getValue;
-            if (!n || !original) return () => {};
-            g.setNodeValue(n.id, () => !original());
-            return () => g.setNodeValue(n.id, original);
+            const originalGetter = n?.getValue;
+            const originalSetter = n?.setValue;
+            if (!n || !originalGetter || !originalSetter) return () => {};
+            g.setNodeValue(n.id, () => !originalGetter());
+            g.setNodeSetter(n.id, (next: any) => {
+              const current = originalGetter();
+              const resolved = typeof next === 'function' ? next(current) : next;
+              originalSetter(!resolved);
+            });
+            return () => {
+              g.setNodeValue(n.id, originalGetter);
+              g.setNodeSetter(n.id, originalSetter);
+            };
           },
-        });
+        }));
       }
     }
   }
@@ -91,7 +118,9 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       const val = node.getValue();
       const constant = typeof val === 'boolean' ? !val : 0;
       const nodeRef = refFor(node);
-      mutations.push({
+      mutations.push(mutation({
+        operator: 'constant-fold',
+        targetIds: [node.id],
         name: `constant-fold:${labelFor(nodeRef)}`,
         description: `Replace ${node.name} with constant ${constant}`,
         apply: (g) => {
@@ -109,7 +138,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
             n.hasCurrentValue = false;
           };
         },
-      });
+      }));
     }
   }
 
@@ -124,7 +153,10 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       if (typeof aVal === typeof bVal) {
         const aRef = refFor(a);
         const bRef = refFor(b);
-        mutations.push({
+        mutations.push(mutation({
+          operator: 'swap-edge',
+          category: 'structural',
+          targetIds: [a.id, b.id],
           name: `swap-edge:${labelFor(aRef)}<->${labelFor(bRef)}`,
           description: `Swap signal ${a.name} to read ${b.name}'s value`,
           apply: (g) => {
@@ -136,7 +168,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
             g.setNodeValue(na.id, bGetter);
             return () => g.setNodeValue(na.id, originalA);
           },
-        });
+        }));
       }
     }
   }
@@ -145,7 +177,10 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   for (const node of nodes) {
     if (node.type === 'effect') {
       const nodeRef = refFor(node);
-      mutations.push({
+      mutations.push(mutation({
+        operator: 'skip-effect',
+        category: 'effect',
+        targetIds: [node.id],
         name: `skip-effect:${labelFor(nodeRef)}`,
         description: `Skip effect ${node.name} (replace with no-op)`,
         apply: (g) => {
@@ -155,7 +190,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
           g.setNodeValue(n.id, () => {});
           return () => g.setNodeValue(n.id, original);
         },
-      });
+      }));
     }
   }
 
@@ -165,7 +200,9 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
       const val = node.getValue();
       if (typeof val === 'boolean') {
         const nodeRef = refFor(node);
-        mutations.push({
+        mutations.push(mutation({
+          operator: 'invert-comparison',
+          targetIds: [node.id],
           name: `invert-comparison:${labelFor(nodeRef)}`,
           description: `Invert boolean derived ${node.name}`,
           apply: (g) => {
@@ -183,7 +220,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
               n.hasCurrentValue = false;
             };
           },
-        });
+        }));
       }
     }
   }
@@ -192,7 +229,10 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   for (const node of nodes) {
     if (node.type === 'assertion') {
       const nodeRef = refFor(node);
-      mutations.push({
+      mutations.push(mutation({
+        operator: 'remove-assertion',
+        category: 'meta',
+        targetIds: [node.id],
         name: `remove-assertion:${labelFor(nodeRef)}`,
         description: `Disable assertion ${node.name}`,
         apply: (g) => {
@@ -204,7 +244,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
           g.setAssertionFn(n.id, () => true, originalKind ?? 'always');
           return () => g.setAssertionFn(n.id, originalFn, originalKind ?? 'always');
         },
-      });
+      }));
     }
   }
 
@@ -212,7 +252,10 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
   for (const node of nodes) {
     if (node.type === 'effect') {
       const nodeRef = refFor(node);
-      mutations.push({
+      mutations.push(mutation({
+        operator: 'delay-effect',
+        category: 'effect',
+        targetIds: [node.id],
         name: `delay-effect:${labelFor(nodeRef)}`,
         description: `Delay effect ${node.name} to next tick`,
         apply: (g) => {
@@ -224,7 +267,7 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
           });
           return () => g.setNodeValue(n.id, original);
         },
-      });
+      }));
     }
   }
 

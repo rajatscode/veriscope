@@ -37,6 +37,17 @@ export interface ExploreResult {
     gaps: Array<{ kind: string; id: string; missing: string[] }>;
   };
   steps: number;
+  plan?: {
+    deterministic: boolean;
+    seed?: string | number;
+    budget: number;
+    exhausted: boolean;
+    stoppedByBudget: boolean;
+    generatedCases: number;
+    hiddenDuplicateCases: number;
+    generatedReachableCoverage: { covered: number; total: number; percentage: number };
+    phaseCounts: Record<string, number>;
+  };
   snapshot?: GraphSnapshot;
 }
 
@@ -69,6 +80,24 @@ export interface MutateResult {
   autotestSteps?: number;
   /** Optional seed for randomized or fuzzing-backed mutation runners. */
   seed?: string | number;
+  generatedMutants?: number;
+  skipped?: Array<{ mutation: string; description: string; reason: string }>;
+}
+
+export interface MutateProgress {
+  total: number;
+  completed: number;
+  generatedMutants: number;
+  skipped: number;
+  currentMutation?: string;
+  killed: number;
+  survived: number;
+  invalid: number;
+  equivalent: number;
+  budgetPerMutation: number;
+  autotestRuns: number;
+  autotestSteps: number;
+  seed?: string | number;
 }
 
 export interface DevtoolsOptions {
@@ -79,7 +108,7 @@ export interface DevtoolsOptions {
   /** explore() function from @veriscope/test (optional fallback when no autotest runner is provided) */
   explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
   /** Mutation runner callback, normally backed by @veriscope/mutate. Enables the Mutants tab. */
-  mutate?: () => Promise<MutateResult>;
+  mutate?: (options?: { mode?: 'semantic' | 'broad'; onProgress?: (progress: MutateProgress) => void | Promise<void> }) => Promise<MutateResult>;
   /** Initial active tab */
   initialTab?: 'circuit' | 'waveform' | 'live-assertions' | 'autotest' | 'mutants' | 'graph' | 'assertions' | 'coverage';
   /** Height of the devtools panel (default: '360px') */

@@ -222,6 +222,50 @@ describe('mutate', () => {
     expect(result.killedMutations.some(mutation => mutation.mutation === 'negate:a')).toBe(true);
   });
 
+  it('reports progress and skips broad structural mutants in the default scored set', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let ready = true;
+      const readyId = g.registerNode({ name: 'ready', type: 'signal', stablePath: 'ready' });
+      g.setNodeValue(readyId, () => ready);
+      g.setNodeSetter(readyId, (v: boolean) => {
+        ready = v;
+      });
+
+      const derivedId = g.registerNode({
+        name: 'canSubmit',
+        type: 'derived',
+        deps: [readyId],
+        stablePath: 'canSubmit',
+        computeFn: () => ready,
+      });
+
+      const assertId = g.registerNode({ name: 'submit-ready', type: 'assertion', deps: [derivedId] });
+      g.setAssertionFn(assertId, () => g.getNode(derivedId)!.getValue!() === true, 'always');
+      g.propagate();
+      return g;
+    };
+    const progress: Array<{ completed: number; total: number; skipped: number; currentMutation?: string }> = [];
+
+    const result = await mutate(factory, {
+      budget: 20,
+      onProgress: p => {
+        progress.push({
+          completed: p.completed,
+          total: p.total,
+          skipped: p.skipped,
+          currentMutation: p.currentMutation,
+        });
+      },
+    });
+
+    expect(result.generatedMutants).toBeGreaterThan(result.total);
+    expect(result.skipped.some(mutation => mutation.mutation.startsWith('sever-edge:'))).toBe(true);
+    expect(result.survived.every(mutation => !mutation.mutation.startsWith('sever-edge:'))).toBe(true);
+    expect(progress[0]).toMatchObject({ completed: 0, total: result.total, skipped: result.skipped.length });
+    expect(progress.at(-1)).toMatchObject({ completed: result.total, total: result.total });
+  });
+
   it('reports survived mutations for weak assertions', async () => {
     const factory = () => {
       const g = new CircuitGraph();

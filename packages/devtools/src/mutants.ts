@@ -1,8 +1,10 @@
-import type { MutateResult } from './index.js';
+import type { MutateProgress, MutateResult } from './index.js';
 
 interface MutantsPanelOptions {
-  mutate?: () => Promise<MutateResult>;
+  mutate?: (options?: { mode?: 'semantic' | 'broad'; onProgress?: (progress: MutateProgress) => void | Promise<void> }) => Promise<MutateResult>;
 }
+
+type MutationMode = 'semantic' | 'broad';
 
 interface MutationRunStatus {
   number: number;
@@ -12,6 +14,14 @@ interface MutationRunStatus {
   finishedAt?: Date;
   durationMs?: number;
   generatedMutants?: number;
+  selectedMutants?: number;
+  completedMutants?: number;
+  skippedMutants?: number;
+  currentMutation?: string;
+  killed?: number;
+  survived?: number;
+  invalid?: number;
+  equivalent?: number;
   budgetPerMutation?: number;
   autotestRuns?: number;
   autotestSteps?: number;
@@ -73,6 +83,7 @@ export function createMutantsPanel(
   let activeRun: MutationRunStatus | null = null;
   let lastRun: MutationRunStatus | null = null;
   let liveTimer: ReturnType<typeof setInterval> | null = null;
+  let mutationMode: MutationMode = 'semantic';
 
   function stopLiveTimer() {
     if (liveTimer) {
@@ -106,7 +117,30 @@ export function createMutantsPanel(
     try {
       await waitForPaint();
       if (disposed) return;
-      const nextResult = await options.mutate();
+      const nextResult = await options.mutate({
+        mode: mutationMode,
+        onProgress: async (progress) => {
+          if (disposed || !activeRun) return;
+          activeRun = {
+            ...activeRun,
+            generatedMutants: progress.generatedMutants,
+            selectedMutants: progress.total,
+            completedMutants: progress.completed,
+            skippedMutants: progress.skipped,
+            currentMutation: progress.currentMutation,
+            killed: progress.killed,
+            survived: progress.survived,
+            invalid: progress.invalid,
+            equivalent: progress.equivalent,
+            budgetPerMutation: progress.budgetPerMutation,
+            autotestRuns: progress.autotestRuns,
+            autotestSteps: progress.autotestSteps,
+            seed: progress.seed,
+          };
+          render();
+          await waitForPaint();
+        },
+      });
       result = nextResult;
       lastRun = {
         number: runNumber,
@@ -115,7 +149,14 @@ export function createMutantsPanel(
         startedAtMs,
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
-        generatedMutants: nextResult.total,
+        generatedMutants: nextResult.generatedMutants ?? nextResult.total,
+        selectedMutants: nextResult.total,
+        completedMutants: nextResult.total,
+        skippedMutants: nextResult.skipped?.length ?? 0,
+        killed: nextResult.killed,
+        survived: nextResult.survived.length,
+        invalid: nextResult.invalid?.length ?? 0,
+        equivalent: nextResult.equivalent?.length ?? 0,
         budgetPerMutation: nextResult.budgetPerMutation,
         autotestRuns: nextResult.autotestRuns,
         autotestSteps: nextResult.autotestSteps,
@@ -155,11 +196,24 @@ export function createMutantsPanel(
     `;
 
     if (isRunning) {
+      const total = status.selectedMutants ?? status.generatedMutants ?? 0;
+      const completed = status.completedMutants ?? 0;
+      const pct = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
+      const skipped = status.skippedMutants === undefined ? 'n/a' : String(status.skippedMutants);
+      const runs = status.autotestRuns === undefined ? '0' : String(status.autotestRuns);
+      const steps = status.autotestSteps === undefined ? '0' : String(status.autotestSteps);
       box.innerHTML = `
         <div style="color:#f8d66d; font-weight:600;">Run #${status.number} running</div>
         <div>Started: ${escapeHtml(formatClock(status.startedAt))}</div>
         <div>Elapsed: ${escapeHtml(formatDuration(performance.now() - status.startedAtMs))}</div>
+        <div style="margin:6px 0 4px; height:6px; background:#21262d; border-radius:999px; overflow:hidden;">
+          <div style="height:100%; width:${pct.toFixed(1)}%; background:#f8d66d;"></div>
+        </div>
+        <div>Progress: ${escapeHtml(completed)}/${escapeHtml(total || '?')} scored mutants · Generated ${escapeHtml(status.generatedMutants ?? 'n/a')} · Skipped ${escapeHtml(skipped)}</div>
+        <div>Killed ${escapeHtml(status.killed ?? 0)} · Survived ${escapeHtml(status.survived ?? 0)} · Invalid ${escapeHtml(status.invalid ?? 0)} · Equivalent ${escapeHtml(status.equivalent ?? 0)}</div>
+        <div>Autotest runs: ${escapeHtml(runs)} · Steps: ${escapeHtml(steps)} · Budget per mutant: ${escapeHtml(status.budgetPerMutation ?? 'n/a')}</div>
         <div>Applying generated mutations and running the full autotest budget against each mutant.</div>
+        ${status.currentMutation ? `<div>Now: ${escapeHtml(status.currentMutation)}</div>` : ''}
         ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
       `;
       return box;
@@ -167,13 +221,15 @@ export function createMutantsPanel(
 
     const finished = status.finishedAt ? formatClock(status.finishedAt) : 'n/a';
     const generated = status.generatedMutants === undefined ? 'n/a' : String(status.generatedMutants);
+    const selected = status.selectedMutants === undefined ? 'n/a' : String(status.selectedMutants);
+    const skipped = status.skippedMutants === undefined ? 'n/a' : String(status.skippedMutants);
     const budget = status.budgetPerMutation === undefined ? 'n/a' : String(status.budgetPerMutation);
     const runs = status.autotestRuns === undefined ? 'n/a' : String(status.autotestRuns);
     const steps = status.autotestSteps === undefined ? 'n/a' : String(status.autotestSteps);
     box.innerHTML = `
       <div style="font-weight:600;">Last run: #${status.number} ${status.status}</div>
       <div>Started: ${escapeHtml(formatClock(status.startedAt))} · Finished: ${escapeHtml(finished)} · Duration: ${escapeHtml(formatDuration(status.durationMs))}</div>
-      <div>Generated mutants: ${escapeHtml(generated)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
+      <div>Generated mutants: ${escapeHtml(generated)} · Scored: ${escapeHtml(selected)} · Skipped: ${escapeHtml(skipped)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
       <div>Autotest runs: ${escapeHtml(runs)} · Budget per mutant: ${escapeHtml(budget)} · Total autotest steps: ${escapeHtml(steps)}</div>
     `;
     return box;
@@ -219,6 +275,43 @@ export function createMutantsPanel(
     return box;
   }
 
+  function renderSkippedSummary(
+    items: Array<{ mutation: string; description: string; reason: string }>,
+  ): HTMLElement {
+    const box = document.createElement('details');
+    box.style.cssText = 'margin-top:10px; padding:7px 8px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:4px; color:#8b949e;';
+
+    const summary = document.createElement('summary');
+    summary.style.cssText = 'cursor:pointer; color:#8b949e; font-weight:600;';
+    summary.textContent = `Skipped candidates (${items.length})`;
+    box.appendChild(summary);
+
+    const note = document.createElement('div');
+    note.style.cssText = 'margin-top:6px; line-height:1.45; font-size:0.68rem;';
+    note.textContent = 'Skipped candidates are generated mutations that are not part of the default score. They remain available for broad mutation runs, but listing every one would mostly show graph-structure/display candidates rather than assertion quality.';
+    box.appendChild(note);
+
+    const byReason = new Map<string, Array<{ mutation: string; description: string; reason: string }>>();
+    for (const item of items) {
+      const group = byReason.get(item.reason) ?? [];
+      group.push(item);
+      byReason.set(item.reason, group);
+    }
+
+    for (const [reason, group] of byReason) {
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.06); font-size:0.68rem;';
+      const examples = group.slice(0, 3).map(item => item.mutation).join(', ');
+      row.innerHTML = `
+        <div style="color:#c9d1d9;">${escapeHtml(reason)} · ${group.length}</div>
+        <div style="color:#666; margin-top:2px; overflow-wrap:anywhere;">${escapeHtml(examples)}${group.length > 3 ? ` · +${group.length - 3} more` : ''}</div>
+      `;
+      box.appendChild(row);
+    }
+
+    return box;
+  }
+
   function render() {
     if (disposed) return;
     container.innerHTML = '';
@@ -231,6 +324,35 @@ export function createMutantsPanel(
     title.textContent = 'Mutants';
     header.appendChild(title);
 
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;';
+
+    const modeWrap = document.createElement('div');
+    modeWrap.style.cssText = 'display:flex; border:1px solid #30363d; border-radius:4px; overflow:hidden;';
+    for (const [mode, label, titleText] of [
+      ['semantic', 'Semantic', 'Score semantic, assertion-reachable mutants only'],
+      ['broad', 'Broad', 'Include broad structural/effect mutation candidates'],
+    ] as Array<[MutationMode, string, string]>) {
+      const modeBtn = document.createElement('button');
+      modeBtn.textContent = label;
+      modeBtn.title = titleText;
+      modeBtn.disabled = running;
+      modeBtn.style.cssText = `
+        background:${mutationMode === mode ? '#30363d' : '#161b22'};
+        border:0; border-right:${mode === 'semantic' ? '1px solid #30363d' : '0'};
+        color:${mutationMode === mode ? '#c9d1d9' : '#8b949e'};
+        padding:3px 8px; cursor:${running ? 'not-allowed' : 'pointer'}; font-size:0.72rem;
+        opacity:${running ? '0.55' : '1'};
+      `;
+      modeBtn.addEventListener('click', () => {
+        if (running) return;
+        mutationMode = mode;
+        render();
+      });
+      modeWrap.appendChild(modeBtn);
+    }
+    controls.appendChild(modeWrap);
+
     const runBtn = document.createElement('button');
     runBtn.textContent = running ? 'Running...' : result ? 'Rerun Mutants' : 'Run Mutants';
     runBtn.disabled = running || !options?.mutate;
@@ -240,7 +362,8 @@ export function createMutantsPanel(
       font-size:0.75rem; opacity:${runBtn.disabled ? '0.55' : '1'};
     `;
     runBtn.addEventListener('click', run);
-    header.appendChild(runBtn);
+    controls.appendChild(runBtn);
+    header.appendChild(controls);
     container.appendChild(header);
 
     if (!options?.mutate) {
@@ -279,6 +402,8 @@ export function createMutantsPanel(
       <span style="color:#72f1b8;">Killed: ${result.killed}</span>
       <span style="color:#ff5d8f;">Survived: ${result.survived.length}</span>
       <span style="color:#8b949e;">Total: ${result.total}</span>
+      ${result.generatedMutants !== undefined ? `<span style="color:#8b949e;">Generated: ${escapeHtml(result.generatedMutants)}</span>` : ''}
+      ${result.skipped !== undefined ? `<span style="color:#8b949e;">Skipped: ${escapeHtml(result.skipped.length)}</span>` : ''}
       <span style="color:#8b949e;">Invalid: ${result.invalid?.length ?? 0}</span>
       <span style="color:#8b949e;">Equivalent: ${result.equivalent?.length ?? 0}</span>
       ${result.budgetPerMutation !== undefined ? `<span style="color:#8b949e;">Budget/mutant: ${escapeHtml(result.budgetPerMutation)}</span>` : ''}
@@ -289,11 +414,16 @@ export function createMutantsPanel(
 
     const rerunNote = document.createElement('div');
     rerunNote.style.cssText = 'color:#8b949e; margin-top:6px; font-size:0.7rem;';
-    rerunNote.textContent = 'Mutation testing is rerunnable; rerun replaces these results with a fresh generated mutation run.';
+    rerunNote.textContent = mutationMode === 'semantic'
+      ? 'Semantic mode scores assertion-reachable behavior mutants. Broad candidates are summarized below and can be run with Broad mode.'
+      : 'Broad mode includes structural and effect candidates; use it to inspect graph-topology sensitivity rather than the default assertion-quality score.';
     container.appendChild(rerunNote);
 
     container.appendChild(renderList('Killed', result.killedMutations, '#72f1b8'));
     container.appendChild(renderList('Survived', result.survived, '#ff5d8f'));
+    if (result.skipped && result.skipped.length > 0) {
+      container.appendChild(renderSkippedSummary(result.skipped));
+    }
     if (result.invalid && result.invalid.length > 0) {
       container.appendChild(renderList('Invalid', result.invalid, '#f8d66d'));
     }

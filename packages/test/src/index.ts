@@ -12,6 +12,7 @@ export type {
   AutotestResult,
   ExploreCoverage,
   ExploreOptions,
+  ExplorePlanSummary,
   ExploreResult,
   Violation,
   ParsedExpression,

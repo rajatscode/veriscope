@@ -32,6 +32,18 @@ export interface ExploreOptions {
   flush?: () => void | Promise<void>;
 }
 
+export interface ExplorePlanSummary {
+  deterministic: boolean;
+  seed?: string | number;
+  budget: number;
+  exhausted: boolean;
+  stoppedByBudget: boolean;
+  generatedCases: number;
+  hiddenDuplicateCases: number;
+  generatedReachableCoverage: CoverageMetric;
+  phaseCounts: Record<ScenarioTrace['kind'], number>;
+}
+
 export interface CoverageMetric {
   covered: number;
   total: number;
@@ -52,6 +64,7 @@ export interface ExploreResult {
   coverage: ExploreCoverage;
   steps: number;
   scenarios: ScenarioTrace[];
+  plan: ExplorePlanSummary;
   snapshot?: GraphSnapshot;
 }
 
@@ -76,6 +89,7 @@ export interface AutotestResult {
   coverage: ExploreCoverage;
   steps: number;
   snapshot?: GraphSnapshot;
+  plan: ExplorePlanSummary;
 }
 
 export interface ParsedExpression {

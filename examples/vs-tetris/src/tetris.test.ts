@@ -106,6 +106,7 @@ describe('vs-tetris engine', () => {
     expect(result.coverage.overall.total).toBeGreaterThan(0);
     expect(result.assertions.some(assertion => assertion.partialCoverage)).toBe(true);
     expect(result.assertions.every(assertion => assertion.exercised)).toBe(true);
+    expect(result.assertions.every(assertion => assertion.status === 'passed')).toBe(true);
     expect(result.assertions.every(assertion => assertion.passScenarioCount + assertion.failScenarioCount > 0)).toBe(true);
     expect(result.assertions.map(assertion => assertion.name)).toEqual([
       'scores-and-garbage-nonnegative',
