@@ -145,6 +145,10 @@ Parsing `fn.toString()` may remain as a development heuristic, but it must not b
 the core product mechanism. Production-grade exploration needs declared domains,
 declared dependencies, action mappings, and assertion metadata.
 
+Current implementation note: `explore()` now prefers declared assertion
+`domains` for non-boolean root driving and only falls back to source parsing for
+development heuristics.
+
 ## 7. Stable Artifact Identity And Snapshot Schema
 
 `docs/SPEC.md` requires runtime IDs and stable paths. Current graph snapshots are

@@ -79,7 +79,35 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         nullableSignals.add(m[1]);
       }
 
-      const totalCombos = Math.max(1, (1 << boolRoots.length) * (nonBoolRoots.length > 0 ? 2 : 1));
+      const nonBoolDomains = new Map<string, any[]>();
+      for (const node of nonBoolRoots) {
+        const declaredDomain = domainForNode(assertion.metadata?.domains, node);
+        if (declaredDomain && declaredDomain.length > 0) {
+          nonBoolDomains.set(node.id, declaredDomain);
+          continue;
+        }
+
+        const currentVal = node.getValue?.();
+        if (nonNullSignals.has(node.name)) {
+          nonBoolDomains.set(node.id, [
+            typeof currentVal === 'string' ? 'error' : 1,
+            typeof currentVal === 'string' ? 'test' : 42,
+          ]);
+        } else if (nullableSignals.has(node.name)) {
+          nonBoolDomains.set(node.id, [null]);
+        } else {
+          nonBoolDomains.set(node.id, [
+            currentVal,
+            typeof currentVal === 'string' ? 'value' : 1,
+          ]);
+        }
+      }
+
+      const nonBoolComboCount = nonBoolRoots.reduce(
+        (total, node) => total * Math.max(nonBoolDomains.get(node.id)?.length ?? 0, 1),
+        1,
+      );
+      const totalCombos = Math.max(1, (1 << boolRoots.length) * nonBoolComboCount);
 
       if ((boolRoots.length > 0 || nonBoolRoots.length > 0) && rootNodes.length <= 15) {
         // 4. Enumerate combinations of booleans × non-boolean value variants
@@ -98,25 +126,10 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           });
 
           // Set non-boolean roots
-          nonBoolRoots.forEach((node) => {
+          nonBoolRoots.forEach((node, j) => {
             if (node.setValue && node.type === 'signal') {
-              const currentVal = node.getValue?.();
-              let valueToSet: any;
-
-              if (nonNullSignals.has(node.name)) {
-                // Signal is checked for !== null: try non-null value
-                valueToSet = nonBoolIdx === 0 ?
-                  (typeof currentVal === 'string' ? 'error' : 1) :
-                  (typeof currentVal === 'string' ? 'test' : 42);
-              } else if (nullableSignals.has(node.name)) {
-                // Signal is checked for === null: try null
-                valueToSet = null;
-              } else {
-                // Generic non-boolean: alternate between null/initial and non-null
-                valueToSet = nonBoolIdx === 0 ? currentVal :
-                  (typeof currentVal === 'string' ? 'value' : 1);
-              }
-
+              const values = nonBoolDomains.get(node.id) ?? [node.getValue?.()];
+              const valueToSet = valueForDomainIndex(nonBoolIdx, nonBoolRoots, nonBoolDomains, j, values);
               graph.driveNodeValue(node.id, valueToSet);
             }
           });
@@ -273,6 +286,24 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     graph.closeTick();
     graph.exitTestMode();
   }
+}
+
+function domainForNode(domains: Record<string, any[]> | undefined, node: NonNullable<ReturnType<CircuitGraph['getNode']>>): any[] | undefined {
+  return domains?.[node.id] ?? domains?.[node.stablePath] ?? domains?.[node.name];
+}
+
+function valueForDomainIndex(
+  comboIndex: number,
+  roots: Array<NonNullable<ReturnType<CircuitGraph['getNode']>>>,
+  domains: Map<string, any[]>,
+  rootIndex: number,
+  values: any[],
+): any {
+  let divisor = 1;
+  for (let i = 0; i < rootIndex; i++) {
+    divisor *= Math.max(domains.get(roots[i].id)?.length ?? 0, 1);
+  }
+  return values[Math.floor(comboIndex / divisor) % values.length];
 }
 
 function summarizeCoverage(report: CoverageReport): ExploreResult['coverage'] {

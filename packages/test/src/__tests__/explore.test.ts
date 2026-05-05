@@ -245,6 +245,33 @@ describe('explore', () => {
     });
   });
 
+  it('uses declared assertion domains for opaque non-boolean checks', async () => {
+    const g = new CircuitGraph();
+    let modeVal = 'view';
+
+    const mode = g.registerNode({ name: 'mode', type: 'signal' });
+    g.setNodeValue(mode, () => modeVal);
+    g.setNodeSetter(mode, (v: string) => {
+      modeVal = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'mode-never-edit',
+      type: 'assertion',
+      deps: [mode],
+      assertionMetadata: {
+        domains: { mode: ['view', 'edit'] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => g.getNode(mode)?.getValue?.() !== 'edit', 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.violations.some(v => v.assertionName === 'mode-never-edit')).toBe(true);
+    expect(result.scenarios.some(s => s.steps.some(step => step.signal === 'mode' && step.value === 'edit'))).toBe(true);
+  });
+
   it('reports no violations when assertions hold', async () => {
     const g = new CircuitGraph();
     let aVal = false;
