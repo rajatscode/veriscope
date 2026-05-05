@@ -16,16 +16,30 @@ export interface ExploreResult {
   violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
   scenarios: Array<{
     id: string;
-    kind: 'enumerated' | 'current-state' | 'sequence' | 'coverage-directed' | 'coverage-completion' | 'adversarial';
+    kind: 'enumerated' | 'current-state' | 'sequence' | 'operation-outcome' | 'coverage-directed' | 'coverage-completion' | 'adversarial';
     tick: number;
     steps: Array<{ signal: string; value: any }>;
     assertions: string[];
     violations: string[];
     observations?: Array<{
-      type: 'signal-change' | 'derived-recompute' | 'assertion-armed' | 'assertion-passed' | 'assertion-failed';
+      type:
+        | 'signal-change'
+        | 'derived-recompute'
+        | 'assertion-armed'
+        | 'assertion-passed'
+        | 'assertion-failed'
+        | 'operation-begin'
+        | 'operation-resolve'
+        | 'operation-reject'
+        | 'operation-abort'
+        | 'operation-timeout'
+        | 'operation-stale';
       node: string;
       oldValue?: any;
       newValue?: any;
+      operationId?: string;
+      operationName?: string;
+      status?: string;
     }>;
   }>;
   coverage: {

@@ -66,6 +66,22 @@ export interface OperationSpan {
   staleBecauseOf?: string;
 }
 
+export interface OperationModelContext {
+  graph: any;
+  operationId: string;
+  model: OperationModel;
+}
+
+export interface OperationModel {
+  id: string;
+  name: string;
+  outcomes: OperationStatus[];
+  triggerDeps?: string[];
+  outputDeps?: string[];
+  metadata?: Record<string, any>;
+  handleOutcome?: (outcome: OperationStatus, context: OperationModelContext) => void | Promise<void>;
+}
+
 export interface GraphEvent {
   type:
     | 'node-created'
@@ -127,6 +143,14 @@ export interface GraphSnapshot {
     disposedAtTick?: number;
   }>;
   operations?: OperationSpan[];
+  operationModels?: Array<{
+    id: string;
+    name: string;
+    outcomes: OperationStatus[];
+    triggerDeps?: string[];
+    outputDeps?: string[];
+    metadata?: Record<string, any>;
+  }>;
 }
 
 export interface GraphDiff {

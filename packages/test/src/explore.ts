@@ -1,6 +1,6 @@
 // explore.ts — Main explore() function: backward-cone-driven state exploration
 
-import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport, type GraphEvent } from '@veriscope/graph';
+import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport, type GraphEvent, type OperationStatus } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
 import { inferBoundaryValues, parseComputeFn } from './fn-parser.js';
 import type { ExploreOptions, ExploreResult, ScenarioTrace, Violation } from './types.js';
@@ -40,14 +40,18 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       coverage.recordOperationOutcome(op.name, op.status);
     }
   }
+  for (const model of graph.getOperationModels()) {
+    coverage.declareOperationOutcomes(model.name, model.outcomes);
+  }
 
   // Save original signal values so we can restore after exploration
   const signalNodes = graph.getNodes().filter(n => n.type === 'signal' && n.getValue);
   recordInitialReachableCoverage(signalNodes);
   const savedValues = new Map<string, any>();
   for (const node of signalNodes) {
-    savedValues.set(node.id, node.getValue!());
+      savedValues.set(node.id, node.getValue!());
   }
+  const savedOperations = graph.getOperations();
 
   try {
     // 1. Discover assertions
@@ -55,6 +59,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     const checkedAssertionNames = assertions.map(assertion => assertion.name);
     declareTransitionDomains(signalNodes, assertions);
     const restoreScenarioBaseline = async () => {
+      graph.restoreOperations(savedOperations);
       await restoreSavedSignalValues(graph, signalNodes, savedValues, flush);
     };
 
@@ -244,7 +249,25 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       scenarioCounter = sequenceResult.nextScenarioCounter;
     }
 
-    // 7. Coverage-directed pass — use current coverage gaps to drive missing
+    // 7. Operation outcome exploration — complete declared external operation
+    // models across their outcome domains and run their modeled handlers.
+    if (steps < budget) {
+      const operationResult = await operationOutcomeExploration(
+        graph,
+        checkedAssertionNames,
+        flush,
+        restoreScenarioBaseline,
+        budget - steps,
+        scenarioCounter,
+      );
+      violations.push(...operationResult.violations);
+      hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, operationResult.scenarios);
+      stoppedByBudget = stoppedByBudget || operationResult.stoppedByBudget;
+      steps += operationResult.steps;
+      scenarioCounter = operationResult.nextScenarioCounter;
+    }
+
+    // 8. Coverage-directed pass — use current coverage gaps to drive missing
     // toggles/transitions before generic completion.
     if (steps < budget) {
       const coverageDirected = await coverageDirectedPass(
@@ -263,7 +286,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       scenarioCounter = coverageDirected.nextScenarioCounter;
     }
 
-    // 8. Adversarial pass — try to break each assertion
+    // 9. Adversarial pass — try to break each assertion
     if (steps < budget) {
       const advViolations = await adversarialPass(graph, assertions, flush, restoreScenarioBaseline, budget - steps);
       violations.push(...advViolations.violations);
@@ -272,7 +295,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       steps += advViolations.steps;
     }
 
-    // 9. Coverage completion pass — drive untoggled booleans and FSM state transitions
+    // 10. Coverage completion pass — drive untoggled booleans and FSM state transitions
     if (steps < budget) {
       for (const node of signalNodes) {
         if (steps >= budget) {
@@ -388,6 +411,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     };
   } finally {
     graph.disableCoverage();
+    graph.restoreOperations(savedOperations);
     graph.openTick();
     for (const node of signalNodes) {
       if (node.setValue && savedValues.has(node.id)) {
@@ -594,6 +618,12 @@ function observationsSince(graph: CircuitGraph, before: Set<GraphEvent>): Scenar
     'assertion-armed',
     'assertion-passed',
     'assertion-failed',
+    'operation-begin',
+    'operation-resolve',
+    'operation-reject',
+    'operation-abort',
+    'operation-timeout',
+    'operation-stale',
   ]);
   return graph.getRecentEvents(256)
     .filter(event => !before.has(event) && eventTypes.has(event.type))
@@ -602,6 +632,9 @@ function observationsSince(graph: CircuitGraph, before: Set<GraphEvent>): Scenar
       node: graph.getNode(event.nodeId)?.name ?? event.stablePath ?? event.nodeId,
       oldValue: event.oldValue,
       newValue: event.newValue,
+      operationId: event.operationId,
+      operationName: event.operationName,
+      status: event.status,
     }));
 }
 
@@ -694,6 +727,7 @@ function summarizePlan(
     enumerated: 0,
     'current-state': 0,
     sequence: 0,
+    'operation-outcome': 0,
     'coverage-directed': 0,
     'coverage-completion': 0,
     adversarial: 0,
@@ -1004,6 +1038,89 @@ async function sequenceExploration(
   }
 
   return { violations, scenarios, steps, stoppedByBudget, nextScenarioCounter: scenarioCounter };
+}
+
+async function operationOutcomeExploration(
+  graph: CircuitGraph,
+  checkedAssertionNames: string[],
+  flush: () => void | Promise<void>,
+  restoreBaseline: () => Promise<void>,
+  remainingBudget: number,
+  scenarioCounter: number,
+): Promise<ExplorationPhaseResult> {
+  const violations: Violation[] = [];
+  const scenarios: ScenarioTrace[] = [];
+  let steps = 0;
+  let stoppedByBudget = false;
+
+  for (const model of graph.getOperationModels()) {
+    for (const outcome of model.outcomes) {
+      if (outcome === 'pending') continue;
+      if (steps + 2 > remainingBudget) {
+        stoppedByBudget = true;
+        break;
+      }
+
+      await restoreBaseline();
+      const eventMarker = markEvents(graph);
+      const sequence = [{ signal: `operation:${model.name}`, value: outcome }];
+
+      graph.openTick();
+      const operationId = graph.beginOperation(model.name, {
+        ...model.metadata,
+        outcomes: model.outcomes,
+        triggerDeps: model.triggerDeps,
+        outputDeps: model.outputDeps,
+        modelId: model.id,
+      });
+      await flush();
+      graph.closeTick();
+      steps++;
+
+      graph.openTick();
+      graph.setAsyncContext(true);
+      try {
+        graph.completeOperationOutcome(operationId, outcome, operationPayloadFor(outcome));
+        await graph.withOperation(operationId, async () => {
+          await model.handleOutcome?.(outcome, { graph, operationId, model });
+        });
+      } finally {
+        graph.setAsyncContext(false);
+      }
+      await flush();
+      const found = graph.checkAssertions();
+      graph.closeTick();
+      steps++;
+
+      const scenario: ScenarioTrace = {
+        id: `scenario-${scenarioCounter++}`,
+        kind: 'operation-outcome',
+        tick: graph.currentTick,
+        steps: sequence,
+        assertions: checkedAssertionNames,
+        violations: found.map(violation => violation.name),
+        observations: observationsSince(graph, eventMarker),
+      };
+      scenarios.push(scenario);
+      violations.push(...found.map(violation => ({
+        assertionName: violation.name,
+        tick: graph.currentTick,
+        signalValues: { [`operation:${model.name}`]: outcome },
+        sequence,
+      })));
+    }
+    if (stoppedByBudget) break;
+  }
+
+  return { violations, scenarios, steps, stoppedByBudget, nextScenarioCounter: scenarioCounter };
+}
+
+function operationPayloadFor(outcome: OperationStatus): any {
+  if (outcome === 'resolved') return { ok: true };
+  if (outcome === 'rejected') return { error: 'modeled error' };
+  if (outcome === 'aborted') return { reason: 'modeled abort' };
+  if (outcome === 'stale') return { newerId: 'modeled-newer-operation' };
+  return undefined;
 }
 
 function sequenceScenario(

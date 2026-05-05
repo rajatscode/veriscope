@@ -446,6 +446,37 @@ describe('CircuitGraph', () => {
     coverage.reset();
   });
 
+  it('registers operation models for deterministic outcome exploration', () => {
+    const g = new CircuitGraph();
+    const outputId = g.registerNode({ name: 'result', type: 'signal' });
+    const modelId = g.registerOperationModel({
+      name: 'loadUser',
+      outcomes: ['resolved', 'rejected', 'timeout'],
+      outputDeps: [outputId],
+      metadata: { route: '/user' },
+      handleOutcome: (outcome, context) => {
+        expect(context.operationId).toMatch(/^loadUser_/);
+        expect(context.model.name).toBe('loadUser');
+        expect(outcome).toBe('resolved');
+      },
+    });
+
+    const [model] = g.getOperationModels();
+    expect(model.id).toBe(modelId);
+    expect(model.outcomes).toEqual(['resolved', 'rejected', 'timeout']);
+    expect(model.outputDeps).toEqual([outputId]);
+
+    const snap = g.snapshot();
+    expect(snap.operationModels?.[0]).toMatchObject({
+      id: modelId,
+      name: 'loadUser',
+      outcomes: ['resolved', 'rejected', 'timeout'],
+      outputDeps: [outputId],
+      metadata: { route: '/user' },
+    });
+    expect(snap.operationModels?.[0].metadata).not.toHaveProperty('handleOutcome');
+  });
+
   it('assertOperationStatus fails on disallowed operation outcomes', () => {
     const g = new CircuitGraph();
     const assertionId = assertOperationStatus('save', ['resolved'], 'save-resolves', g);

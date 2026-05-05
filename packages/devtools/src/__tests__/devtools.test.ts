@@ -52,6 +52,71 @@ function autotestResult(assertionId = 'assertion_0'): AutotestResult {
   };
 }
 
+function operationAutotestResult(): AutotestResult {
+  return {
+    ...autotestResult('operation-assertion-id'),
+    scenarios: [{
+      id: 'operation-scenario-1',
+      kind: 'operation-outcome',
+      tick: 2,
+      steps: [{ signal: 'operation:submit', value: 'resolved' }],
+      assertions: ['operation-visible'],
+      violations: [],
+      observations: [
+        {
+          type: 'operation-begin',
+          node: 'operation:submit_0',
+          operationId: 'submit_0',
+          operationName: 'submit',
+          status: 'pending',
+        },
+        {
+          type: 'operation-resolve',
+          node: 'operation:submit_0',
+          operationId: 'submit_0',
+          operationName: 'submit',
+          status: 'resolved',
+        },
+        {
+          type: 'signal-change',
+          node: 'submit.status',
+          oldValue: 'pending',
+          newValue: 'ok',
+          operationId: 'submit_0',
+          operationName: 'submit',
+        },
+      ],
+    }],
+    coverage: {
+      toggle: metric(0, 0),
+      transitions: metric(0, 0),
+      cross: metric(0, 0),
+      operations: metric(1, 1),
+      overall: metric(1, 1),
+      gaps: [],
+    },
+    plan: {
+      deterministic: true,
+      budget: 1000,
+      exhausted: true,
+      stoppedByBudget: false,
+      generatedCases: 1,
+      hiddenDuplicateCases: 0,
+      generatedReachableCoverage: metric(1, 1),
+      phaseCounts: {
+        enumerated: 0,
+        'current-state': 0,
+        sequence: 0,
+        'operation-outcome': 1,
+        'coverage-directed': 0,
+        'coverage-completion': 0,
+        adversarial: 0,
+      },
+    },
+    steps: 2,
+  };
+}
+
 function mutationResult(): MutateResult {
   return {
     total: 2,
@@ -454,6 +519,25 @@ describe('mountDevtools', () => {
     expect(autotestText).toContain('No autotest runner registered.');
     expect(autotestText).not.toContain('P:1 F:0');
     expect(autotestText).not.toContain('Operations (1)');
+
+    handle.dispose();
+  });
+
+  it('renders operation outcome cases and operation observations in Autotest', async () => {
+    const graph = new CircuitGraph();
+    const autotest = vi.fn(async () => operationAutotestResult());
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'autotest', autotest, coverage });
+
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(host.textContent).toContain('operation-outcome 1');
+    expect(host.textContent).toContain('operation:submit=\"resolved\"');
+    expect(host.textContent).toContain('operation events: submit:pending, submit:resolved');
+    expect(host.textContent).toContain('Runtime counters: toggles 0/0, transitions 0/0, cross 0/0, operations 1/1');
 
     handle.dispose();
   });

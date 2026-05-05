@@ -125,6 +125,16 @@ function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLE
     item.appendChild(temporalLine);
   }
 
+  const operationEvents = scenario.observations?.filter(obs => obs.type.startsWith('operation-')) ?? [];
+  if (operationEvents.length > 0) {
+    const operationLine = document.createElement('div');
+    operationLine.style.cssText = 'color:#58a6ff; margin-top:2px; overflow-wrap:anywhere;';
+    operationLine.textContent = `operation events: ${operationEvents.slice(0, 5).map(obs =>
+      `${obs.operationName ?? obs.node}:${obs.status ?? obs.type.replace('operation-', '')}`,
+    ).join(', ')}${operationEvents.length > 5 ? ` +${operationEvents.length - 5} more` : ''}`;
+    item.appendChild(operationLine);
+  }
+
   return item;
 }
 
@@ -386,7 +396,8 @@ export function createAssertionsPanel(
           || scenario.observations?.some(obs =>
             obs.type === 'derived-recompute'
             || obs.type === 'assertion-armed'
-            || obs.type === 'assertion-failed',
+            || obs.type === 'assertion-failed'
+            || obs.type.startsWith('operation-'),
           ),
         );
         const scenarioBox = document.createElement('div');

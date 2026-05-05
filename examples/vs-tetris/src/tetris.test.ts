@@ -98,6 +98,8 @@ describe('vs-tetris engine', () => {
     expect(names).toContain('p2.pendingGarbage');
     expect(names).toContain('arena.maxStackHeight');
     expect(names).toContain('p1.canSend2');
+    expect(names).toContain('external.garbageRelayStatus');
+    expect(graph.getOperationModels().map(model => model.name)).toContain('garbage-relay');
 
     const result = await runAutotest(graph, { budget: 400, name: 'vs-tetris-autotest' });
 
@@ -120,9 +122,15 @@ describe('vs-tetris engine', () => {
       'after-garbage-pulse-recipient-eventually-visible',
       'never-can-send-with-empty-bank',
       'ko-has-valid-reason',
+      'garbage-relay-outcome-visible',
+      'garbage-relay-terminal-outcome-known',
+      'stale-garbage-relay-does-not-deliver',
     ]);
     expect(result.assertions.some(assertion => assertion.kind === 'after')).toBe(true);
     expect(result.scenarios.some(scenario => scenario.kind === 'sequence')).toBe(true);
+    expect(result.scenarios.some(scenario => scenario.kind === 'operation-outcome')).toBe(true);
+    expect(result.coverage.operations.total).toBeGreaterThan(0);
+    expect(result.coverage.operations.covered).toBe(result.coverage.operations.total);
     expect(result.scenarios.some(scenario => scenario.kind === 'coverage-directed')).toBe(true);
     expect(result.scenarios.every(scenario =>
       scenario.steps.every(step => step.signal !== 'p1.attackBank' || typeof step.value !== 'number' || step.value >= 0),

@@ -12,6 +12,7 @@ import type {
   GraphSnapshot,
   NodeType,
   OperationSpan,
+  OperationModel,
   OperationStatus,
   WaveformPoint,
 } from './types.js';
@@ -34,6 +35,7 @@ export class CircuitGraph {
   private disposedNodes = new Map<string, GraphNode>();
   private stablePathCounts = new Map<string, number>();
   private operations = new Map<string, OperationSpan>();
+  private operationModels = new Map<string, OperationModel>();
   private operationStack: string[] = [];
   private operationCounter = 0;
   private captureContext: Record<string, any> = {};
@@ -473,6 +475,39 @@ export class CircuitGraph {
 
   // --- External operation spans ---
 
+  registerOperationModel(info: {
+    name: string;
+    outcomes: OperationStatus[];
+    triggerDeps?: string[];
+    outputDeps?: string[];
+    stablePath?: string;
+    metadata?: Record<string, any>;
+    handleOutcome?: OperationModel['handleOutcome'];
+  }): string {
+    const id = this.allocateStablePath(`operation:${info.name}`, info.stablePath, info.metadata);
+    const model: OperationModel = {
+      id,
+      name: info.name,
+      outcomes: uniqueOperationStatuses(info.outcomes),
+      triggerDeps: info.triggerDeps ? [...info.triggerDeps] : undefined,
+      outputDeps: info.outputDeps ? [...info.outputDeps] : undefined,
+      metadata: info.metadata,
+      handleOutcome: info.handleOutcome,
+    };
+    this.operationModels.set(id, model);
+    coverage.declareOperationOutcomes(info.name, model.outcomes);
+    return id;
+  }
+
+  getOperationModels(): OperationModel[] {
+    return [...this.operationModels.values()].map(model => ({
+      ...model,
+      outcomes: [...model.outcomes],
+      triggerDeps: model.triggerDeps ? [...model.triggerDeps] : undefined,
+      outputDeps: model.outputDeps ? [...model.outputDeps] : undefined,
+    }));
+  }
+
   beginOperation(name: string, metadata?: Record<string, any>): string {
     if (!this.testMode) {
       this.ensureTickOpen();
@@ -498,6 +533,28 @@ export class CircuitGraph {
 
     this.emitOperationEvent(span, 'operation-begin', 'pending', metadata);
     return id;
+  }
+
+  completeOperationOutcome(id: string, status: OperationStatus, payload?: any): void {
+    switch (status) {
+      case 'resolved':
+        this.resolveOperation(id, payload);
+        break;
+      case 'rejected':
+        this.rejectOperation(id, payload);
+        break;
+      case 'aborted':
+        this.abortOperation(id, payload);
+        break;
+      case 'timeout':
+        this.timeoutOperation(id);
+        break;
+      case 'stale':
+        this.markOperationStale(id, payload?.newerId);
+        break;
+      case 'pending':
+        break;
+    }
   }
 
   resolveOperation(id: string, value?: any): void {
@@ -543,7 +600,25 @@ export class CircuitGraph {
     return [...this.operations.values()].map(op => ({
       ...op,
       events: [...op.events],
+      metadata: op.metadata ? { ...op.metadata } : undefined,
     }));
+  }
+
+  restoreOperations(operations: OperationSpan[]): void {
+    this.operations.clear();
+    this.operationStack = [];
+    let nextCounter = 0;
+    for (const operation of operations) {
+      const restored: OperationSpan = {
+        ...operation,
+        metadata: operation.metadata ? { ...operation.metadata } : undefined,
+        events: operation.events.map(event => ({ ...event, metadata: event.metadata ? { ...event.metadata } : undefined })),
+      };
+      this.operations.set(restored.id, restored);
+      const suffix = restored.id.match(/_(\d+)$/)?.[1];
+      if (suffix !== undefined) nextCounter = Math.max(nextCounter, Number(suffix) + 1);
+    }
+    this.operationCounter = nextCounter;
   }
 
   currentOperationId(): string | undefined {
@@ -708,6 +783,14 @@ export class CircuitGraph {
       ),
       disposedNodes: [...this.disposedNodes.values()].map(n => this.snapshotNode(n, nodePath)),
       operations: this.getOperations(),
+      operationModels: this.getOperationModels().map(model => ({
+        id: model.id,
+        name: model.name,
+        outcomes: [...model.outcomes],
+        triggerDeps: model.triggerDeps ? [...model.triggerDeps] : undefined,
+        outputDeps: model.outputDeps ? [...model.outputDeps] : undefined,
+        metadata: this.serializableMetadata(model.metadata),
+      })),
     };
   }
 
@@ -909,6 +992,7 @@ export class CircuitGraph {
     this.disposedNodes.clear();
     this.stablePathCounts.clear();
     this.operations.clear();
+    this.operationModels.clear();
     this.operationStack = [];
     this.operationCounter = 0;
     this.captureContext = {};
@@ -921,6 +1005,14 @@ export class CircuitGraph {
     this.nodeLastSetContext.clear();
     this.cdcWarningListeners.clear();
   }
+}
+
+function uniqueOperationStatuses(statuses: OperationStatus[]): OperationStatus[] {
+  const result: OperationStatus[] = [];
+  for (const status of statuses) {
+    if (!result.includes(status)) result.push(status);
+  }
+  return result;
 }
 
 /** Default singleton instance for convenience. */

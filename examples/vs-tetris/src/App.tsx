@@ -29,7 +29,14 @@ import {
   type PlayerId,
   type PlayerState,
 } from './tetris';
-import { createVsTetrisGraph, registerTetrisAssertions, registerTetrisTelemetry } from './veriscopeTetris';
+import {
+  GARBAGE_RELAY_OUTCOMES,
+  GARBAGE_RELAY_STATUSES,
+  createVsTetrisGraph,
+  registerTetrisAssertions,
+  registerTetrisTelemetry,
+  type GarbageRelayStatus,
+} from './veriscopeTetris';
 
 export function App() {
   const initialized = useRef(false);
@@ -48,6 +55,9 @@ export function App() {
   const paused = useSignal(false, 'arena.paused');
   const garbagePulse = useSignal(false, 'arena.garbagePulse');
   const attackBank = useSignal(0, 'p1.attackBank');
+  const garbageRelayStatus = useSignal<GarbageRelayStatus>('idle', 'external.garbageRelayStatus', {
+    states: [...GARBAGE_RELAY_STATUSES],
+  });
 
   const totalPending = useDerived(
     () => arenaPlayers.val.reduce((sum, player) => sum + player.pendingGarbage, 0),
@@ -115,6 +125,7 @@ export function App() {
 
   const [sendLog, setSendLog] = useState<GarbageSend[]>([]);
   const stepRef = useRef<() => void>(() => {});
+  const pendingRelayOperation = useRef<string | null>(null);
 
   function currentPlayers(): PlayerState[] {
     return arenaPlayers.val;
@@ -146,6 +157,7 @@ export function App() {
   }
 
   function startArena() {
+    abortPendingRelay('restart');
     const count = clampOpponentCount(opponentCount.val);
     opponentCount.set(count);
     const next = resetPlayers(count);
@@ -153,6 +165,7 @@ export function App() {
     arenaTick.set(0);
     attackBank.set(0);
     garbagePulse.set(false);
+    garbageRelayStatus.set('idle');
     paused.set(false);
     humanTarget.set('p2');
     started.set(true);
@@ -160,11 +173,13 @@ export function App() {
   }
 
   function returnToSetup() {
+    abortPendingRelay('setup');
     started.set(false);
     arenaPlayers.set(resetPlayers(opponentCount.val));
     paused.set(false);
     attackBank.set(0);
     garbagePulse.set(false);
+    garbageRelayStatus.set('idle');
     arenaTick.set(0);
     humanTarget.set('p2');
     setSendLog([]);
@@ -190,6 +205,45 @@ export function App() {
     if (result.sends.length === 0) return;
     attackBank.set(attackBank.val - lines);
     commit(result.players, result.sends);
+    trackGarbageRelay(lines, humanTarget.val);
+  }
+
+  function trackGarbageRelay(lines: number, target: PlayerId) {
+    if (pendingRelayOperation.current) {
+      const staleId = pendingRelayOperation.current;
+      graph.withOperation(staleId, () => {
+        graph.markOperationStale(staleId);
+        garbageRelayStatus.set('ignored-stale');
+      });
+    }
+
+    const operationId = graph.beginOperation('garbage-relay', {
+      outcomes: [...GARBAGE_RELAY_OUTCOMES],
+      inputDeps: [humanTarget.nodeId, attackBank.nodeId],
+      outputDeps: [arenaPlayers.nodeId, garbageRelayStatus.nodeId],
+      request: { from: 'p1', to: target, lines },
+    });
+    pendingRelayOperation.current = operationId;
+    garbageRelayStatus.set('pending');
+
+    window.setTimeout(() => {
+      if (pendingRelayOperation.current !== operationId) return;
+      graph.withOperation(operationId, () => {
+        graph.resolveOperation(operationId, { delivered: true, to: target, lines });
+        garbageRelayStatus.set('delivered');
+      });
+      pendingRelayOperation.current = null;
+    }, 140);
+  }
+
+  function abortPendingRelay(reason: string) {
+    const operationId = pendingRelayOperation.current;
+    if (!operationId) return;
+    graph.withOperation(operationId, () => {
+      graph.abortOperation(operationId, reason);
+      garbageRelayStatus.set('aborted');
+    });
+    pendingRelayOperation.current = null;
   }
 
   function updateHuman(nextHuman: PlayerState) {
@@ -209,6 +263,7 @@ export function App() {
   useEffect(() => {
     graph.startRecording();
     return () => {
+      abortPendingRelay('unmount');
       graph.stopRecording();
       graph.disableCoverage();
     };
@@ -241,6 +296,8 @@ export function App() {
       getGarbagePulse: () => garbagePulse.val,
       sendHasRecipientNodeId: sendHasRecipient.nodeId,
       getSendHasRecipient: () => sendHasRecipient.val,
+      relayStatusNodeId: garbageRelayStatus.nodeId,
+      getRelayStatus: () => garbageRelayStatus.val,
     });
 
     return () => assertions.dispose();
@@ -342,6 +399,7 @@ export function App() {
                 <Metric label="Target" value={humanTarget.val.toUpperCase()} />
                 <Metric label="Attack" value={attackBank.val} />
                 <Metric label="Paused" value={paused.val ? 'yes' : 'no'} />
+                <Metric label="Relay" value={garbageRelayStatus.val} />
               </div>
             </div>
             <div className="telemetry-panel">

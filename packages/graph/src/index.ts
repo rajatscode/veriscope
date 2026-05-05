@@ -14,6 +14,8 @@ export type {
   AssertionViolation,
   CdcWarning,
   OperationSpan,
+  OperationModel,
+  OperationModelContext,
   OperationStatus,
   WaveformPoint,
 } from './types.js';

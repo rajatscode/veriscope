@@ -1,4 +1,4 @@
-import { CircuitGraph, assertAfter } from '@veriscope/graph';
+import { CircuitGraph, assertAfter, assertOperationStatus, type OperationStatus } from '@veriscope/graph';
 import {
   DEFAULT_OPPONENTS,
   ROWS,
@@ -14,6 +14,18 @@ type SignalStore<T> = {
   set: (next: T) => void;
   id: string;
 };
+
+export const GARBAGE_RELAY_OUTCOMES = ['resolved', 'rejected', 'aborted', 'timeout', 'stale'] as const satisfies OperationStatus[];
+export const GARBAGE_RELAY_STATUSES = [
+  'idle',
+  'pending',
+  'delivered',
+  'failed',
+  'aborted',
+  'timeout',
+  'ignored-stale',
+] as const;
+export type GarbageRelayStatus = (typeof GARBAGE_RELAY_STATUSES)[number];
 
 const PLAYER_METRICS = [
   'score',
@@ -97,6 +109,8 @@ interface TetrisAssertionBindings {
   getGarbagePulse: () => boolean;
   sendHasRecipientNodeId: string;
   getSendHasRecipient: () => boolean;
+  relayStatusNodeId: string;
+  getRelayStatus: () => GarbageRelayStatus;
 }
 
 export function registerTetrisAssertions(
@@ -338,6 +352,53 @@ export function registerTetrisAssertions(
     reason: 'checks every KO comes from an explicit engine top-out reason rather than an unexplained state flip',
   });
 
+  const relayStatusId = register(
+    'garbage-relay-outcome-visible',
+    [bindings.relayStatusNodeId],
+    () => GARBAGE_RELAY_STATUSES.includes(bindings.getRelayStatus()),
+  );
+  targetGraph.setAssertionMetadata(relayStatusId, {
+    checkDeps: [bindings.relayStatusNodeId],
+    domains: {
+      [bindings.relayStatusNodeId]: [...GARBAGE_RELAY_STATUSES],
+      'external.garbageRelayStatus': [...GARBAGE_RELAY_STATUSES],
+    },
+    operationDomains: {
+      'garbage-relay': [...GARBAGE_RELAY_OUTCOMES],
+    },
+    partial: false,
+  });
+
+  const terminalOutcomeId = assertOperationStatus(
+    'garbage-relay',
+    [...GARBAGE_RELAY_OUTCOMES],
+    'garbage-relay-terminal-outcome-known',
+    targetGraph,
+  );
+  ids['garbage-relay-terminal-outcome-known'] = terminalOutcomeId;
+  disposables.push(terminalOutcomeId);
+
+  const staleHandlingId = register(
+    'stale-garbage-relay-does-not-deliver',
+    [bindings.relayStatusNodeId],
+    () =>
+      targetGraph
+        .getOperations()
+        .filter(op => op.name === 'garbage-relay' && op.status === 'stale')
+        .every(() => bindings.getRelayStatus() === 'ignored-stale'),
+  );
+  targetGraph.setAssertionMetadata(staleHandlingId, {
+    checkDeps: [bindings.relayStatusNodeId],
+    domains: {
+      [bindings.relayStatusNodeId]: [...GARBAGE_RELAY_STATUSES],
+      'external.garbageRelayStatus': [...GARBAGE_RELAY_STATUSES],
+    },
+    operationDomains: {
+      'garbage-relay': [...GARBAGE_RELAY_OUTCOMES],
+    },
+    partial: false,
+  });
+
   return {
     ids,
     dispose() {
@@ -356,6 +417,7 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
   let humanTarget = targetDomain[0] ?? 'p2';
   let attackBank = 0;
   let garbagePulse = false;
+  let relayStatus: GarbageRelayStatus = 'idle';
 
   const playersSignal = registerSignal(targetGraph, 'arena.players', () => players, next => {
     players = Array.isArray(next) ? next : players;
@@ -375,6 +437,17 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
   const pulseSignal = registerSignal(targetGraph, 'arena.garbagePulse', () => garbagePulse, next => {
     garbagePulse = Boolean(next);
   });
+  const relayStatusSignal = registerSignal(
+    targetGraph,
+    'external.garbageRelayStatus',
+    () => relayStatus,
+    next => {
+      relayStatus = GARBAGE_RELAY_STATUSES.includes(next as GarbageRelayStatus)
+        ? next as GarbageRelayStatus
+        : relayStatus;
+    },
+    { states: [...GARBAGE_RELAY_STATUSES] },
+  );
 
   const telemetry = registerTetrisTelemetry(targetGraph, playersSignal.id, () => players);
 
@@ -410,6 +483,20 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
       || targetGraph.getNode(telemetry.ids['arena.anyRecipientReceived'])?.getValue?.() === true,
   );
 
+  targetGraph.registerOperationModel({
+    name: 'garbage-relay',
+    outcomes: [...GARBAGE_RELAY_OUTCOMES],
+    triggerDeps: [bankSignal.id, targetSignal.id],
+    outputDeps: [relayStatusSignal.id, playersSignal.id],
+    metadata: {
+      description: 'simulated external service that acknowledges manual garbage delivery',
+      outcomeDomain: [...GARBAGE_RELAY_OUTCOMES],
+    },
+    handleOutcome: (outcome, { graph }) => {
+      graph.driveNodeValue(relayStatusSignal.id, relayStatusForOutcome(outcome));
+    },
+  });
+
   registerTetrisAssertions(targetGraph, {
     playersNodeId: playersSignal.id,
     getPlayers: () => players,
@@ -430,6 +517,8 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
     getGarbagePulse: () => garbagePulse,
     sendHasRecipientNodeId: sendHasRecipient,
     getSendHasRecipient: () => targetGraph.getNode(sendHasRecipient)?.getValue?.() === true,
+    relayStatusNodeId: relayStatusSignal.id,
+    getRelayStatus: () => relayStatus,
   });
 
   targetGraph.propagate();
@@ -441,11 +530,26 @@ function registerSignal<T>(
   name: string,
   get: () => T,
   set: (next: T) => void,
+  options?: { states?: string[] },
 ): SignalStore<T> {
-  const id = targetGraph.registerNode({ name, type: 'signal', stablePath: name });
+  const id = targetGraph.registerNode({
+    name,
+    type: 'signal',
+    stablePath: name,
+    metadata: options?.states ? { states: options.states } : undefined,
+  });
   targetGraph.setNodeValue(id, get);
   targetGraph.setNodeSetter(id, set);
   return { id, get, set };
+}
+
+export function relayStatusForOutcome(outcome: OperationStatus): GarbageRelayStatus {
+  if (outcome === 'resolved') return 'delivered';
+  if (outcome === 'rejected') return 'failed';
+  if (outcome === 'aborted') return 'aborted';
+  if (outcome === 'timeout') return 'timeout';
+  if (outcome === 'stale') return 'ignored-stale';
+  return 'pending';
 }
 
 function registerDerived(

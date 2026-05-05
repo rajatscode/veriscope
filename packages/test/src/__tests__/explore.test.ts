@@ -450,6 +450,68 @@ describe('explore', () => {
     });
   });
 
+  it('generates operation outcome scenarios and links response-side observations', async () => {
+    const g = new CircuitGraph();
+    let status = 'idle';
+    const statusId = g.registerNode({
+      name: 'submit.status',
+      type: 'signal',
+      metadata: { states: ['idle', 'ok', 'error', 'timeout'] },
+    });
+    g.setNodeValue(statusId, () => status);
+    g.setNodeSetter(statusId, (next: string) => {
+      status = next;
+    });
+
+    g.registerOperationModel({
+      name: 'submit',
+      outcomes: ['resolved', 'rejected', 'timeout'],
+      outputDeps: [statusId],
+      handleOutcome: (outcome, { graph }) => {
+        const next =
+          outcome === 'resolved' ? 'ok' :
+          outcome === 'rejected' ? 'error' : 'timeout';
+        graph.driveNodeValue(statusId, next);
+      },
+    });
+
+    const assertId = g.registerNode({
+      name: 'submit-outcome-visible',
+      type: 'assertion',
+      deps: [statusId],
+      assertionMetadata: {
+        checkDeps: [statusId],
+        domains: { [statusId]: ['idle', 'ok', 'error', 'timeout'] },
+        operationDomains: { submit: ['resolved', 'rejected', 'timeout'] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => ['idle', 'ok', 'error', 'timeout'].includes(status), 'always');
+
+    const result = await explore(g, { budget: 20 });
+    const operationScenarios = result.scenarios.filter(scenario => scenario.kind === 'operation-outcome');
+
+    expect(operationScenarios).toHaveLength(3);
+    expect(result.coverage.operations).toMatchObject({ covered: 3, total: 3 });
+    expect(operationScenarios.some(scenario =>
+      scenario.steps.some(step => step.signal === 'operation:submit' && step.value === 'resolved'),
+    )).toBe(true);
+    expect(operationScenarios.some(scenario =>
+      scenario.observations?.some(obs =>
+        obs.type === 'operation-resolve'
+        && obs.operationName === 'submit'
+        && obs.status === 'resolved',
+      ),
+    )).toBe(true);
+    expect(operationScenarios.some(scenario =>
+      scenario.observations?.some(obs =>
+        obs.type === 'signal-change'
+        && obs.node === 'submit.status'
+        && obs.operationName === 'submit',
+      ),
+    )).toBe(true);
+  });
+
   it('uses declared assertion domains for opaque non-boolean checks', async () => {
     const g = new CircuitGraph();
     let modeVal = 'view';
