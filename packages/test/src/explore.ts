@@ -18,7 +18,9 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   const budget = options.budget ?? 1000;
   const flush = options.flush ?? (() => {});
   const violations: Violation[] = [];
+  const scenarios: ExploreResult['scenarios'] = [];
   let steps = 0;
+  let scenarioCounter = 0;
 
   graph.enterTestMode();
   coverage.reset();
@@ -116,6 +118,25 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           const v = graph.checkAssertions();
           graph.closeTick();
 
+          const sequence = [
+            ...boolCombo.map((val, j) => ({
+              signal: boolRoots[j].name,
+              value: val,
+            })),
+            ...nonBoolRoots.map((n) => ({
+              signal: n.name,
+              value: n.getValue?.(),
+            })),
+          ];
+          scenarios.push({
+            id: `scenario-${scenarioCounter++}`,
+            kind: 'enumerated',
+            tick: graph.currentTick,
+            steps: sequence,
+            assertions: [assertion.name],
+            violations: v.map(violation => violation.name),
+          });
+
           if (v.length > 0) {
             const signalValues: Record<string, any> = {};
             boolRoots.forEach((n, j) => {
@@ -130,16 +151,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
                 assertionName: violation.name,
                 tick: graph.currentTick,
                 signalValues,
-                sequence: [
-                  ...boolCombo.map((val, j) => ({
-                    signal: boolRoots[j].name,
-                    value: val,
-                  })),
-                  ...nonBoolRoots.map((n) => ({
-                    signal: n.name,
-                    value: n.getValue?.(),
-                  })),
-                ],
+                sequence,
               });
             }
           }
@@ -155,6 +167,14 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         await flush();
         const v = graph.checkAssertions();
         graph.closeTick();
+        scenarios.push({
+          id: `scenario-${scenarioCounter++}`,
+          kind: 'current-state',
+          tick: graph.currentTick,
+          steps: [],
+          assertions: [assertion.name],
+          violations: v.map(violation => violation.name),
+        });
         if (v.length > 0) {
           for (const violation of v) {
             violations.push({
@@ -191,6 +211,14 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             graph.driveNodeValue(node.id, val);
             await flush();
             graph.closeTick();
+            scenarios.push({
+              id: `scenario-${scenarioCounter++}`,
+              kind: 'coverage-completion',
+              tick: graph.currentTick,
+              steps: [{ signal: node.name, value: val }],
+              assertions: assertions.map(assertion => assertion.name),
+              violations: [],
+            });
             steps++;
           }
         }
@@ -203,6 +231,14 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             graph.driveNodeValue(node.id, state);
             await flush();
             graph.closeTick();
+            scenarios.push({
+              id: `scenario-${scenarioCounter++}`,
+              kind: 'coverage-completion',
+              tick: graph.currentTick,
+              steps: [{ signal: node.name, value: state }],
+              assertions: assertions.map(assertion => assertion.name),
+              violations: [],
+            });
             steps++;
           }
         }
@@ -214,6 +250,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       violations,
       coverage: summarizeCoverage(report),
       steps,
+      scenarios,
       snapshot: graph.snapshot({ tool: '@veriscope/test/explore', steps }),
     };
   } finally {

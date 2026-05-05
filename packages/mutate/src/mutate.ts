@@ -1,7 +1,7 @@
 // mutate.ts — Main mutation testing function
 
 import type { CircuitGraph } from '@veriscope/graph';
-import { explore } from '@veriscope/test';
+import { runAutotest } from '@veriscope/test';
 import { generateMutations } from './operators.js';
 import type { MutateOptions, MutateResult } from './types.js';
 
@@ -31,7 +31,14 @@ export async function mutate(
     });
   }
 
+  if (!options.includeMetaMutations) {
+    mutations = mutations.filter(m => !m.name.startsWith('remove-assertion:'));
+  }
+
   const survived: MutateResult['survived'] = [];
+  const killedMutations: MutateResult['killedMutations'] = [];
+  const invalid: MutateResult['invalid'] = [];
+  const equivalent: MutateResult['equivalent'] = [];
   let killed = 0;
 
   const budgetPerMutation = mutations.length > 0 ? Math.max(4, Math.floor(budget / mutations.length)) : budget;
@@ -40,25 +47,47 @@ export async function mutate(
     // Fresh graph for each mutation
     const graph = factory();
 
-    // Apply mutation
-    const undo = mutation.apply(graph);
+    let undo: (() => void) | undefined;
+    try {
+      undo = mutation.apply(graph);
 
-    // Explore the mutated graph
-    const result = await explore(graph, { budget: budgetPerMutation });
+      // Autotest the mutated graph using the same scenario/exploration machinery
+      // that devtools exposes.
+      const result = await runAutotest(graph, {
+        budget: budgetPerMutation,
+        name: mutation.name,
+      });
 
-    if (result.violations.length > 0) {
-      killed++;
-    } else {
-      survived.push({ mutation: mutation.name, description: mutation.description });
+      if (result.status === 'failed') {
+        killed++;
+        killedMutations.push({
+          mutation: mutation.name,
+          description: mutation.description,
+          scenarioId: result.scenarios.find(s => s.violations.length > 0)?.id,
+          assertionName: result.violations[0]?.assertionName,
+        });
+      } else {
+        survived.push({ mutation: mutation.name, description: mutation.description });
+      }
+    } catch (err) {
+      invalid.push({
+        mutation: mutation.name,
+        description: mutation.description,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      undo?.();
     }
-
-    undo();
   }
 
+  const scoredTotal = mutations.length - invalid.length - equivalent.length;
   return {
     total: mutations.length,
     killed,
+    killedMutations,
     survived,
-    score: mutations.length > 0 ? (killed / mutations.length) * 100 : 100,
+    invalid,
+    equivalent,
+    score: scoredTotal > 0 ? (killed / scoredTotal) * 100 : 100,
   };
 }

@@ -168,6 +168,8 @@ describe('mutate', () => {
 
     const result = await mutate(factory, { budget: 100 });
     expect(result.killed).toBeGreaterThan(0);
+    expect(result.killedMutations.length).toBe(result.killed);
+    expect(result.killedMutations[0].assertionName).toBeDefined();
     expect(result.score).toBeGreaterThan(0);
   });
 
@@ -194,7 +196,28 @@ describe('mutate', () => {
     const result = await mutate(factory, { budget: 100 });
     // With a tautological assertion, no mutations should be killed
     expect(result.survived.length).toBe(result.total);
+    expect(result.invalid).toHaveLength(0);
     expect(result.score).toBe(0);
+  });
+
+  it('excludes assertion-removal meta-mutations from scoring by default', async () => {
+    const factory = () => {
+      const g = new CircuitGraph();
+      let val = true;
+      const a = g.registerNode({ name: 'a', type: 'signal' });
+      g.setNodeValue(a, () => val);
+      g.setNodeSetter(a, (v: boolean) => { val = v; });
+
+      const assertId = g.registerNode({ name: 'a-must-be-true', type: 'assertion', deps: [a] });
+      g.setAssertionFn(assertId, () => val === true, 'always');
+
+      return g;
+    };
+
+    const result = await mutate(factory, { budget: 100 });
+
+    expect(result.survived.some(m => m.mutation.startsWith('remove-assertion:'))).toBe(false);
+    expect(result.killedMutations.some(m => m.mutation.startsWith('remove-assertion:'))).toBe(false);
   });
 
   it('filters by operator type', async () => {

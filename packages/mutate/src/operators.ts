@@ -70,9 +70,21 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
         apply: (g) => {
           const n = g.getNode(nodeId);
           const original = n?.getValue;
+          const originalCompute = n?.computeFn;
           if (!original) return () => {};
           g.setNodeValue(nodeId, () => constant);
-          return () => g.setNodeValue(nodeId, original);
+          if (n) {
+            n.computeFn = () => constant;
+            n.currentValue = constant;
+            n.hasCurrentValue = true;
+          }
+          return () => {
+            g.setNodeValue(nodeId, original);
+            if (n) {
+              n.computeFn = originalCompute;
+              n.hasCurrentValue = false;
+            }
+          };
         },
       });
     }
@@ -133,14 +145,25 @@ export function generateMutations(graph: CircuitGraph): Mutation[] {
         mutations.push({
           name: `invert-comparison:${nodeId}`,
           description: `Invert boolean derived ${node.name}`,
-          apply: (g) => {
-            const n = g.getNode(nodeId);
-            const original = n?.getValue;
-            if (!original) return () => {};
-            g.setNodeValue(nodeId, () => !original());
-            return () => g.setNodeValue(nodeId, original);
-          },
-        });
+        apply: (g) => {
+          const n = g.getNode(nodeId);
+          const original = n?.getValue;
+          const originalCompute = n?.computeFn;
+          if (!original) return () => {};
+          g.setNodeValue(nodeId, () => !original());
+          if (n) {
+            n.computeFn = () => !original();
+            n.hasCurrentValue = false;
+          }
+          return () => {
+            g.setNodeValue(nodeId, original);
+            if (n) {
+              n.computeFn = originalCompute;
+              n.hasCurrentValue = false;
+            }
+          };
+        },
+      });
       }
     }
   }

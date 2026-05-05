@@ -8,6 +8,15 @@ export interface Violation {
   sequence: Array<{ signal: string; value: any }>;
 }
 
+export interface ScenarioTrace {
+  id: string;
+  kind: 'enumerated' | 'current-state' | 'coverage-completion' | 'adversarial';
+  tick: number;
+  steps: Array<{ signal: string; value: any }>;
+  assertions: string[];
+  violations: string[];
+}
+
 export interface ExploreOptions {
   /** Maximum number of exploration steps. Default: 1000. */
   budget?: number;
@@ -32,6 +41,26 @@ export interface ExploreCoverage {
 
 export interface ExploreResult {
   violations: Violation[];
+  coverage: ExploreCoverage;
+  steps: number;
+  scenarios: ScenarioTrace[];
+  snapshot?: GraphSnapshot;
+}
+
+export interface AutotestAssertionResult {
+  id: string;
+  name: string;
+  kind: string;
+  status: 'passed' | 'failed';
+  partialCoverage: boolean;
+  reason?: string;
+}
+
+export interface AutotestResult {
+  status: 'passed' | 'failed';
+  assertions: AutotestAssertionResult[];
+  violations: Violation[];
+  scenarios: ScenarioTrace[];
   coverage: ExploreCoverage;
   steps: number;
   snapshot?: GraphSnapshot;

@@ -13,11 +13,21 @@ export interface MutateOptions {
   budget?: number;
   /** Which operators to apply: 'all' or a list of operator names. */
   operators?: 'all' | string[];
+  /** Include meta-mutations such as remove-assertion. Default: false. */
+  includeMetaMutations?: boolean;
 }
 
 export interface MutateResult {
   total: number;
   killed: number;
+  killedMutations: Array<{
+    mutation: string;
+    description: string;
+    scenarioId?: string;
+    assertionName?: string;
+  }>;
   survived: Array<{ mutation: string; description: string }>;
+  invalid: Array<{ mutation: string; description: string; error: string }>;
+  equivalent: Array<{ mutation: string; description: string; reason: string }>;
   score: number; // 0-100
 }
