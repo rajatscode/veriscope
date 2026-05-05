@@ -65,6 +65,15 @@ export interface ExploreResult {
   snapshot?: GraphSnapshot;
 }
 
+export interface AutotestProgress {
+  phase: ExploreResult['scenarios'][number]['kind'] | 'setup' | 'complete';
+  steps: number;
+  budget: number;
+  generatedCases: number;
+  hiddenDuplicateCases: number;
+  stoppedByBudget: boolean;
+}
+
 export interface AutotestResult extends ExploreResult {
   status: 'passed' | 'failed';
   assertions: Array<{
@@ -118,9 +127,9 @@ export interface DevtoolsOptions {
   /** CoverageCollector instance. Runtime coverage is shown inside the Autotest tab. */
   coverage?: CoverageCollector;
   /** runAutotest() from @veriscope/test. Enables the Autotest tab. */
-  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
+  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string; onProgress?: (progress: AutotestProgress) => void | Promise<void> }) => Promise<AutotestResult>;
   /** explore() function from @veriscope/test (optional fallback when no autotest runner is provided) */
-  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; onProgress?: (progress: AutotestProgress) => void | Promise<void> }) => Promise<ExploreResult>;
   /** Mutation runner callback, normally backed by @veriscope/mutate. Enables the Mutants tab. */
   mutate?: (options?: { mode?: 'semantic' | 'broad'; onProgress?: (progress: MutateProgress) => void | Promise<void> }) => Promise<MutateResult>;
   /** Initial active tab */

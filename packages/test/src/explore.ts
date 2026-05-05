@@ -3,7 +3,7 @@
 import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport, type GraphEvent, type OperationStatus } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
 import { inferBoundaryValues, parseComputeFn } from './fn-parser.js';
-import type { ExploreOptions, ExploreResult, ScenarioTrace, Violation } from './types.js';
+import type { ExploreOptions, ExploreProgress, ExploreResult, ScenarioTrace, Violation } from './types.js';
 
 type GraphNodeRef = NonNullable<ReturnType<CircuitGraph['getNode']>>;
 
@@ -27,10 +27,22 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   let hiddenDuplicateCases = 0;
   let budgetAttempted = false;
   const seenScenarioKeys = new Set<string>();
+  const emitProgress = async (phase: ExploreProgress['phase']) => {
+    if (!options.onProgress) return;
+    await options.onProgress({
+      phase,
+      steps,
+      budget,
+      generatedCases: scenarios.length,
+      hiddenDuplicateCases,
+      stoppedByBudget: stoppedByBudget || budgetAttempted,
+    });
+  };
 
   graph.enterTestMode();
   coverage.reset();
   graph.enableCoverage();
+  await emitProgress('setup');
   for (const op of graph.getOperations()) {
     const outcomes = op.metadata?.outcomes ?? op.metadata?.outcomeDomain;
     if (Array.isArray(outcomes)) {
@@ -199,6 +211,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           await resolveEventuallyAssertions(graph, assertions, rootNodes, flush);
 
           steps++;
+          await emitProgress('enumerated');
         }
       } else if (boolRoots.length === 0 && nonBoolRoots.length === 0) {
         // No roots found — just check assertion at current state
@@ -228,6 +241,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           }
         }
         steps++;
+        await emitProgress('current-state');
       }
     }
 
@@ -247,6 +261,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       stoppedByBudget = stoppedByBudget || sequenceResult.stoppedByBudget;
       steps += sequenceResult.steps;
       scenarioCounter = sequenceResult.nextScenarioCounter;
+      await emitProgress('sequence');
     }
 
     // 7. Operation outcome exploration — complete declared external operation
@@ -265,6 +280,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       stoppedByBudget = stoppedByBudget || operationResult.stoppedByBudget;
       steps += operationResult.steps;
       scenarioCounter = operationResult.nextScenarioCounter;
+      await emitProgress('operation-outcome');
     }
 
     // 8. Coverage-directed pass — use current coverage gaps to drive missing
@@ -284,6 +300,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       stoppedByBudget = stoppedByBudget || coverageDirected.stoppedByBudget;
       steps += coverageDirected.steps;
       scenarioCounter = coverageDirected.nextScenarioCounter;
+      await emitProgress('coverage-directed');
     }
 
     // 9. Adversarial pass — try to break each assertion
@@ -293,6 +310,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, advViolations.scenarios);
       stoppedByBudget = stoppedByBudget || advViolations.stoppedByBudget;
       steps += advViolations.steps;
+      await emitProgress('adversarial');
     }
 
     // 10. Coverage completion pass — drive untoggled booleans and FSM state transitions
@@ -332,6 +350,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               observations: observationsSince(graph, eventMarker),
             });
             steps++;
+            await emitProgress('coverage-completion');
           }
         }
 
@@ -362,6 +381,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               await flush();
               graph.closeTick();
               steps++;
+              await emitProgress('coverage-completion');
               if (steps >= budget) {
                 hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
                   id: `scenario-${scenarioCounter++}`,
@@ -381,6 +401,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               await flush();
               graph.closeTick();
               steps++;
+              await emitProgress('coverage-completion');
 
               hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
                 id: `scenario-${scenarioCounter++}`,
@@ -401,6 +422,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     stoppedByBudget = stoppedByBudget || budgetAttempted;
     const summarizedCoverage = summarizeCoverage(report);
     const plan = summarizePlan(scenarios, summarizedCoverage, budget, stoppedByBudget, hiddenDuplicateCases);
+    await emitProgress('complete');
     return {
       violations,
       coverage: summarizedCoverage,

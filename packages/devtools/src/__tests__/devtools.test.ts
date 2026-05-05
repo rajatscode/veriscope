@@ -763,6 +763,7 @@ describe('mountDevtools', () => {
 
     buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.textContent).toContain('Autotest run #1 running');
+    expect(host.textContent).toContain('Progress: 0/1000 generated steps');
     expect(host.textContent).toContain('Generating cases from graph/assertion metadata');
 
     await flushPromises();
@@ -783,6 +784,42 @@ describe('mountDevtools', () => {
     resolveSecond?.(autotestResult());
     await flushPromises();
     expect(host.textContent).toContain('Last autotest run: #2 completed');
+
+    handle.dispose();
+  });
+
+  it('renders live autotest progress from the runner callback', async () => {
+    const graph = new CircuitGraph();
+    let resolveRun: ((value: AutotestResult) => void) | undefined;
+    const autotest = vi.fn(async (_graph: CircuitGraph, options?: { onProgress?: (progress: any) => void | Promise<void> }) => {
+      await options?.onProgress?.({
+        phase: 'coverage-directed',
+        steps: 7,
+        budget: 1000,
+        generatedCases: 5,
+        hiddenDuplicateCases: 2,
+        stoppedByBudget: false,
+      });
+      return new Promise<AutotestResult>(resolve => {
+        resolveRun = resolve;
+      });
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'autotest', autotest, coverage });
+
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(host.textContent).toContain('Progress: 7/1000 generated steps');
+    expect(host.textContent).toContain('Phase: coverage-directed');
+    expect(host.textContent).toContain('Generated cases: 5 shown · 2 duplicate cases collapsed');
+
+    resolveRun?.(autotestResult());
+    await flushPromises();
+    expect(host.textContent).toContain('Last autotest run: #1 completed');
 
     handle.dispose();
   });
@@ -830,6 +867,14 @@ describe('mountDevtools', () => {
 
     expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'broad' }));
     expect(host.textContent).toContain('Broad mode includes structural and effect candidates');
+    expect(host.textContent).toContain('Rerun Broad Mutants');
+
+    buttonByText(host, 'Semantic Score').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Run Semantic Mutants');
+    expect(host.textContent).not.toContain('Rerun Semantic Mutants');
+
+    buttonByText(host, 'Broad Sweep').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Rerun Broad Mutants');
 
     handle.dispose();
   });

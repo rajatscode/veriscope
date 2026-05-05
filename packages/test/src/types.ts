@@ -39,11 +39,22 @@ export interface ScenarioTrace {
   observations?: ScenarioObservation[];
 }
 
+export interface ExploreProgress {
+  phase: ScenarioTrace['kind'] | 'setup' | 'complete';
+  steps: number;
+  budget: number;
+  generatedCases: number;
+  hiddenDuplicateCases: number;
+  stoppedByBudget: boolean;
+}
+
 export interface ExploreOptions {
   /** Maximum number of exploration steps. Default: 1000. */
   budget?: number;
   /** Flush function for framework integration (React: () => act(() => {}), Solid: () => {}). */
   flush?: () => void | Promise<void>;
+  /** Progress callback invoked as deterministic generated cases are executed. */
+  onProgress?: (progress: ExploreProgress) => void | Promise<void>;
 }
 
 export interface ExplorePlanSummary {

@@ -84,6 +84,7 @@ export function createMutantsPanel(
   let lastRun: MutationRunStatus | null = null;
   let liveTimer: ReturnType<typeof setInterval> | null = null;
   let mutationMode: MutationMode = 'semantic';
+  let lastResultMode: MutationMode | null = null;
   let skippedCandidatesOpen = true;
   const expandedSkippedReasons = new Set<string>();
 
@@ -144,6 +145,7 @@ export function createMutantsPanel(
         },
       });
       result = nextResult;
+      lastResultMode = mutationMode;
       skippedCandidatesOpen = (nextResult.skipped?.length ?? 0) > 0;
       expandedSkippedReasons.clear();
       lastRun = {
@@ -418,7 +420,8 @@ export function createMutantsPanel(
 
     const runBtn = document.createElement('button');
     const modeVerb = mutationMode === 'semantic' ? 'Semantic Mutants' : 'Broad Mutants';
-    runBtn.textContent = running ? 'Running...' : result ? `Rerun ${modeVerb}` : `Run ${modeVerb}`;
+    const hasResultForSelectedMode = result !== null && lastResultMode === mutationMode;
+    runBtn.textContent = running ? 'Running...' : hasResultForSelectedMode ? `Rerun ${modeVerb}` : `Run ${modeVerb}`;
     runBtn.disabled = running || !options?.mutate;
     runBtn.style.cssText = `
       background:#21262d; border:1px solid #30363d; color:#c9d1d9;

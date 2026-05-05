@@ -1,11 +1,11 @@
 // assertions.ts — Autotest panel: generated scenarios, assertion outcomes, and coverage from explicit runs
 
 import type { CircuitGraph } from '@veriscope/graph';
-import type { AutotestResult, ExploreResult } from './index.js';
+import type { AutotestProgress, AutotestResult, ExploreResult } from './index.js';
 
 interface AssertionsPanelOptions {
-  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
-  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string; onProgress?: (progress: AutotestProgress) => void | Promise<void> }) => Promise<AutotestResult>;
+  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; onProgress?: (progress: AutotestProgress) => void | Promise<void> }) => Promise<ExploreResult>;
 }
 
 interface AutotestRunStatus {
@@ -13,9 +13,15 @@ interface AutotestRunStatus {
   status: 'running' | 'completed' | 'failed';
   mode: 'autotest' | 'explore';
   startedAt: Date;
+  startedAtMs: number;
   finishedAt?: Date;
   durationMs?: number;
+  phase?: AutotestProgress['phase'];
+  steps?: number;
+  budget?: number;
   generatedCases?: number;
+  hiddenDuplicateCases?: number;
+  stoppedByBudget?: boolean;
 }
 
 function isAutotestResult(result: AutotestResult | ExploreResult): result is AutotestResult {
@@ -152,11 +158,27 @@ export function createAssertionsPanel(
   let runNumber = 0;
   let activeRun: AutotestRunStatus | null = null;
   let lastRun: AutotestRunStatus | null = null;
+  let liveTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopLiveTimer() {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+  }
+
+  function startLiveTimer() {
+    stopLiveTimer();
+    liveTimer = setInterval(() => {
+      if (!disposed && activeRun) render();
+    }, 250);
+  }
 
   async function runAutotestFromPanel() {
     if (running || (!options?.autotest && !options?.explore)) return;
 
     const mode = options.autotest ? 'autotest' : 'explore';
+    const budget = 1000;
     const startedAt = new Date();
     const startedAtMs = performance.now();
     runNumber++;
@@ -165,22 +187,47 @@ export function createAssertionsPanel(
       status: 'running',
       mode,
       startedAt,
+      startedAtMs,
+      phase: 'setup',
+      steps: 0,
+      budget,
+      generatedCases: 0,
+      hiddenDuplicateCases: 0,
+      stoppedByBudget: false,
     };
     running = true;
     error = null;
     render();
+    startLiveTimer();
+
+    const onProgress = async (progress: AutotestProgress) => {
+      if (disposed || !activeRun) return;
+      activeRun = {
+        ...activeRun,
+        phase: progress.phase,
+        steps: progress.steps,
+        budget: progress.budget,
+        generatedCases: progress.generatedCases,
+        hiddenDuplicateCases: progress.hiddenDuplicateCases,
+        stoppedByBudget: progress.stoppedByBudget,
+      };
+      render();
+      await waitForPaint();
+    };
 
     try {
       await waitForPaint();
       if (disposed) return;
       const result = options.autotest
         ? await options.autotest(graph, {
-          budget: 1000,
+          budget,
           name: 'devtools-autotest',
+          onProgress,
           flush: async () => { await new Promise(r => setTimeout(r, 0)); },
         })
         : await options.explore!(graph, {
-          budget: 1000,
+          budget,
+          onProgress,
           flush: async () => { await new Promise(r => setTimeout(r, 0)); },
         });
       lastRunResult = result;
@@ -189,9 +236,15 @@ export function createAssertionsPanel(
         status: 'completed',
         mode,
         startedAt,
+        startedAtMs,
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
         generatedCases: result.scenarios.length,
+        steps: result.steps,
+        budget: result.plan?.budget ?? budget,
+        phase: 'complete',
+        hiddenDuplicateCases: result.plan?.hiddenDuplicateCases,
+        stoppedByBudget: result.plan?.stoppedByBudget,
       };
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -200,10 +253,12 @@ export function createAssertionsPanel(
         status: 'failed',
         mode,
         startedAt,
+        startedAtMs,
         finishedAt: new Date(),
         durationMs: performance.now() - startedAtMs,
       };
     } finally {
+      stopLiveTimer();
       activeRun = null;
       running = false;
       render();
@@ -227,9 +282,20 @@ export function createAssertionsPanel(
     `;
 
     if (isRunning) {
+      const total = status.budget ?? 0;
+      const completed = status.steps ?? 0;
+      const pct = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
+      const generated = status.generatedCases ?? 0;
+      const hidden = status.hiddenDuplicateCases ?? 0;
       box.innerHTML = `
         <div style="color:#f8d66d; font-weight:600;">${label} run #${status.number} running</div>
         <div>Started: ${formatClock(status.startedAt)}</div>
+        <div>Elapsed: ${formatDuration(performance.now() - status.startedAtMs)}</div>
+        <div style="margin:6px 0 4px; height:6px; background:#21262d; border-radius:999px; overflow:hidden;">
+          <div style="height:100%; width:${pct.toFixed(1)}%; background:#f8d66d;"></div>
+        </div>
+        <div>Progress: ${completed}/${total || '?'} generated steps · Phase: ${status.phase ?? 'setup'}</div>
+        <div>Generated cases: ${generated}${hidden > 0 ? ` shown · ${hidden} duplicate cases collapsed` : ''}</div>
         <div>Generating cases from graph/assertion metadata, driving the graph, and checking assertions.</div>
         ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
       `;
@@ -239,7 +305,7 @@ export function createAssertionsPanel(
     box.innerHTML = `
       <div style="font-weight:600;">Last ${label.toLowerCase()} run: #${status.number} ${status.status}</div>
       <div>Started: ${formatClock(status.startedAt)} · Finished: ${status.finishedAt ? formatClock(status.finishedAt) : 'n/a'} · Duration: ${formatDuration(status.durationMs)}</div>
-      <div>Generated cases: ${status.generatedCases ?? 'n/a'}</div>
+      <div>Generated cases: ${status.generatedCases ?? 'n/a'} · Steps: ${status.steps ?? 'n/a'}${status.stoppedByBudget ? ' · stopped by budget' : ''}</div>
     `;
     return box;
   }
@@ -469,6 +535,7 @@ export function createAssertionsPanel(
   return {
     dispose() {
       disposed = true;
+      stopLiveTimer();
       container.innerHTML = '';
     },
     refresh() {
