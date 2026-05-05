@@ -152,6 +152,21 @@ describe('CircuitGraph', () => {
     expect(events[1].tick).toBe(1);
   });
 
+  it('flushTick closes changes emitted by the adapter settle callback', async () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.notifyChange(a, 0, 1);
+    await g.flushTick(() => {
+      g.notifyChange(a, 1, 2);
+    });
+
+    expect(g.currentTick).toBe(2);
+    const events = g.getRecentEvents(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(1);
+  });
+
   it('keeps nested openTick calls in the same tick', () => {
     const g = new CircuitGraph();
     g.enterTestMode();
@@ -464,6 +479,7 @@ describe('CircuitGraph', () => {
     const span = g.getOperations()[0];
     expect(span.events.some(e => e.type === 'signal-change' && e.operationId === op)).toBe(true);
     expect(g.currentOperationId()).toBeUndefined();
+    expect(g.getNodeLastSetContext(status)).toBe('async');
   });
 
   it('records operation outcome coverage through graph lifecycle APIs', () => {

@@ -583,17 +583,23 @@ export class CircuitGraph {
 
   withOperation<T>(id: string, fn: () => T): T {
     this.operationStack.push(id);
+    const previousAsyncContext = this._inAsyncContext;
+    this._inAsyncContext = true;
+    const restore = () => {
+      this.operationStack.pop();
+      this._inAsyncContext = previousAsyncContext;
+    };
     try {
       const result = fn();
       if (result && typeof (result as any).then === 'function') {
         return (result as unknown as Promise<any>).finally(() => {
-          this.operationStack.pop();
+          restore();
         }) as T;
       }
-      this.operationStack.pop();
+      restore();
       return result;
     } catch (err) {
-      this.operationStack.pop();
+      restore();
       throw err;
     }
   }
@@ -921,6 +927,8 @@ export class CircuitGraph {
     this.closeTick();
     await Promise.resolve();
     if (settle) await settle();
+    this.closeTick();
+    await Promise.resolve();
   }
 
   exitTestMode(): void {
