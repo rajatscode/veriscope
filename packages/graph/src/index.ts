@@ -1,6 +1,6 @@
 export { CircuitGraph, graph } from './graph.js';
 export { CoverageCollector, coverage } from './coverage.js';
-export { assertAlways, assertNever, assertAfter } from './assertions.js';
+export { assertAlways, assertNever, assertAfter, assertOperationStatus, assertNoStaleOperations } from './assertions.js';
 export type {
   Signal,
   ReadonlySignal,

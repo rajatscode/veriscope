@@ -218,6 +218,12 @@ Required behavior:
 Veriscope should verify UI handling of external operations, not remote server
 correctness.
 
+Current implementation note: operation lifecycle APIs, outcome coverage,
+Autotest-tab operation visibility, and basic operation assertions
+(`assertOperationStatus`, `assertNoStaleOperations`) are implemented. Richer
+request/response ordering assertions and operation-aware failure traces still
+need deeper scenario support.
+
 ## 11. Signal API Parity
 
 The spec's signal shape allows updater functions. Adapters and core types should

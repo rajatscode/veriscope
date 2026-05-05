@@ -4,7 +4,7 @@
 // assertAfter: after an edge, property must hold (immediately, eventually, or within N ticks)
 
 import { graph, CircuitGraph } from './graph.js';
-import type { Signal } from './types.js';
+import type { OperationStatus, Signal } from './types.js';
 
 /**
  * Assert that a property holds at all times.
@@ -163,5 +163,52 @@ export function assertAfter(
     previousValue = newVal;
   });
 
+  return nodeId;
+}
+
+export function assertOperationStatus(
+  operationName: string,
+  allowedStatuses: OperationStatus[],
+  name = `${operationName}-allowed-outcomes`,
+  targetGraph: CircuitGraph = graph,
+): string {
+  const allowed = new Set<OperationStatus>(allowedStatuses);
+  const nodeId = targetGraph.registerNode({
+    name,
+    type: 'assertion',
+    assertionMetadata: {
+      operationDomains: { [operationName]: allowedStatuses },
+      partial: false,
+    },
+  });
+  targetGraph.setAssertionFn(nodeId, () => {
+    return targetGraph
+      .getOperations()
+      .filter(op => op.name === operationName && op.status !== 'pending')
+      .every(op => allowed.has(op.status));
+  }, 'always');
+  return nodeId;
+}
+
+export function assertNoStaleOperations(
+  operationName?: string,
+  name = operationName ? `${operationName}-not-stale` : 'operations-not-stale',
+  targetGraph: CircuitGraph = graph,
+): string {
+  const nodeId = targetGraph.registerNode({
+    name,
+    type: 'assertion',
+    assertionMetadata: {
+      operationDomains: operationName ? { [operationName]: ['resolved', 'rejected', 'aborted', 'timeout', 'stale'] } : undefined,
+      partial: !operationName,
+      reason: operationName ? undefined : 'applies to all operation names',
+    },
+  });
+  targetGraph.setAssertionFn(nodeId, () => {
+    return targetGraph
+      .getOperations()
+      .filter(op => operationName ? op.name === operationName : true)
+      .every(op => op.status !== 'stale');
+  }, 'always');
   return nodeId;
 }

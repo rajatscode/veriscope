@@ -171,6 +171,8 @@ describe('mountDevtools', () => {
     const graph = new CircuitGraph();
     const assertionId = graph.registerNode({ name: 'invariant', type: 'assertion' });
     graph.setAssertionFn(assertionId, () => true, 'always');
+    const operationId = graph.beginOperation('loadUser', { outcomes: ['resolved', 'rejected'] });
+    graph.resolveOperation(operationId, { id: 1 });
     const autotest = vi.fn(async () => autotestResult(assertionId));
 
     const host = document.createElement('div');
@@ -181,6 +183,8 @@ describe('mountDevtools', () => {
     await flushPromises();
 
     expect(autotest).toHaveBeenCalledWith(graph, expect.objectContaining({ name: 'devtools-autotest' }));
+    expect(host.textContent).toContain('Operations (1)');
+    expect(host.textContent).toContain('loadUser');
     expect(host.textContent).toContain('Autotest Results');
     expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
 

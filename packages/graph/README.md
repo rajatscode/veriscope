@@ -356,6 +356,14 @@ assertAfter(
 
 Returns the assertion node ID.
 
+#### `assertOperationStatus(operationName, allowedStatuses, name?, targetGraph?): string`
+
+Registers an operation assertion that fails when any completed operation with the given name finishes with a status outside `allowedStatuses`.
+
+#### `assertNoStaleOperations(operationName?, name?, targetGraph?): string`
+
+Registers an operation assertion that fails when a matching operation is marked `stale`. If `operationName` is omitted, it applies to all operation names and is marked as partial metadata coverage.
+
 ---
 
 ### Types

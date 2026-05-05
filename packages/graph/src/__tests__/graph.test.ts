@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CircuitGraph } from '../graph';
 import { coverage } from '../coverage';
+import { assertNoStaleOperations, assertOperationStatus } from '../assertions';
 
 describe('CircuitGraph', () => {
   it('registers nodes and edges', () => {
@@ -443,6 +444,33 @@ describe('CircuitGraph', () => {
     });
     g.disableCoverage();
     coverage.reset();
+  });
+
+  it('assertOperationStatus fails on disallowed operation outcomes', () => {
+    const g = new CircuitGraph();
+    const assertionId = assertOperationStatus('save', ['resolved'], 'save-resolves', g);
+    const op = g.beginOperation('save');
+    g.rejectOperation(op, new Error('boom'));
+
+    const violations = g.checkAssertions();
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].nodeId).toBe(assertionId);
+    expect(g.getAssertions()[0].metadata?.operationDomains?.save).toEqual(['resolved']);
+    expect(g.getAssertions()[0].metadata?.partial).toBe(false);
+  });
+
+  it('assertNoStaleOperations fails when a tracked operation is marked stale', () => {
+    const g = new CircuitGraph();
+    const assertionId = assertNoStaleOperations('loadUser', 'loadUser-not-stale', g);
+    const first = g.beginOperation('loadUser');
+    const second = g.beginOperation('loadUser');
+    g.markOperationStale(first, second);
+
+    const violations = g.checkAssertions();
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].nodeId).toBe(assertionId);
   });
 
   it('enableCoverage records toggle for boolean signals', () => {

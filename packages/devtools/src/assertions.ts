@@ -86,7 +86,16 @@ export function createAssertionsPanel(
       else if (event.type === 'assertion-passed') { entry.status = 'passed'; entry.passCount++; }
       else if (event.type === 'assertion-failed') { entry.status = 'failed'; entry.failCount++; }
       render();
-    } else if (options?.coverage && (event.type === 'signal-change' || event.type === 'derived-recompute' || event.type === 'operation-resolve' || event.type === 'operation-reject' || event.type === 'operation-abort' || event.type === 'operation-timeout')) {
+    } else if (
+      event.operationId ||
+      event.type === 'operation-begin' ||
+      event.type === 'operation-resolve' ||
+      event.type === 'operation-reject' ||
+      event.type === 'operation-abort' ||
+      event.type === 'operation-timeout' ||
+      event.type === 'operation-stale' ||
+      (options?.coverage && (event.type === 'signal-change' || event.type === 'derived-recompute'))
+    ) {
       scheduleRender();
     }
   }
@@ -174,6 +183,37 @@ export function createAssertionsPanel(
         <div style="color:#8b949e;">Coverage: ${report.summary.percentage.toFixed(1)}% (${report.summary.coveredPoints}/${report.summary.totalPoints}) · Gaps: ${report.gaps.length}</div>
       `;
       container.appendChild(coverageBox);
+    }
+
+    const operations = graph.getOperations();
+    if (operations.length > 0) {
+      const opsBox = document.createElement('div');
+      opsBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
+
+      const opsTitle = document.createElement('div');
+      opsTitle.style.cssText = 'color:#c9d1d9; margin-bottom:6px; font-weight:600;';
+      opsTitle.textContent = `Operations (${operations.length})`;
+      opsBox.appendChild(opsTitle);
+
+      for (const op of operations.slice(-8).reverse()) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-top:1px solid rgba(255,255,255,0.04); color:#8b949e;';
+        const statusColor =
+          op.status === 'resolved' ? '#72f1b8' :
+          op.status === 'pending' ? '#f8d66d' :
+          op.status === 'stale' || op.status === 'timeout' || op.status === 'rejected' ? '#ff5d8f' : '#8b949e';
+
+        const label = document.createElement('span');
+        label.textContent = `${op.name} · ${op.id}`;
+        const detail = document.createElement('span');
+        detail.style.cssText = `color:${statusColor}; white-space:nowrap;`;
+        detail.textContent = `${op.status} · ticks ${op.startedAtTick}${op.completedAtTick === undefined ? '' : `-${op.completedAtTick}`} · ${op.events.length} events`;
+        row.appendChild(label);
+        row.appendChild(detail);
+        opsBox.appendChild(row);
+      }
+
+      container.appendChild(opsBox);
     }
 
     // Autotest/explore results (if available)

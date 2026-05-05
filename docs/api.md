@@ -195,6 +195,31 @@ function assertAfter(
 - `'eventually'` -- must become true at some point; `devWatchdogMs` fires a failure timer
 - `{ withinTicks: N }` -- must become true within `N` ticks of the edge
 
+### `assertOperationStatus(operationName, allowedStatuses, name?, targetGraph?)` (`@veriscope/graph`)
+
+```ts
+function assertOperationStatus(
+  operationName: string,
+  allowedStatuses: OperationStatus[],
+  name?: string,
+  targetGraph?: CircuitGraph,
+): string
+```
+
+Fails when any completed operation with `operationName` finishes outside the allowed statuses. The assertion carries `operationDomains` metadata for exploration and coverage reporting.
+
+### `assertNoStaleOperations(operationName?, name?, targetGraph?)` (`@veriscope/graph`)
+
+```ts
+function assertNoStaleOperations(
+  operationName?: string,
+  name?: string,
+  targetGraph?: CircuitGraph,
+): string
+```
+
+Fails when a matching operation is marked `stale`.
+
 ### `AssertionViolation`
 
 ```ts
