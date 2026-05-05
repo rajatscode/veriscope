@@ -96,7 +96,7 @@ export function createMutantsPanel(
     header.appendChild(title);
 
     const runBtn = document.createElement('button');
-    runBtn.textContent = running ? 'Running...' : 'Run Mutants';
+    runBtn.textContent = running ? 'Running...' : result ? 'Rerun Mutants' : 'Run Mutants';
     runBtn.disabled = running || !options?.mutate;
     runBtn.style.cssText = `
       background:#21262d; border:1px solid #30363d; color:#c9d1d9;
@@ -141,6 +141,11 @@ export function createMutantsPanel(
       <span style="color:#8b949e;">Equivalent: ${result.equivalent?.length ?? 0}</span>
     `;
     container.appendChild(summary);
+
+    const rerunNote = document.createElement('div');
+    rerunNote.style.cssText = 'color:#8b949e; margin-top:6px; font-size:0.7rem;';
+    rerunNote.textContent = 'Mutation testing is rerunnable; rerun replaces these results with a fresh generated mutation run.';
+    container.appendChild(rerunNote);
 
     container.appendChild(renderList('Killed', result.killedMutations, '#72f1b8'));
     container.appendChild(renderList('Survived', result.survived, '#ff5d8f'));

@@ -26,13 +26,16 @@ function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLE
   const item = document.createElement('div');
   item.style.cssText = 'padding:5px 6px; margin-top:4px; background:rgba(255,255,255,0.025); border:1px solid #21262d; border-radius:3px; font-size:0.68rem;';
 
+  const failedAssertions = scenario.violations.filter((name, index, names) => names.indexOf(name) === index);
   const header = document.createElement('div');
   header.style.cssText = 'display:flex; justify-content:space-between; gap:8px; color:#8b949e;';
   const left = document.createElement('span');
   left.textContent = `${scenario.id} · ${scenario.kind}`;
   const right = document.createElement('span');
-  right.style.cssText = scenario.violations.length > 0 ? 'color:#ff5d8f;' : 'color:#72f1b8;';
-  right.textContent = scenario.violations.length > 0 ? `${scenario.violations.length} violations` : 'passed';
+  right.style.cssText = failedAssertions.length > 0 ? 'color:#ff5d8f; text-align:right;' : 'color:#72f1b8;';
+  right.textContent = failedAssertions.length > 0
+    ? `failed: ${failedAssertions.join(', ')}`
+    : 'passed';
   header.appendChild(left);
   header.appendChild(right);
   item.appendChild(header);
@@ -49,6 +52,13 @@ function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLE
     assertionLine.style.cssText = 'color:#666; margin-top:2px; overflow-wrap:anywhere;';
     assertionLine.textContent = `checks ${scenario.assertions.join(', ')}`;
     item.appendChild(assertionLine);
+  }
+
+  if (failedAssertions.length > 0) {
+    const failedLine = document.createElement('div');
+    failedLine.style.cssText = 'color:#ff5d8f; margin-top:2px; overflow-wrap:anywhere;';
+    failedLine.textContent = `failed assertions: ${failedAssertions.join(', ')}`;
+    item.appendChild(failedLine);
   }
 
   return item;
@@ -118,10 +128,14 @@ export function createAssertionsPanel(
       const s = lastRunResult.steps;
       const coverage = lastRunResult.coverage;
       const status = 'status' in lastRunResult ? lastRunResult.status : (v.length > 0 ? 'failed' : 'passed');
+      const generatedBy = isAutotestResult(lastRunResult)
+        ? '@veriscope/test runAutotest generated these cases from the graph and assertion metadata.'
+        : '@veriscope/test explore generated these cases from the graph and assertion metadata.';
       resultBox.innerHTML = `
         <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Autotest Results</div>
         <div style="color:#8b949e;">Status: <span style="color:${status === 'failed' ? '#ff5d8f' : '#72f1b8'}">${status}</span> · Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
         <div style="color:#8b949e; margin-top:4px;">Coverage: ${coverage.overall.percentage.toFixed(1)}% (${coverage.overall.covered}/${coverage.overall.total}) · Gaps: ${coverage.gaps.length}</div>
+        <div style="color:#8b949e; margin-top:4px;">${generatedBy}</div>
       `;
       if (isAutotestResult(lastRunResult)) {
         const partials = lastRunResult.assertions.filter(assertion => assertion.partialCoverage);

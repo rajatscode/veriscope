@@ -325,6 +325,7 @@ describe('mountDevtools', () => {
     expect(autotest).toHaveBeenCalledWith(graph, expect.objectContaining({ name: 'devtools-autotest' }));
     expect(host.textContent).toContain('Autotest Results');
     expect(host.textContent).toContain('Coverage: 100.0% (2/2)');
+    expect(host.textContent).toContain('@veriscope/test runAutotest generated these cases from the graph and assertion metadata.');
     expect(host.textContent).toContain('Assertion Results (1 passed, 0 failed)');
     expect(host.textContent).toContain('Generated Cases (1 passed, 0 failed)');
     expect(host.textContent).toContain('Passing Cases (1)');
@@ -368,6 +369,34 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('explains runtime coverage and shows concrete missing points', () => {
+    const graph = new CircuitGraph();
+    graph.enableCoverage();
+    let ready = false;
+    const readyId = graph.registerNode({ name: 'player.ready', type: 'signal' });
+    graph.setNodeValue(readyId, () => ready);
+    graph.setNodeSetter(readyId, value => {
+      ready = value;
+    });
+    graph.driveNodeValue(readyId, true);
+    const assertionId = graph.registerNode({ name: 'ready-visible', type: 'assertion' });
+    graph.setAssertionFn(assertionId, () => ready, 'always');
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'live-assertions', coverage });
+
+    expect(host.textContent).toContain('Runtime Coverage (live graph activity)');
+    expect(host.textContent).toContain('Counts observed boolean signal values');
+    expect(host.textContent).toContain('not assertion, line, branch, or autotest coverage');
+    expect(host.textContent).toContain('Overall: 1/2 (50.0%)');
+    expect(host.textContent).toContain('Toggles: 1/2 (50.0%)');
+    expect(host.textContent).toContain('Missing toggle: player.ready=false');
+
+    graph.disableCoverage();
+    handle.dispose();
+  });
+
   it('renders passing and failing autotest assertions and generated cases separately', async () => {
     const graph = new CircuitGraph();
     const passId = graph.registerNode({ name: 'passes', type: 'assertion' });
@@ -379,6 +408,7 @@ describe('mountDevtools', () => {
       assertions: [
         { id: 'factory-pass', name: 'passes', kind: 'always', status: 'passed', partialCoverage: false, exercised: true, scenarioCount: 1, passScenarioCount: 1, failScenarioCount: 0 },
         { id: 'factory-fail', name: 'fails', kind: 'after', status: 'failed', partialCoverage: true, reason: 'expected test failure', exercised: true, scenarioCount: 1, passScenarioCount: 0, failScenarioCount: 1 },
+        { id: 'factory-fail-late', name: 'fails-late', kind: 'always', status: 'failed', partialCoverage: false, exercised: true, scenarioCount: 1, passScenarioCount: 0, failScenarioCount: 1 },
       ],
       violations: [{
         assertionName: 'fails',
@@ -388,7 +418,7 @@ describe('mountDevtools', () => {
       }],
       scenarios: [
         { id: 'case-pass', kind: 'enumerated', tick: 1, steps: [{ signal: 'mode', value: 'ok' }], assertions: ['passes'], violations: [] },
-        { id: 'case-fail', kind: 'enumerated', tick: 2, steps: [{ signal: 'mode', value: 'bad' }], assertions: ['fails'], violations: ['fails'] },
+        { id: 'case-fail', kind: 'enumerated', tick: 2, steps: [{ signal: 'mode', value: 'bad' }], assertions: ['fails', 'fails-late'], violations: ['fails', 'fails-late'] },
       ],
       coverage: {
         toggle: metric(1, 2),
@@ -408,7 +438,7 @@ describe('mountDevtools', () => {
     buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
 
-    expect(host.textContent).toContain('Assertion Results (1 passed, 1 failed)');
+    expect(host.textContent).toContain('Assertion Results (1 passed, 2 failed)');
     expect(host.textContent).toContain('passes');
     expect(host.textContent).toContain('passed');
     expect(host.textContent).toContain('fails');
@@ -419,6 +449,8 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('case-pass');
     expect(host.textContent).toContain('Failing Cases (1)');
     expect(host.textContent).toContain('case-fail');
+    expect(host.textContent).toContain('failed: fails, fails-late');
+    expect(host.textContent).toContain('failed assertions: fails, fails-late');
 
     handle.dispose();
   });
@@ -436,6 +468,8 @@ describe('mountDevtools', () => {
 
     expect(mutate).toHaveBeenCalledOnce();
     expect(host.textContent).toContain('Score: 50.0%');
+    expect(host.textContent).toContain('Rerun Mutants');
+    expect(host.textContent).toContain('Mutation testing is rerunnable');
     expect(host.textContent).toContain('negate:canSubmit');
     expect(host.textContent).toContain('swap-edge:a:b');
 

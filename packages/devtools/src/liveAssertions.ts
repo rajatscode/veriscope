@@ -1,4 +1,4 @@
-import type { CircuitGraph, CoverageCollector, GraphEvent } from '@veriscope/graph';
+import type { CircuitGraph, CoverageCollector, CoverageGap, CoverageReport, GraphEvent } from '@veriscope/graph';
 
 interface AssertionEntry {
   nodeId: string;
@@ -12,6 +12,86 @@ interface AssertionEntry {
 
 interface LiveAssertionsPanelOptions {
   coverage?: CoverageCollector;
+}
+
+function coverageMetric(covered: number, total: number): string {
+  const pct = total > 0 ? (covered / total) * 100 : 0;
+  return `${covered}/${total} (${pct.toFixed(1)}%)`;
+}
+
+function toggleCovered(report: CoverageReport): number {
+  return report.toggle.reduce((sum, entry) => sum + (entry.seenTrue ? 1 : 0) + (entry.seenFalse ? 1 : 0), 0);
+}
+
+function crossCovered(report: CoverageReport): number {
+  return report.cross.reduce((sum, entry) => sum + entry.observed.size, 0);
+}
+
+function crossTotal(report: CoverageReport): number {
+  return report.cross.reduce((sum, entry) => sum + entry.total, 0);
+}
+
+function operationCovered(report: CoverageReport): number {
+  return report.operations.reduce(
+    (sum, entry) => sum + [...entry.declaredOutcomes].filter(outcome => entry.observedOutcomes.has(outcome)).length,
+    0,
+  );
+}
+
+function operationTotal(report: CoverageReport): number {
+  return report.operations.reduce((sum, entry) => sum + entry.declaredOutcomes.size, 0);
+}
+
+function formatGap(graph: CircuitGraph, gap: CoverageGap): string {
+  const label = graph.getNode(gap.id)?.name ?? gap.id;
+  if (gap.kind === 'toggle') return `Missing toggle: ${label}=${gap.missing.join(' or ')}`;
+  if (gap.kind === 'operation') return `Missing operation outcome: ${label} -> ${gap.missing.join(', ')}`;
+  if (gap.kind === 'cross') return `Missing cross combination: ${label} -> ${gap.missing.slice(0, 6).join(' | ')}${gap.missing.length > 6 ? ' ...' : ''}`;
+  if (gap.kind === 'transition') return `Missing transition: ${label} -> ${gap.missing.join(', ')}`;
+  return `Missing ${gap.kind}: ${label} -> ${gap.missing.join(', ')}`;
+}
+
+function renderRuntimeCoverage(graph: CircuitGraph, report: CoverageReport): HTMLElement {
+  const coverageBox = document.createElement('div');
+  coverageBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'color:#c9d1d9; margin-bottom:4px; font-weight:600;';
+  title.textContent = 'Runtime Coverage (live graph activity)';
+  coverageBox.appendChild(title);
+
+  const explanation = document.createElement('div');
+  explanation.style.cssText = 'color:#8b949e; margin-bottom:5px; line-height:1.35;';
+  explanation.textContent = 'Counts observed boolean signal values, declared operation outcomes, and registered cross-coverage combinations while the app runs. This is not assertion, line, branch, or autotest coverage.';
+  coverageBox.appendChild(explanation);
+
+  const toggleTotal = report.toggle.length * 2;
+  const crossPoints = crossTotal(report);
+  const opTotal = operationTotal(report);
+  const summary = document.createElement('div');
+  summary.style.cssText = 'color:#8b949e;';
+  summary.textContent = `Overall: ${coverageMetric(report.summary.coveredPoints, report.summary.totalPoints)} · Toggles: ${coverageMetric(toggleCovered(report), toggleTotal)} · Cross: ${coverageMetric(crossCovered(report), crossPoints)} · Operations: ${coverageMetric(operationCovered(report), opTotal)} · Gaps: ${report.gaps.length}`;
+  coverageBox.appendChild(summary);
+
+  if (report.gaps.length > 0) {
+    const gapList = document.createElement('div');
+    gapList.style.cssText = 'margin-top:6px; display:flex; flex-direction:column; gap:3px;';
+    for (const gap of report.gaps.slice(0, 8)) {
+      const item = document.createElement('div');
+      item.style.cssText = 'color:#f8d66d; overflow-wrap:anywhere;';
+      item.textContent = formatGap(graph, gap);
+      gapList.appendChild(item);
+    }
+    if (report.gaps.length > 8) {
+      const more = document.createElement('div');
+      more.style.cssText = 'color:#666;';
+      more.textContent = `${report.gaps.length - 8} additional coverage gaps hidden.`;
+      gapList.appendChild(more);
+    }
+    coverageBox.appendChild(gapList);
+  }
+
+  return coverageBox;
 }
 
 export function createLiveAssertionsPanel(
@@ -140,13 +220,7 @@ export function createLiveAssertionsPanel(
 
     if (options?.coverage) {
       const report = options.coverage.getReport();
-      const coverageBox = document.createElement('div');
-      coverageBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
-      coverageBox.innerHTML = `
-        <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Runtime Coverage</div>
-        <div style="color:#8b949e;">Coverage: ${report.summary.percentage.toFixed(1)}% (${report.summary.coveredPoints}/${report.summary.totalPoints}) · Gaps: ${report.gaps.length}</div>
-      `;
-      container.appendChild(coverageBox);
+      container.appendChild(renderRuntimeCoverage(graph, report));
     }
 
     const operations = graph.getOperations();
