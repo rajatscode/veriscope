@@ -7,6 +7,7 @@ import { mountDevtools } from '../index';
 import type { AutotestResult, MutateResult } from '../index';
 
 const canvasText: string[] = [];
+const canvasOps: Array<{ op: string; args: unknown[] }> = [];
 
 function metric(covered: number, total: number) {
   return {
@@ -81,7 +82,13 @@ function buttonByText(host: HTMLElement, text: string): HTMLButtonElement {
 beforeEach(() => {
   document.body.innerHTML = '';
   canvasText.length = 0;
+  canvasOps.length = 0;
   coverage.reset();
+
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get() { return 800; },
+  });
 
   const storage = new Map<string, string>();
   const localStorageStub: Storage = {
@@ -105,6 +112,12 @@ beforeEach(() => {
     {
       fillText: vi.fn((text: unknown) => {
         canvasText.push(String(text));
+      }),
+      moveTo: vi.fn((...args: unknown[]) => {
+        canvasOps.push({ op: 'moveTo', args });
+      }),
+      lineTo: vi.fn((...args: unknown[]) => {
+        canvasOps.push({ op: 'lineTo', args });
       }),
       measureText: vi.fn((text: string) => ({ width: text.length * 8 })),
     },
@@ -246,6 +259,53 @@ describe('mountDevtools', () => {
     const updatedName = [...host.querySelectorAll('span')].find(el => el.textContent === 'ready');
     expect(updatedName!.parentElement!.style.opacity).toBe('0.35');
 
+    handle.dispose();
+  });
+
+  it('renders sparse numeric waveforms as held steps capped at the last graph event', () => {
+    let now = 1000;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const graph = new CircuitGraph();
+    let stackHeight = 0;
+    let clock = false;
+    const stackId = graph.registerNode({ name: 'p1.stackHeight', type: 'signal' });
+    graph.setNodeValue(stackId, () => stackHeight);
+    graph.setNodeSetter(stackId, value => {
+      stackHeight = value;
+    });
+    const clockId = graph.registerNode({ name: 'arena.tickPulse', type: 'signal' });
+    graph.setNodeValue(clockId, () => clock);
+    graph.setNodeSetter(clockId, value => {
+      clock = value;
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'waveform' });
+
+    const clockName = [...host.querySelectorAll('span')].find(el => el.textContent === 'tickPulse');
+    expect(clockName).toBeDefined();
+    clockName!.parentElement!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    canvasOps.length = 0;
+    now = 1100;
+    graph.driveNodeValue(stackId, 4);
+    now = 1200;
+    graph.driveNodeValue(clockId, true);
+    handle.refresh();
+
+    const plotLines = canvasOps
+      .filter(op => op.op === 'lineTo')
+      .map(op => ({ x: Number(op.args[0]), y: Number(op.args[1]) }))
+      .filter(point => point.x >= 120 && point.y >= 0 && point.y <= 50);
+
+    expect(plotLines.some((point, index) => {
+      const previous = plotLines[index - 1];
+      return previous && point.x > previous.x && Object.is(point.y, previous.y);
+    })).toBe(true);
+    expect(Math.max(...plotLines.map(point => point.x))).toBeLessThan(300);
+
+    nowSpy.mockRestore();
     handle.dispose();
   });
 

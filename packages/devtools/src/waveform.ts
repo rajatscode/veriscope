@@ -1,7 +1,7 @@
 // waveform.ts — Canvas waveform viewer with hierarchy, markers, search, keyboard shortcuts
 // Extracted from Comb's waveform module, adapted for standalone @veriscope/graph use
 
-import type { CircuitGraph } from '@veriscope/graph';
+import type { CircuitGraph, WaveformPoint } from '@veriscope/graph';
 
 // --- Types ---
 
@@ -378,7 +378,92 @@ function searchWaveform(
 
 // --- Renderer ---
 
-type WaveformData = Map<string, Array<{ t: number; v: any }>>;
+type WaveformData = Map<string, WaveformPoint[]>;
+
+interface HeldSpan {
+  start: number;
+  end: number;
+  value: any;
+}
+
+function dataEndTime(data: WaveformData): number {
+  let max = -Infinity;
+  for (const buf of data.values()) {
+    for (const point of buf) {
+      if (point.t > max) max = point.t;
+    }
+  }
+  return max;
+}
+
+function xForTime(t: number, viewStart: number, tRange: number, chartW: number): number {
+  return LABEL_W + ((t - viewStart) / tRange) * chartW;
+}
+
+function buildHeldSpans(buf: WaveformPoint[], viewStart: number, holdEnd: number): HeldSpan[] {
+  if (buf.length === 0 || holdEnd <= viewStart) return [];
+
+  let currentIndex = -1;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i].t <= viewStart) currentIndex = i;
+    else break;
+  }
+
+  let cursor = viewStart;
+  let currentValue: any;
+  let nextIndex: number;
+
+  if (currentIndex >= 0) {
+    if (buf[currentIndex].lifecycle === 'ended') return [];
+    currentValue = buf[currentIndex].v;
+    nextIndex = currentIndex + 1;
+  } else {
+    const first = buf[0];
+    if (!first || first.t >= holdEnd || first.lifecycle === 'ended') return [];
+    cursor = Math.max(first.t, viewStart);
+    currentValue = first.v;
+    nextIndex = 1;
+  }
+
+  const spans: HeldSpan[] = [];
+  for (let i = nextIndex; i < buf.length && buf[i].t <= holdEnd; i++) {
+    const point = buf[i];
+    if (point.t > cursor) {
+      spans.push({ start: cursor, end: point.t, value: currentValue });
+    }
+    cursor = point.t;
+    if (point.lifecycle === 'ended') return spans;
+    currentValue = point.v;
+  }
+
+  if (holdEnd > cursor) {
+    spans.push({ start: cursor, end: holdEnd, value: currentValue });
+  }
+
+  return spans;
+}
+
+function drawHeldStepPath(
+  ctx: CanvasRenderingContext2D,
+  spans: HeldSpan[],
+  yForValue: (value: any) => number,
+  viewStart: number,
+  tRange: number,
+  chartW: number,
+): void {
+  if (spans.length === 0) return;
+  ctx.beginPath();
+  ctx.moveTo(xForTime(spans[0].start, viewStart, tRange, chartW), yForValue(spans[0].value));
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i];
+    const y = yForValue(span.value);
+    const xEnd = xForTime(span.end, viewStart, tRange, chartW);
+    ctx.lineTo(xEnd, y);
+    const next = spans[i + 1];
+    if (next) ctx.lineTo(xEnd, yForValue(next.value));
+  }
+  ctx.stroke();
+}
 
 function drawWaveforms(
   ctx: CanvasRenderingContext2D,
@@ -386,6 +471,7 @@ function drawWaveforms(
   data: WaveformData,
   viewStart: number, viewEnd: number,
   width: number, cursorX: number,
+  dataEnd: number,
 ): { tooltipLines: string[] } {
   const visible = signals.filter(s => s.visible);
   const height = Math.max(visible.length * ROW_H, ROW_H);
@@ -438,17 +524,18 @@ function drawWaveforms(
     const isBoolean = typeof buf[0].v === 'boolean';
     const padY = 8;
     const plotH = ROW_H - padY * 2;
+    const holdEnd = Math.min(viewEnd, dataEnd);
 
     if (sig.type === 'assertion') {
       drawAssertionOverlay(ctx, buf, y0, padY, plotH, viewStart, tRange, chartW);
     } else if (isBoolean) {
-      drawBooleanSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, tRange, chartW, width);
+      drawBooleanSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, holdEnd, tRange, chartW, width);
     } else if (sig.type === 'enum') {
-      drawEnumSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, tRange, chartW, width);
+      drawEnumSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, holdEnd, tRange, chartW, width);
     } else if (sig.renderMode === 'digital') {
-      drawDigitalSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, viewEnd, tRange, chartW);
+      drawDigitalSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, holdEnd, tRange, chartW);
     } else {
-      drawAnalogSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, viewEnd, tRange, chartW);
+      drawAnalogSignal(ctx, buf, y0, padY, plotH, sig.color, viewStart, holdEnd, tRange, chartW);
     }
 
     // Tooltip value at cursor
@@ -480,9 +567,9 @@ function drawWaveforms(
 
 function drawBooleanSignal(
   ctx: CanvasRenderingContext2D,
-  buf: Array<{ t: number; v: any }>,
+  buf: WaveformPoint[],
   y0: number, padY: number, plotH: number,
-  color: string, viewStart: number, tRange: number, chartW: number, width: number,
+  color: string, viewStart: number, holdEnd: number, tRange: number, chartW: number, width: number,
 ): void {
   // Draw step waveform: high (true) at top, low (false) at bottom
   const highY = y0 + padY;
@@ -490,33 +577,16 @@ function drawBooleanSignal(
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < buf.length; i++) {
-    const x = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
-    const y = buf[i].v ? highY : lowY;
-    if (!started) { ctx.moveTo(x, y); started = true; }
-    else {
-      // Step: horizontal to previous Y, then vertical to new Y
-      ctx.lineTo(x, buf[i - 1].v ? highY : lowY);
-      ctx.lineTo(x, y);
-    }
-  }
-  // Extend to the right edge
-  if (started && buf.length > 0) {
-    ctx.lineTo(LABEL_W + chartW, buf[buf.length - 1].v ? highY : lowY);
-  }
-  ctx.stroke();
+  const spans = buildHeldSpans(buf, viewStart, holdEnd);
+  drawHeldStepPath(ctx, spans, value => value ? highY : lowY, viewStart, tRange, chartW);
 
   // Fill true regions with translucent color
   ctx.fillStyle = color;
   ctx.globalAlpha = 0.15;
-  for (let i = 0; i < buf.length; i++) {
-    if (!buf[i].v) continue;
-    const x1 = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
-    const x2 = i + 1 < buf.length
-      ? LABEL_W + ((buf[i + 1].t - viewStart) / tRange) * chartW
-      : LABEL_W + chartW;
+  for (const span of spans) {
+    if (!span.value) continue;
+    const x1 = xForTime(span.start, viewStart, tRange, chartW);
+    const x2 = xForTime(span.end, viewStart, tRange, chartW);
     if (x2 < LABEL_W || x1 > width) continue;
     ctx.fillRect(Math.max(x1, LABEL_W), highY, Math.max(x2 - Math.max(x1, LABEL_W), 2), plotH);
   }
@@ -533,16 +603,16 @@ function drawBooleanSignal(
 
 function drawEnumSignal(
   ctx: CanvasRenderingContext2D,
-  buf: Array<{ t: number; v: any }>,
+  buf: WaveformPoint[],
   y0: number, padY: number, plotH: number,
-  color: string, viewStart: number, tRange: number, chartW: number, width: number,
+  color: string, viewStart: number, holdEnd: number, tRange: number, chartW: number, width: number,
 ): void {
+  const spans = buildHeldSpans(buf, viewStart, holdEnd);
   // Draw colored blocks for each value span with text labels
-  for (let i = 0; i < buf.length; i++) {
-    const x1 = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
-    const x2 = i + 1 < buf.length
-      ? LABEL_W + ((buf[i + 1].t - viewStart) / tRange) * chartW
-      : LABEL_W + chartW;
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i];
+    const x1 = xForTime(span.start, viewStart, tRange, chartW);
+    const x2 = xForTime(span.end, viewStart, tRange, chartW);
     if (x2 < LABEL_W || x1 > width) continue;
 
     const clampX1 = Math.max(x1, LABEL_W);
@@ -574,7 +644,7 @@ function drawEnumSignal(
 
     // Text label (only if block is wide enough)
     if (blockW > 20) {
-      const label = String(buf[i].v ?? 'null');
+      const label = String(span.value ?? 'null');
       const displayLabel = label.length > 12 ? label.slice(0, 11) + '\u2026' : label;
       ctx.fillStyle = color;
       ctx.font = '9px "SF Mono", "Fira Code", monospace';
@@ -591,14 +661,14 @@ function drawEnumSignal(
 
 function drawAnalogSignal(
   ctx: CanvasRenderingContext2D,
-  buf: Array<{ t: number; v: any }>,
+  buf: WaveformPoint[],
   y0: number, padY: number, plotH: number,
-  color: string, viewStart: number, viewEnd: number, tRange: number, chartW: number,
+  color: string, viewStart: number, holdEnd: number, tRange: number, chartW: number,
 ): void {
+  const spans = buildHeldSpans(buf, viewStart, holdEnd);
   let vMin = Infinity, vMax = -Infinity;
-  for (const pt of buf) {
-    if (pt.t < viewStart || pt.t > viewEnd) continue;
-    const v = Number(pt.v);
+  for (const span of spans) {
+    const v = Number(span.value);
     if (v < vMin) vMin = v;
     if (v > vMax) vMax = v;
   }
@@ -609,16 +679,14 @@ function drawAnalogSignal(
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < buf.length; i++) {
-    const x = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
-    const v = Number(buf[i].v);
-    const y = y0 + padY + plotH - ((v - vMin) / (vMax - vMin)) * plotH;
-    if (!started) { ctx.moveTo(x, y); started = true; }
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
+  drawHeldStepPath(
+    ctx,
+    spans,
+    value => y0 + padY + plotH - ((Number(value) - vMin) / (vMax - vMin)) * plotH,
+    viewStart,
+    tRange,
+    chartW,
+  );
 
   ctx.fillStyle = 'rgba(154,168,189,0.4)';
   ctx.font = '9px system-ui';
@@ -630,14 +698,14 @@ function drawAnalogSignal(
 
 function drawDigitalSignal(
   ctx: CanvasRenderingContext2D,
-  buf: Array<{ t: number; v: any }>,
+  buf: WaveformPoint[],
   y0: number, padY: number, plotH: number,
-  color: string, viewStart: number, viewEnd: number, tRange: number, chartW: number,
+  color: string, viewStart: number, holdEnd: number, tRange: number, chartW: number,
 ): void {
+  const spans = buildHeldSpans(buf, viewStart, holdEnd);
   let vMin = Infinity, vMax = -Infinity;
-  for (const pt of buf) {
-    if (pt.t < viewStart || pt.t > viewEnd) continue;
-    const v = Number(pt.v);
+  for (const span of spans) {
+    const v = Number(span.value);
     if (v < vMin) vMin = v;
     if (v > vMax) vMax = v;
   }
@@ -648,19 +716,14 @@ function drawDigitalSignal(
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  let started = false;
-  let prevY = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const x = LABEL_W + ((buf[i].t - viewStart) / tRange) * chartW;
-    const v = Number(buf[i].v);
-    const y = y0 + padY + plotH - ((v - vMin) / (vMax - vMin)) * plotH;
-    if (!started) { ctx.moveTo(x, y); started = true; }
-    else { ctx.lineTo(x, prevY); ctx.lineTo(x, y); }
-    prevY = y;
-  }
-  if (started) ctx.lineTo(LABEL_W + chartW, prevY);
-  ctx.stroke();
+  drawHeldStepPath(
+    ctx,
+    spans,
+    value => y0 + padY + plotH - ((Number(value) - vMin) / (vMax - vMin)) * plotH,
+    viewStart,
+    tRange,
+    chartW,
+  );
 
   ctx.fillStyle = 'rgba(154,168,189,0.4)';
   ctx.font = '9px system-ui';
@@ -981,6 +1044,7 @@ export function createWaveformPanel(
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const data = graph.getWaveformData();
+    const dataEnd = dataEndTime(data);
     const chartW = w - LABEL_W;
 
     if (!viewInitialized || !userInteracted) {
@@ -996,6 +1060,7 @@ export function createWaveformPanel(
           if (buf[0].t > tMax) tMax = buf[0].t;
         }
       }
+      if (dataEnd !== -Infinity && dataEnd > tMax) tMax = dataEnd;
       if (tMax === -Infinity) { tMax = 5000; tFirstChange = 0; }
       if (tFirstChange === Infinity) tFirstChange = tMax - 5000;
       // Show from slightly before first change to slightly after last, min 5s window
@@ -1007,7 +1072,16 @@ export function createWaveformPanel(
       viewInitialized = true;
     }
 
-    const { tooltipLines } = drawWaveforms(ctx, visible, data, viewStart, viewEnd, w, cursorX);
+    const { tooltipLines } = drawWaveforms(
+      ctx,
+      visible,
+      data,
+      viewStart,
+      viewEnd,
+      w,
+      cursorX,
+      dataEnd === -Infinity ? viewEnd : dataEnd,
+    );
     markers.drawMarkers(ctx, viewStart, viewEnd, chartW, h);
 
     // Search match highlights
