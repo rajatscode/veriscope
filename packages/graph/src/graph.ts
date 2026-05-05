@@ -526,9 +526,17 @@ export class CircuitGraph {
   withOperation<T>(id: string, fn: () => T): T {
     this.operationStack.push(id);
     try {
-      return fn();
-    } finally {
+      const result = fn();
+      if (result && typeof (result as any).then === 'function') {
+        return (result as unknown as Promise<any>).finally(() => {
+          this.operationStack.pop();
+        }) as T;
+      }
       this.operationStack.pop();
+      return result;
+    } catch (err) {
+      this.operationStack.pop();
+      throw err;
     }
   }
 

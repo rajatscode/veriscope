@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CircuitGraph } from '../graph';
+import { coverage } from '../coverage';
 
 describe('CircuitGraph', () => {
   it('registers nodes and edges', () => {
@@ -355,6 +356,49 @@ describe('CircuitGraph', () => {
     expect(span.status).toBe('resolved');
     expect(span.events.some(e => e.type === 'signal-change' && e.operationId === op)).toBe(true);
     expect(g.snapshot().operations?.[0].events.some(e => e.operationId === op)).toBe(true);
+  });
+
+  it('keeps async response-side graph events linked to their operation', async () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+    const status = g.registerNode({ name: 'status', type: 'signal' });
+    let statusValue = 'idle';
+    g.setNodeValue(status, () => statusValue);
+    g.setNodeSetter(status, (next: string) => {
+      statusValue = next;
+    });
+
+    const op = g.beginOperation('loadUser', { outcomes: ['resolved', 'rejected'] });
+    g.resolveOperation(op, { id: 1 });
+
+    await g.withOperation(op, async () => {
+      await Promise.resolve();
+      g.driveNodeValue(status, 'ready');
+    });
+
+    const span = g.getOperations()[0];
+    expect(span.events.some(e => e.type === 'signal-change' && e.operationId === op)).toBe(true);
+    expect(g.currentOperationId()).toBeUndefined();
+  });
+
+  it('records operation outcome coverage through graph lifecycle APIs', () => {
+    const g = new CircuitGraph();
+    coverage.reset();
+    g.enableCoverage();
+
+    const op = g.beginOperation('save', { outcomes: ['resolved', 'rejected', 'timeout'] });
+    g.resolveOperation(op, { ok: true });
+
+    const report = coverage.getReport();
+    expect(report.operations[0].operationName).toBe('save');
+    expect(report.operations[0].observedOutcomes.get('resolved')).toBe(1);
+    expect(report.gaps).toContainEqual({
+      kind: 'operation',
+      id: 'save',
+      missing: ['rejected', 'timeout'],
+    });
+    g.disableCoverage();
+    coverage.reset();
   });
 
   it('enableCoverage records toggle for boolean signals', () => {

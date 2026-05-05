@@ -226,6 +226,25 @@ describe('explore', () => {
     expect(result.snapshot?.captureContext?.tool).toBe('@veriscope/test/explore');
   });
 
+  it('includes tracked operation outcome coverage in exploration results', async () => {
+    const g = new CircuitGraph();
+    const op = g.beginOperation('submit', { outcomes: ['resolved', 'rejected', 'timeout'] });
+    g.resolveOperation(op, { ok: true });
+
+    const assertId = g.registerNode({ name: 'operation-observed', type: 'assertion' });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 2 });
+
+    expect(result.coverage.operations.total).toBe(3);
+    expect(result.coverage.operations.covered).toBe(1);
+    expect(result.coverage.gaps).toContainEqual({
+      kind: 'operation',
+      id: 'submit',
+      missing: ['rejected', 'timeout'],
+    });
+  });
+
   it('reports no violations when assertions hold', async () => {
     const g = new CircuitGraph();
     let aVal = false;

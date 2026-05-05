@@ -25,6 +25,15 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   graph.enterTestMode();
   coverage.reset();
   graph.enableCoverage();
+  for (const op of graph.getOperations()) {
+    const outcomes = op.metadata?.outcomes ?? op.metadata?.outcomeDomain;
+    if (Array.isArray(outcomes)) {
+      coverage.declareOperationOutcomes(op.name, outcomes.map(String));
+    }
+    if (op.status !== 'pending') {
+      coverage.recordOperationOutcome(op.name, op.status);
+    }
+  }
 
   // Save original signal values so we can restore after exploration
   const signalNodes = graph.getNodes().filter(n => n.type === 'signal' && n.getValue);
