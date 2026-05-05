@@ -185,6 +185,116 @@ describe('explore', () => {
     expect(result.violations.some(v => v.assertionName === 'b-never-false')).toBe(true);
   });
 
+  it('infers boundary values from assertion comparisons', async () => {
+    const g = new CircuitGraph();
+    let score = 50;
+    const scoreId = g.registerNode({ name: 'score', type: 'signal' });
+    g.setNodeValue(scoreId, () => score);
+    g.setNodeSetter(scoreId, (v: number) => {
+      score = v;
+    });
+
+    const assertId = g.registerNode({ name: 'score-non-negative', type: 'assertion', deps: [scoreId] });
+    g.setAssertionFn(assertId, () => score >= 0, 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    const violation = result.violations.find(v => v.assertionName === 'score-non-negative');
+    expect(violation).toBeDefined();
+    expect(violation!.signalValues.score).toBeLessThan(0);
+  });
+
+  it('infers boundary values through derived compute functions', async () => {
+    const g = new CircuitGraph();
+    let score = 50;
+    const scoreId = g.registerNode({ name: 'score', type: 'signal' });
+    g.setNodeValue(scoreId, () => score);
+    g.setNodeSetter(scoreId, (v: number) => {
+      score = v;
+    });
+
+    const validId = g.registerNode({
+      name: 'scoreValid',
+      type: 'derived',
+      deps: [scoreId],
+      computeFn: () => score >= 0,
+    });
+    const assertId = g.registerNode({ name: 'derived-score-valid', type: 'assertion', deps: [validId] });
+    g.setAssertionFn(assertId, () => g.getNode(validId)?.getValue?.() === true, 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    expect(result.violations.some(v =>
+      v.assertionName === 'derived-score-valid'
+      && v.signalValues.score < 0,
+    )).toBe(true);
+  });
+
+  it('constrains inferred boundary values to declared reachable domains', async () => {
+    const g = new CircuitGraph();
+    let attackBank = 0;
+    const bankId = g.registerNode({ name: 'attackBank', type: 'signal' });
+    g.setNodeValue(bankId, () => attackBank);
+    g.setNodeSetter(bankId, (v: number) => {
+      attackBank = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'attack-bank-nonnegative',
+      type: 'assertion',
+      deps: [bankId],
+      assertionMetadata: {
+        domains: { [bankId]: [0, 1, 2, 4] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => attackBank >= 0, 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    expect(result.violations).toHaveLength(0);
+    expect(result.scenarios.every(scenario =>
+      scenario.steps.every(step => step.signal !== 'attackBank' || step.value >= 0),
+    )).toBe(true);
+  });
+
+  it('projects derived boundary checks onto reachable upstream roots', async () => {
+    const g = new CircuitGraph();
+    let input = 2;
+    const inputId = g.registerNode({ name: 'input', type: 'signal' });
+    g.setNodeValue(inputId, () => input);
+    g.setNodeSetter(inputId, (v: number) => {
+      input = v;
+    });
+
+    const adjustedId = g.registerNode({
+      name: 'adjusted',
+      type: 'derived',
+      deps: [inputId],
+      computeFn: () => input - 1,
+    });
+    const assertId = g.registerNode({
+      name: 'adjusted-nonnegative',
+      type: 'assertion',
+      deps: [adjustedId],
+      assertionMetadata: {
+        domains: { [inputId]: [0, 1, 2, 3] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => (g.getNode(adjustedId)?.getValue?.() as number) >= 0, 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    expect(result.violations.some(v =>
+      v.assertionName === 'adjusted-nonnegative'
+      && v.signalValues.input === 0,
+    )).toBe(true);
+    expect(result.scenarios.some(scenario =>
+      scenario.steps.some(step => step.signal === 'input' && step.value === 1),
+    )).toBe(true);
+  });
+
   it('returns real toggle coverage from driven states', async () => {
     const g = new CircuitGraph();
     let flagVal = false;
@@ -203,6 +313,36 @@ describe('explore', () => {
     expect(result.coverage.toggle.covered).toBeGreaterThan(0);
     expect(result.coverage.toggle.total).toBeGreaterThan(0);
     expect(result.coverage.overall.total).toBeGreaterThan(0);
+  });
+
+  it('drives toward uncovered toggle states with coverage-directed cases', async () => {
+    const g = new CircuitGraph();
+    let flagVal = false;
+
+    const flag = g.registerNode({ name: 'flag', type: 'signal' });
+    g.setNodeValue(flag, () => flagVal);
+    g.setNodeSetter(flag, (v: boolean) => {
+      flagVal = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'flag-true-domain',
+      type: 'assertion',
+      deps: [flag],
+      assertionMetadata: {
+        domains: { [flag]: [true] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.scenarios.some(scenario =>
+      scenario.kind === 'coverage-directed'
+      && scenario.steps.some(step => step.signal === 'flag' && step.value === false),
+    )).toBe(true);
+    expect(result.coverage.toggle.covered).toBe(2);
   });
 
   it('drives FSM state pairs for transition coverage completion', async () => {
@@ -235,6 +375,38 @@ describe('explore', () => {
     expect(result.coverage.transitions.total).toBe(6);
     expect(result.coverage.transitions.covered).toBe(6);
     expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(false);
+  });
+
+  it('reports transition coverage from exploration before all transitions are exhausted', async () => {
+    const g = new CircuitGraph();
+    let phase = 'idle';
+    const phaseId = g.registerNode({
+      name: 'phase',
+      type: 'signal',
+      metadata: { states: ['idle', 'loading', 'success', 'error'] },
+    });
+    g.setNodeValue(phaseId, () => phase);
+    g.setNodeSetter(phaseId, (v: string) => {
+      phase = v;
+    });
+
+    const assertId = g.registerNode({
+      name: 'phase-valid',
+      type: 'assertion',
+      deps: [phaseId],
+      assertionMetadata: {
+        domains: { [phaseId]: ['idle', 'loading', 'success', 'error'] },
+        partial: false,
+      },
+    });
+    g.setAssertionFn(assertId, () => ['idle', 'loading', 'success', 'error'].includes(phase), 'always');
+
+    const result = await explore(g, { budget: 5 });
+
+    expect(result.coverage.transitions.total).toBe(12);
+    expect(result.coverage.transitions.covered).toBeGreaterThan(0);
+    expect(result.coverage.transitions.covered).toBeLessThan(result.coverage.transitions.total);
+    expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(true);
   });
 
   it('reports uncovered coverage gaps with explicit denominators', async () => {
@@ -665,6 +837,45 @@ describe('explore — adversarial mode', () => {
       s.kind === 'adversarial'
       && s.violations.includes('trigger-requires-ready')
       && s.observations?.some(obs => obs.type === 'assertion-armed' && obs.node === 'trigger-requires-ready'),
+    )).toBe(true);
+  });
+
+  it('catches assertAfter violation via explicit sequence exploration', async () => {
+    const g = new CircuitGraph();
+    let submitted = false;
+    let loading = false;
+    const submittedId = g.registerNode({ name: 'submitted', type: 'signal' });
+    const loadingId = g.registerNode({ name: 'loading', type: 'signal' });
+    g.setNodeValue(submittedId, () => submitted);
+    g.setNodeSetter(submittedId, (v: boolean) => {
+      submitted = v;
+    });
+    g.setNodeValue(loadingId, () => loading);
+    g.setNodeSetter(loadingId, (v: boolean) => {
+      loading = v;
+    });
+
+    const assertionId = assertAfter(
+      { nodeId: submittedId },
+      'posedge',
+      'immediately',
+      () => loading,
+      { name: 'submit-starts-loading' },
+      g,
+    );
+    g.setAssertionMetadata(assertionId, {
+      checkDeps: [loadingId],
+      domains: { [loadingId]: [false, true] },
+      partial: false,
+    });
+
+    const result = await explore(g, { budget: 30 });
+
+    expect(result.violations.some(v => v.assertionName === 'submit-starts-loading')).toBe(true);
+    expect(result.scenarios.some(s =>
+      s.kind === 'sequence'
+      && s.steps.length >= 2
+      && s.observations?.some(obs => obs.type === 'assertion-armed' && obs.node === 'submit-starts-loading'),
     )).toBe(true);
   });
 

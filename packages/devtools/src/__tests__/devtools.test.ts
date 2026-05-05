@@ -415,9 +415,10 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Runtime Coverage (live graph activity)');
     expect(host.textContent).toContain('Counts observed boolean signal values');
     expect(host.textContent).toContain('not assertion, line, branch, or autotest coverage');
-    expect(host.textContent).toContain('Overall: 1/2 (50.0%)');
+    expect(host.textContent).toContain('Overall: 2/4 (50.0%)');
     expect(host.textContent).toContain('Toggles: 1/2 (50.0%)');
     expect(host.textContent).toContain('Missing toggle: player.ready=false');
+    expect(host.textContent).toContain('Missing transition: player.ready -> true->false');
 
     graph.disableCoverage();
     handle.dispose();
@@ -490,6 +491,7 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('failed · partial');
     expect(host.textContent).toContain('after · 1 cases');
     expect(host.textContent).toContain('Generated Cases (1 passed, 1 failed)');
+    expect(host.textContent).toContain('Evidence Cases (2)');
     expect(host.textContent).toContain('Passing Cases (1)');
     expect(host.textContent).toContain('case-pass');
     expect(host.textContent).toContain('Failing Cases (1)');

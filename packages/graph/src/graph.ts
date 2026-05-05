@@ -404,9 +404,8 @@ export class CircuitGraph {
       if (typeof newValue === 'boolean') {
         coverage.recordToggle(nodeId, newValue);
       }
-      // Auto-record FSM transitions for signals with states metadata
-      if (node.metadata?.states && typeof oldValue === 'string' && typeof newValue === 'string') {
-        coverage.recordTransition(nodeId, oldValue, newValue);
+      if (node.type === 'signal' && oldValue !== undefined && !Object.is(oldValue, newValue)) {
+        coverage.recordTransition(nodeId, String(oldValue), String(newValue));
       }
     }
 

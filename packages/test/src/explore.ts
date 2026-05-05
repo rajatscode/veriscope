@@ -2,8 +2,10 @@
 
 import { coverage, type AssertionMetadata, type CircuitGraph, type CoverageReport, type GraphEvent } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
-import { parseComputeFn } from './fn-parser.js';
+import { inferBoundaryValues, parseComputeFn } from './fn-parser.js';
 import type { ExploreOptions, ExploreResult, ScenarioTrace, Violation } from './types.js';
+
+type GraphNodeRef = NonNullable<ReturnType<CircuitGraph['getNode']>>;
 
 /**
  * Explore the state space of a reactive graph by:
@@ -46,6 +48,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     // 1. Discover assertions
     const assertions = graph.getAssertions();
     const checkedAssertionNames = assertions.map(assertion => assertion.name);
+    declareTransitionDomains(signalNodes, assertions);
 
     // 2. For each assertion, find its upstream roots
     for (const assertion of assertions) {
@@ -67,49 +70,16 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         return typeof v !== 'boolean';
       });
 
-      // 3b. Detect patterns in the assertion to determine non-boolean values to try
-      const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
-      const fnSource = userCheckFn.toString();
-      const nonNullSignals = new Set<string>();
-      const nullableSignals = new Set<string>();
-
-      for (const m of fnSource.matchAll(/(\w+)\.val\s*!==\s*null\b/g)) {
-        nonNullSignals.add(m[1]);
-      }
-      for (const m of fnSource.matchAll(/(\w+)\.val\s*===\s*null\b/g)) {
-        nullableSignals.add(m[1]);
-      }
-
+      // 3b. Determine non-boolean domains from graph metadata, assertion
+      // comparisons, then optional declared opaque domains.
       const nonBoolDomains = new Map<string, any[]>();
       const nonBoolRoots: typeof nonBoolRootCandidates = [];
       for (const node of nonBoolRootCandidates) {
-        const declaredDomain = domainForNode(assertion.metadata?.domains, node)
-          ?? coverageDomainForNode(assertions, node);
-        if (declaredDomain && declaredDomain.length > 0) {
-          nonBoolDomains.set(node.id, declaredDomain);
+        const domain = domainForExplorationNode(node, assertion, assertions, graph);
+        if (domain.length > 0) {
+          nonBoolDomains.set(node.id, domain);
           nonBoolRoots.push(node);
-          continue;
         }
-
-        const currentVal = node.getValue?.();
-        if (isOpaqueRootValue(currentVal)) {
-          continue;
-        }
-
-        if (nonNullSignals.has(node.name)) {
-          nonBoolDomains.set(node.id, [
-            typeof currentVal === 'string' ? 'error' : 1,
-            typeof currentVal === 'string' ? 'test' : 42,
-          ]);
-        } else if (nullableSignals.has(node.name)) {
-          nonBoolDomains.set(node.id, [null]);
-        } else {
-          nonBoolDomains.set(node.id, [
-            currentVal,
-            typeof currentVal === 'string' ? 'value' : 1,
-          ]);
-        }
-        nonBoolRoots.push(node);
       }
 
       const boolDomains = new Map<string, any[]>();
@@ -242,7 +212,39 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       }
     }
 
-    // 6. Adversarial pass — try to break each assertion
+    // 6. Sequence exploration — explicitly arm temporal assertions and try
+    // property-domain follow-up steps.
+    if (steps < budget) {
+      const sequenceResult = await sequenceExploration(
+        graph,
+        assertions,
+        flush,
+        budget - steps,
+        scenarioCounter,
+      );
+      violations.push(...sequenceResult.violations);
+      scenarios.push(...sequenceResult.scenarios);
+      steps += sequenceResult.steps;
+      scenarioCounter = sequenceResult.nextScenarioCounter;
+    }
+
+    // 7. Coverage-directed pass — use current coverage gaps to drive missing
+    // toggles/transitions before generic completion.
+    if (steps < budget) {
+      const coverageDirected = await coverageDirectedPass(
+        graph,
+        checkedAssertionNames,
+        flush,
+        budget - steps,
+        scenarioCounter,
+      );
+      violations.push(...coverageDirected.violations);
+      scenarios.push(...coverageDirected.scenarios);
+      steps += coverageDirected.steps;
+      scenarioCounter = coverageDirected.nextScenarioCounter;
+    }
+
+    // 8. Adversarial pass — try to break each assertion
     if (steps < budget) {
       const advViolations = await adversarialPass(graph, assertions, flush, budget - steps);
       violations.push(...advViolations.violations);
@@ -250,7 +252,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       steps += advViolations.steps;
     }
 
-    // 7. Coverage completion pass — drive untoggled booleans and FSM state transitions
+    // 9. Coverage completion pass — drive untoggled booleans and FSM state transitions
     if (steps < budget) {
       for (const node of signalNodes) {
         if (steps >= budget) break;
@@ -364,13 +366,13 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   }
 }
 
-function domainForNode(domains: Record<string, any[]> | undefined, node: NonNullable<ReturnType<CircuitGraph['getNode']>>): any[] | undefined {
+function domainForNode(domains: Record<string, any[]> | undefined, node: GraphNodeRef): any[] | undefined {
   return domains?.[node.id] ?? domains?.[node.stablePath] ?? domains?.[node.name];
 }
 
 function coverageDomainForNode(
   assertions: Array<{ metadata?: AssertionMetadata }>,
-  node: NonNullable<ReturnType<CircuitGraph['getNode']>>,
+  node: GraphNodeRef,
 ): any[] | undefined {
   const values: any[] = [];
   for (const assertion of assertions) {
@@ -381,6 +383,127 @@ function coverageDomainForNode(
     }
   }
   return values.length > 0 ? values : undefined;
+}
+
+function declareTransitionDomains(
+  signalNodes: GraphNodeRef[],
+  assertions: Array<{ metadata?: AssertionMetadata }>,
+): void {
+  for (const node of signalNodes) {
+    const states = metadataStateDomain(node) ?? coverageDomainForNode(assertions, node);
+    if (!states || states.length < 2) continue;
+
+    const finiteStates = uniqueValues(states)
+      .filter(state => state === null || ['boolean', 'number', 'string'].includes(typeof state))
+      .map(String);
+    if (finiteStates.length > 1) coverage.declareTransitionStates(node.id, finiteStates);
+  }
+}
+
+function metadataStateDomain(node: GraphNodeRef): any[] | undefined {
+  const states = node.metadata?.states;
+  return Array.isArray(states) && states.length > 0 ? uniqueValues(states) : undefined;
+}
+
+function domainForExplorationNode(
+  node: GraphNodeRef,
+  assertion: AssertionInfo,
+  assertions: AssertionInfo[],
+  graph: CircuitGraph,
+): any[] {
+  const declaredDomain = domainForNode(assertion.metadata?.domains, node)
+    ?? metadataStateDomain(node)
+    ?? coverageDomainForNode(assertions, node);
+  const inferredDomain = inferBoundariesForNode(node, assertions, graph);
+  const reachableInferred = constrainToDeclaredDomain(inferredDomain, declaredDomain);
+  if (reachableInferred.length > 0) return reachableInferred;
+  if (declaredDomain && declaredDomain.length > 0) return uniqueValues(declaredDomain);
+
+  const currentVal = node.getValue?.();
+  if (isOpaqueRootValue(currentVal)) return [];
+  if (currentVal === null) return [null, 'value'];
+  if (typeof currentVal === 'string') return uniqueValues([currentVal, 'value']);
+  if (typeof currentVal === 'number') return uniqueValues([currentVal, 0, 1]);
+  return currentVal === undefined ? [] : uniqueValues([currentVal]);
+}
+
+function constrainToDeclaredDomain(
+  inferredDomain: any[] | undefined,
+  declaredDomain: any[] | undefined,
+): any[] {
+  if (!inferredDomain || inferredDomain.length === 0) return [];
+  if (!declaredDomain || declaredDomain.length === 0) return uniqueValues(inferredDomain);
+  return uniqueValues(inferredDomain.filter(inferred =>
+    declaredDomain.some(declared => Object.is(inferred, declared)),
+  ));
+}
+
+function inferBoundariesForNode(
+  node: GraphNodeRef,
+  assertions: AssertionInfo[],
+  graph: CircuitGraph,
+): any[] | undefined {
+  const allBoundaries: any[] = [];
+
+  for (const assertion of assertions) {
+    const cone = upstreamCone(graph, assertion.id);
+    if (!cone.includes(node.id)) continue;
+
+    const checkFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+    collectBoundariesFromFn(checkFn, node, allBoundaries);
+
+    for (const coneNodeId of cone) {
+      const coneNode = graph.getNode(coneNodeId);
+      if (coneNode?.computeFn) {
+        collectBoundariesFromFn(coneNode.computeFn, node, allBoundaries);
+      }
+    }
+  }
+
+  if (allBoundaries.length > 0) {
+    const current = node.getValue?.();
+    if (current !== undefined && !allBoundaries.some(value => Object.is(value, current))) {
+      allBoundaries.unshift(current);
+    }
+  }
+
+  return allBoundaries.length > 0 ? allBoundaries : undefined;
+}
+
+function upstreamCone(graph: CircuitGraph, targetNodeId: string): string[] {
+  const visited = new Set<string>();
+  const queue = [targetNodeId];
+  const edges = graph.getEdges();
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+
+    for (const edge of edges) {
+      if (edge.to === nodeId) queue.push(edge.from);
+    }
+  }
+
+  visited.delete(targetNodeId);
+  return [...visited];
+}
+
+function collectBoundariesFromFn(fn: () => any, node: GraphNodeRef, target: any[]): void {
+  const parsed = parseComputeFn(fn);
+  if (!parsed) return;
+  const boundaries = inferBoundaryValues(parsed.comparisons);
+  const shortName = node.name.includes('.') ? node.name.split('.').at(-1) : undefined;
+  const shortPath = node.stablePath.includes('.') ? node.stablePath.split('.').at(-1) : undefined;
+  const nodeBoundaries = boundaries.get(node.name)
+    ?? boundaries.get(node.stablePath)
+    ?? boundaries.get(node.id)
+    ?? (shortName ? boundaries.get(shortName) : undefined)
+    ?? (shortPath ? boundaries.get(shortPath) : undefined);
+  if (!nodeBoundaries) return;
+  for (const value of nodeBoundaries) {
+    if (!target.some(existing => Object.is(existing, value))) target.push(value);
+  }
 }
 
 function isOpaqueRootValue(value: unknown): boolean {
@@ -647,12 +770,255 @@ async function driveObservational(
   }
 }
 
+async function sequenceExploration(
+  graph: CircuitGraph,
+  assertions: AssertionInfo[],
+  flush: () => void | Promise<void>,
+  remainingBudget: number,
+  scenarioCounter: number,
+): Promise<ExplorationPhaseResult> {
+  const violations: Violation[] = [];
+  const scenarios: ScenarioTrace[] = [];
+  let steps = 0;
+
+  for (const assertion of assertions.filter(a => a.kind === 'after')) {
+    if (steps >= remainingBudget) break;
+
+    const trigger = firstDriveableNode(graph, assertion.metadata?.triggerDeps ?? assertion.deps);
+    if (!trigger) continue;
+
+    const edge = assertion.metadata?.edge
+      ?? (assertion.name.includes('negedge') ? 'negedge' : 'posedge');
+    const preEdge = edge === 'negedge' ? true : false;
+    const postEdge = edge === 'negedge' ? false : true;
+    const sequence: Array<{ signal: string; value: any }> = [];
+    const eventMarker = markEvents(graph);
+
+    graph.openTick();
+    graph.driveNodeValue(trigger.id, preEdge);
+    sequence.push({ signal: trigger.name, value: preEdge });
+    await flush();
+    graph.closeTick();
+    steps++;
+    if (steps >= remainingBudget) {
+      scenarios.push(sequenceScenario(graph, assertion, `scenario-${scenarioCounter++}`, sequence, [], eventMarker));
+      break;
+    }
+
+    graph.openTick();
+    graph.driveNodeValue(trigger.id, postEdge);
+    sequence.push({ signal: trigger.name, value: postEdge });
+    await flush();
+    const found = graph.checkAssertions();
+    graph.closeTick();
+    steps++;
+
+    const matching = found.filter(violation => violation.name === assertion.name);
+    scenarios.push(sequenceScenario(graph, assertion, `scenario-${scenarioCounter++}`, sequence, matching, eventMarker));
+    violations.push(...violationsFromScenario(graph, matching, sequence));
+
+    const propertyNodes = temporalPropertyNodes(graph, assertion);
+    for (const propNode of propertyNodes) {
+      if (steps >= remainingBudget) break;
+      const domain = domainForDriveNode(graph, assertion, assertions, propNode);
+      for (const value of domain) {
+        if (steps >= remainingBudget) break;
+        const propMarker = markEvents(graph);
+        const extSequence = [...sequence, { signal: propNode.name, value }];
+
+        graph.openTick();
+        graph.driveNodeValue(propNode.id, value);
+        await flush();
+        const propFound = graph.checkAssertions();
+        graph.closeTick();
+        steps++;
+
+        const propMatching = propFound.filter(violation => violation.name === assertion.name);
+        scenarios.push(sequenceScenario(graph, assertion, `scenario-${scenarioCounter++}`, extSequence, propMatching, propMarker));
+        violations.push(...violationsFromScenario(graph, propMatching, extSequence));
+      }
+    }
+  }
+
+  return { violations, scenarios, steps, nextScenarioCounter: scenarioCounter };
+}
+
+function sequenceScenario(
+  graph: CircuitGraph,
+  assertion: AssertionInfo,
+  id: string,
+  sequence: Array<{ signal: string; value: any }>,
+  found: ReturnType<CircuitGraph['checkAssertions']>,
+  eventMarker: Set<GraphEvent>,
+): ScenarioTrace {
+  return {
+    id,
+    kind: 'sequence',
+    tick: graph.currentTick,
+    steps: sequence,
+    assertions: [assertion.name],
+    violations: found.map(violation => violation.name),
+    observations: observationsSince(graph, eventMarker),
+  };
+}
+
+function temporalPropertyNodes(graph: CircuitGraph, assertion: AssertionInfo): DriveNode[] {
+  const ids = new Set<string>([
+    ...(assertion.metadata?.checkDeps ?? []),
+    ...assertion.deps.slice(1),
+  ]);
+
+  const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+  const parsed = parseComputeFn(userCheckFn);
+  if (parsed) {
+    const names = new Set(parsed.signals);
+    for (const node of graph.getNodes()) {
+      if (names.has(node.name) || names.has(node.stablePath) || names.has(node.id)) {
+        ids.add(node.id);
+      }
+    }
+  }
+
+  for (const id of [...ids]) {
+    for (const upstream of backwardCone(graph, id)) ids.add(upstream);
+  }
+
+  return [...ids]
+    .map(id => graph.getNode(id))
+    .filter((node): node is DriveNode => node != null && node.type === 'signal' && node.setValue != null);
+}
+
+async function coverageDirectedPass(
+  graph: CircuitGraph,
+  checkedAssertionNames: string[],
+  flush: () => void | Promise<void>,
+  remainingBudget: number,
+  scenarioCounter: number,
+): Promise<ExplorationPhaseResult> {
+  const violations: Violation[] = [];
+  const scenarios: ScenarioTrace[] = [];
+  let steps = 0;
+
+  while (steps < remainingBudget) {
+    const report = coverage.getReport();
+    const uncoveredToggle = report.toggle.find(entry => !entry.seenTrue || !entry.seenFalse);
+    if (uncoveredToggle) {
+      const node = graph.getNode(uncoveredToggle.signalId);
+      if (node?.setValue) {
+        const targetValue = !uncoveredToggle.seenTrue;
+        const result = await runCoverageDirectedAssignment(
+          graph,
+          checkedAssertionNames,
+          [{ node, value: targetValue }],
+          flush,
+          `scenario-${scenarioCounter++}`,
+        );
+        scenarios.push(result.scenario);
+        violations.push(...result.violations);
+        steps++;
+        continue;
+      }
+    }
+
+    const transitionGap = report.gaps.find(gap => gap.kind === 'transition' && gap.missing.length > 0);
+    if (transitionGap && remainingBudget - steps >= 2) {
+      const node = graph.getNode(transitionGap.id);
+      const [from, to] = transitionGap.missing[0]?.split('->') ?? [];
+      if (node?.setValue && from !== undefined && to !== undefined) {
+        const result = await runCoverageDirectedAssignment(
+          graph,
+          checkedAssertionNames,
+          [
+            { node, value: parseTransitionValue(from, node.getValue?.()) },
+            { node, value: parseTransitionValue(to, node.getValue?.()) },
+          ],
+          flush,
+          `scenario-${scenarioCounter++}`,
+        );
+        scenarios.push(result.scenario);
+        violations.push(...result.violations);
+        steps += 2;
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return { violations, scenarios, steps, nextScenarioCounter: scenarioCounter };
+}
+
+async function runCoverageDirectedAssignment(
+  graph: CircuitGraph,
+  checkedAssertionNames: string[],
+  assignment: DriveAssignment,
+  flush: () => void | Promise<void>,
+  id: string,
+): Promise<{ violations: Violation[]; scenario: ScenarioTrace }> {
+  const eventMarker = markEvents(graph);
+  const sequence: Array<{ signal: string; value: any }> = [];
+
+  for (const { node, value } of assignment) {
+    graph.openTick();
+    graph.driveNodeValue(node.id, value);
+    sequence.push({ signal: node.name, value });
+    await flush();
+    graph.closeTick();
+  }
+
+  graph.openTick();
+  const found = graph.checkAssertions();
+  graph.closeTick();
+  const scenario: ScenarioTrace = {
+    id,
+    kind: 'coverage-directed',
+    tick: graph.currentTick,
+    steps: sequence,
+    assertions: checkedAssertionNames,
+    violations: found.map(violation => violation.name),
+    observations: observationsSince(graph, eventMarker),
+  };
+
+  return {
+    scenario,
+    violations: violationsFromScenario(graph, found, sequence),
+  };
+}
+
+function parseTransitionValue(value: string, current: unknown): unknown {
+  if (typeof current === 'boolean') return value === 'true';
+  if (typeof current === 'number') {
+    const numeric = Number(value);
+    return Number.isNaN(numeric) ? value : numeric;
+  }
+  if (value === 'null') return null;
+  return value;
+}
+
+function violationsFromScenario(
+  graph: CircuitGraph,
+  found: ReturnType<CircuitGraph['checkAssertions']>,
+  sequence: Array<{ signal: string; value: any }>,
+): Violation[] {
+  const signalValues = Object.fromEntries(sequence.map(step => [step.signal, step.value]));
+  return found.map(violation => ({
+    assertionName: violation.name,
+    tick: graph.currentTick,
+    signalValues,
+    sequence,
+  }));
+}
+
 // --- Adversarial pass ---
 
 interface AdversarialResult {
   violations: Violation[];
   scenarios: ScenarioTrace[];
   steps: number;
+}
+
+interface ExplorationPhaseResult extends AdversarialResult {
+  nextScenarioCounter: number;
 }
 
 interface AssertionInfo {
@@ -876,12 +1242,10 @@ function metadataDriveAssignments(
   assertions: AssertionInfo[],
   budget: number,
 ): DriveAssignment[] {
-  if (!assertion.metadata?.domains && !assertion.metadata?.checkDeps?.length) return [];
-
   const nodes = driveNodesForAssertion(graph, assertion);
   const driveable = nodes
     .map(node => {
-      const domain = domainForDriveNode(assertion, assertions, node);
+      const domain = domainForDriveNode(graph, assertion, assertions, node);
       return domain.length > 0 ? { node, domain } : null;
     })
     .filter((entry): entry is { node: DriveNode; domain: any[] } => entry != null);
@@ -917,12 +1281,17 @@ function driveNodesForAssertion(graph: CircuitGraph, assertion: AssertionInfo): 
 }
 
 function domainForDriveNode(
+  graph: CircuitGraph,
   assertion: AssertionInfo,
   assertions: AssertionInfo[],
   node: DriveNode,
 ): any[] {
   const declared = domainForNode(assertion.metadata?.domains, node)
+    ?? metadataStateDomain(node)
     ?? coverageDomainForNode(assertions, node);
+  const inferred = inferBoundariesForNode(node, assertions, graph);
+  const reachableInferred = constrainToDeclaredDomain(inferred, declared);
+  if (reachableInferred.length > 0) return reachableInferred;
   if (declared && declared.length > 0) return uniqueValues(declared);
 
   const current = node.getValue?.();
@@ -963,7 +1332,7 @@ async function runTemporalAdversarialScenario(
 
   const checkAssignment = checkNodes
     .map(node => {
-      const domain = domainForDriveNode(assertion, assertions, node);
+      const domain = domainForDriveNode(graph, assertion, assertions, node);
       if (domain.length === 0) return null;
       const current = node.getValue?.();
       const value = domain.find(candidate => !Object.is(candidate, current)) ?? domain[0];

@@ -105,6 +105,18 @@ export class CoverageCollector {
   }
 
   /**
+   * Declare the finite state domain for transition coverage.
+   */
+  declareTransitionStates(fsmId: string, states: string[]): void {
+    let entry = this.transitionMap.get(fsmId);
+    if (!entry) {
+      entry = { fsmId, transitions: new Map(), states: new Set() };
+      this.transitionMap.set(fsmId, entry);
+    }
+    for (const state of states) entry.states.add(state);
+  }
+
+  /**
    * Declare the finite outcome domain for an operation.
    */
   declareOperationOutcomes(operationName: string, outcomes: string[]): void {

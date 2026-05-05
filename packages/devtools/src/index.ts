@@ -16,7 +16,7 @@ export interface ExploreResult {
   violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
   scenarios: Array<{
     id: string;
-    kind: 'enumerated' | 'current-state' | 'coverage-completion' | 'adversarial';
+    kind: 'enumerated' | 'current-state' | 'sequence' | 'coverage-directed' | 'coverage-completion' | 'adversarial';
     tick: number;
     steps: Array<{ signal: string; value: any }>;
     assertions: string[];

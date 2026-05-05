@@ -79,13 +79,15 @@ describe('vs-tetris engine', () => {
     expect(result.players.every(player => player.y >= -2)).toBe(true);
   });
 
-  it('knocks out a player when a piece locks above the visible board', () => {
+  it('knocks out a player with an explicit reason when the spawn area is blocked', () => {
     const [human] = resetPlayers();
-    human.board[0] = human.board[0].map(() => 1);
+    human.nextPiece = 'O';
+    human.board[0][3] = 1;
 
     const result = hardDrop(human);
 
     expect(result.ko).toBe(true);
+    expect(result.koReason).toBe('spawn-blocked');
   });
 
   it('exposes Tetris state to Veriscope autotest as scalar graph nodes and generated cases', async () => {
@@ -97,7 +99,7 @@ describe('vs-tetris engine', () => {
     expect(names).toContain('arena.maxStackHeight');
     expect(names).toContain('p1.canSend2');
 
-    const result = await runAutotest(graph, { budget: 120, name: 'vs-tetris-autotest' });
+    const result = await runAutotest(graph, { budget: 400, name: 'vs-tetris-autotest' });
 
     expect(result.scenarios.length).toBeGreaterThan(0);
     expect(result.scenarios.some(scenario => scenario.steps.length > 0)).toBe(true);
@@ -113,8 +115,14 @@ describe('vs-tetris engine', () => {
       'garbage-pulse-has-recipient',
       'after-garbage-pulse-recipient-eventually-visible',
       'never-can-send-with-empty-bank',
+      'ko-has-valid-reason',
     ]);
     expect(result.assertions.some(assertion => assertion.kind === 'after')).toBe(true);
+    expect(result.scenarios.some(scenario => scenario.kind === 'sequence')).toBe(true);
+    expect(result.scenarios.some(scenario => scenario.kind === 'coverage-directed')).toBe(true);
+    expect(result.scenarios.every(scenario =>
+      scenario.steps.every(step => step.signal !== 'p1.attackBank' || typeof step.value !== 'number' || step.value >= 0),
+    )).toBe(true);
   });
 
   it('registers a real mutation target that autotest can kill', async () => {

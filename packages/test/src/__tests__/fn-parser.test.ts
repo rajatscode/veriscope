@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseComputeFn } from '../fn-parser';
+import { inferBoundaryValues, parseComputeFn } from '../fn-parser';
 
 // Declare globals so fn.toString() references them by name
 declare const loading: { val: boolean };
@@ -69,6 +69,18 @@ describe('parseComputeFn (Acorn)', () => {
       op: '===',
       value: '42',
     });
+  });
+
+  it('infers boundary values from comparisons', () => {
+    const boundaries = inferBoundaryValues([
+      { signal: 'score', op: '>=', value: '0' },
+      { signal: 'status', op: '===', value: "'error'" },
+      { signal: 'message', op: '!==', value: 'null' },
+    ]);
+
+    expect(boundaries.get('score')).toEqual([0, -1, 1]);
+    expect(boundaries.get('status')).toEqual(['error']);
+    expect(boundaries.get('message')).toEqual([null]);
   });
 
   it('returns null for unparseable input', () => {

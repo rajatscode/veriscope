@@ -352,12 +352,31 @@ export function createAssertionsPanel(
       if (lastRunResult.scenarios.length > 0) {
         const passingScenarios = lastRunResult.scenarios.filter(scenario => scenario.violations.length === 0);
         const failingScenarios = lastRunResult.scenarios.filter(scenario => scenario.violations.length > 0);
+        const evidenceScenarios = lastRunResult.scenarios.filter(scenario =>
+          scenario.kind === 'sequence'
+          || scenario.kind === 'coverage-directed'
+          || scenario.observations?.some(obs =>
+            obs.type === 'derived-recompute'
+            || obs.type === 'assertion-armed'
+            || obs.type === 'assertion-failed',
+          ),
+        );
         const scenarioBox = document.createElement('div');
         scenarioBox.style.cssText = 'margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;';
         const scenarioTitle = document.createElement('div');
         scenarioTitle.style.cssText = 'color:#c9d1d9; margin-bottom:5px; font-weight:600;';
         scenarioTitle.textContent = `Generated Cases (${passingScenarios.length} passed, ${failingScenarios.length} failed)`;
         scenarioBox.appendChild(scenarioTitle);
+
+        if (evidenceScenarios.length > 0) {
+          const evidenceTitle = document.createElement('div');
+          evidenceTitle.style.cssText = 'color:#a78bfa; margin-top:6px; font-weight:600;';
+          evidenceTitle.textContent = `Evidence Cases (${evidenceScenarios.length})`;
+          scenarioBox.appendChild(evidenceTitle);
+          for (const scenario of evidenceScenarios.slice(0, 8)) {
+            scenarioBox.appendChild(renderScenarioItem(scenario));
+          }
+        }
 
         const passingTitle = document.createElement('div');
         passingTitle.style.cssText = 'color:#72f1b8; margin-top:6px; font-weight:600;';

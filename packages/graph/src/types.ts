@@ -14,6 +14,8 @@ export type OperationStatus = 'pending' | 'resolved' | 'rejected' | 'aborted' | 
 export interface AssertionMetadata {
   triggerDeps?: string[];
   checkDeps?: string[];
+  edge?: 'posedge' | 'negedge';
+  temporalOperator?: 'immediately' | 'eventually' | 'withinTicks';
   domains?: Record<string, any[]>;
   operationDomains?: Record<string, string[]>;
   partial?: boolean;

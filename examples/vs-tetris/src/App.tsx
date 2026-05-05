@@ -441,6 +441,7 @@ function PlayerBoard({
         <Metric label="Recv" value={player.lastReceived} />
         <Metric label="Piece" value={player.piece} />
         <Metric label="KO" value={player.ko ? 'yes' : 'no'} />
+        {player.ko ? <Metric label="Reason" value={player.koReason ?? 'unknown'} /> : null}
       </footer>
     </article>
   );

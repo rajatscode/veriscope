@@ -17,7 +17,7 @@ export interface ScenarioObservation {
 
 export interface ScenarioTrace {
   id: string;
-  kind: 'enumerated' | 'current-state' | 'coverage-completion' | 'adversarial';
+  kind: 'enumerated' | 'current-state' | 'sequence' | 'coverage-directed' | 'coverage-completion' | 'adversarial';
   tick: number;
   steps: Array<{ signal: string; value: any }>;
   assertions: string[];

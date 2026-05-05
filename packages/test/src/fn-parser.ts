@@ -83,3 +83,36 @@ export function parseComputeFn(fn: () => any): ParsedExpression | null {
     return null;
   }
 }
+
+export function inferBoundaryValues(
+  comparisons: Array<{ signal: string; op: string; value: string }>,
+): Map<string, any[]> {
+  const boundaries = new Map<string, Set<any>>();
+
+  for (const comp of comparisons) {
+    const rawValue = comp.value.trim();
+    const numVal = Number(rawValue);
+    const isNumeric = !Number.isNaN(numVal) && rawValue !== 'null' && rawValue !== '';
+
+    if (!boundaries.has(comp.signal)) {
+      boundaries.set(comp.signal, new Set());
+    }
+    const set = boundaries.get(comp.signal)!;
+
+    if (isNumeric) {
+      set.add(numVal);
+      set.add(numVal - 1);
+      set.add(numVal + 1);
+      if (Math.abs(numVal) > 2) set.add(0);
+    } else if (rawValue === 'null') {
+      set.add(null);
+    } else {
+      const strVal = rawValue.replace(/^['"]|['"]$/g, '');
+      set.add(strVal);
+    }
+  }
+
+  return new Map(
+    [...boundaries].map(([signal, values]) => [signal, [...values]]),
+  );
+}

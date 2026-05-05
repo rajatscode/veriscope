@@ -6,6 +6,7 @@ export type PlayerKind = 'human' | 'ai';
 export type PieceName = 'I' | 'O' | 'T' | 'S' | 'Z' | 'L' | 'J';
 export type Cell = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type OpponentCount = number;
+export type KoReason = 'spawn-blocked' | 'garbage-overflow';
 
 export interface PlayerState {
   id: PlayerId;
@@ -24,6 +25,7 @@ export interface PlayerState {
   lastSent: number;
   lastReceived: number;
   ko: boolean;
+  koReason: KoReason | null;
   aiTarget?: { x: number; rot: number };
 }
 
@@ -155,6 +157,7 @@ export function createPlayer(id: PlayerId, name: string, kind: PlayerKind): Play
     lastSent: 0,
     lastReceived: 0,
     ko: false,
+    koReason: null,
   };
   return spawn(player);
 }
@@ -287,10 +290,6 @@ function gravity(player: PlayerState): PlayerState {
 
 function lockAndSpawn(player: PlayerState): PlayerState {
   const next = clonePlayer(player);
-  if (locksAboveTop(next)) {
-    next.ko = true;
-    return next;
-  }
   lockPiece(next);
   const cleared = clearLines(next);
   next.lastCleared = cleared;
@@ -310,11 +309,14 @@ function spawn(player: PlayerState): PlayerState {
   next.piece = next.nextPiece;
   next.nextPiece = randomPiece();
   next.x = 3;
-  next.y = -2;
+  next.y = 0;
   next.rot = 0;
   next.aiTarget = undefined;
   if (collides(next.board, next.piece, next.x, next.y, next.rot)) {
     next.ko = true;
+    next.koReason = 'spawn-blocked';
+  } else {
+    next.koReason = null;
   }
   return next;
 }
@@ -351,6 +353,7 @@ function addGarbage(player: PlayerState, lines: number): void {
   for (let i = 0; i < lines; i++) {
     if (player.board[0].some(cell => cell !== 0)) {
       player.ko = true;
+      player.koReason = 'garbage-overflow';
       return;
     }
     const gap = Math.floor(rng() * COLS);
@@ -368,16 +371,6 @@ function deliverGarbage(sender: PlayerState, target: PlayerState, lines: number)
   target.pendingGarbage = 0;
   addGarbage(target, lines);
   return { from: sender.id, to: target.id, lines };
-}
-
-function locksAboveTop(player: PlayerState): boolean {
-  const shape = shapeFor(player.piece, player.rot);
-  for (let r = 0; r < shape.length; r++) {
-    for (let c = 0; c < shape[r].length; c++) {
-      if (shape[r][c] && player.y + r < 0) return true;
-    }
-  }
-  return false;
 }
 
 function linesToGarbage(cleared: number): number {

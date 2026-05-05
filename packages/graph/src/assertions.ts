@@ -67,6 +67,13 @@ export function assertAfter(
     name: options.name,
     type: 'assertion',
     deps: [signal.nodeId],
+    assertionMetadata: {
+      triggerDeps: [signal.nodeId],
+      edge,
+      temporalOperator: typeof operator === 'object' ? 'withinTicks' : operator,
+      partial: true,
+      reason: 'assertAfter property dependencies can be supplied as checkDeps for deeper exploration',
+    },
   });
 
   let armed = false;

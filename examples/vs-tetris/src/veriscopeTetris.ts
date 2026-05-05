@@ -24,6 +24,7 @@ const PLAYER_METRICS = [
   'stackHeight',
   'alive',
   'ko',
+  'koReason',
   'piece',
 ] as const;
 
@@ -215,6 +216,20 @@ export function registerTetrisAssertions(
   ids['never-can-send-with-empty-bank'] = neverSendWithoutBankId;
   disposables.push(neverSendWithoutBankId);
 
+  const koReasonId = register(
+    'ko-has-valid-reason',
+    [bindings.playersNodeId],
+    () =>
+      safePlayers(bindings.getPlayers()).every(player =>
+        !player.ko || player.koReason === 'spawn-blocked' || player.koReason === 'garbage-overflow',
+      ),
+  );
+  targetGraph.setAssertionMetadata(koReasonId, {
+    checkDeps: [bindings.playersNodeId],
+    partial: true,
+    reason: 'checks every KO comes from an explicit engine top-out reason rather than an unexplained state flip',
+  });
+
   return {
     ids,
     dispose() {
@@ -367,12 +382,14 @@ function playerMetric(player: PlayerState | undefined, metric: (typeof PLAYER_ME
   if (!player) {
     if (metric === 'alive') return false;
     if (metric === 'ko') return true;
+    if (metric === 'koReason') return 'missing';
     if (metric === 'piece') return 'none';
     return 0;
   }
 
   if (metric === 'stackHeight') return stackHeight(player);
   if (metric === 'alive') return !player.ko;
+  if (metric === 'koReason') return player.koReason ?? 'none';
   return player[metric];
 }
 
