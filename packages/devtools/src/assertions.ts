@@ -8,6 +8,16 @@ interface AssertionsPanelOptions {
   explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
 }
 
+interface AutotestRunStatus {
+  number: number;
+  status: 'running' | 'completed' | 'failed';
+  mode: 'autotest' | 'explore';
+  startedAt: Date;
+  finishedAt?: Date;
+  durationMs?: number;
+  generatedCases?: number;
+}
+
 function isAutotestResult(result: AutotestResult | ExploreResult): result is AutotestResult {
   return Array.isArray((result as Partial<AutotestResult>).assertions);
 }
@@ -24,6 +34,30 @@ function formatScenarioValue(value: unknown): string {
 
 function formatObservationValue(value: unknown): string {
   return formatScenarioValue(value);
+}
+
+function formatClock(value: Date): string {
+  return value.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatDuration(ms: number | undefined): string {
+  if (!Number.isFinite(ms)) return 'n/a';
+  if ((ms ?? 0) < 1000) return `${Math.max(0, Math.round(ms ?? 0))}ms`;
+  return `${((ms ?? 0) / 1000).toFixed(2)}s`;
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
 }
 
 function renderScenarioItem(scenario: ExploreResult['scenarios'][number]): HTMLElement {
@@ -103,6 +137,102 @@ export function createAssertionsPanel(
 
   let disposed = false;
   let lastRunResult: AutotestResult | ExploreResult | null = null;
+  let running = false;
+  let error: string | null = null;
+  let runNumber = 0;
+  let activeRun: AutotestRunStatus | null = null;
+  let lastRun: AutotestRunStatus | null = null;
+
+  async function runAutotestFromPanel() {
+    if (running || (!options?.autotest && !options?.explore)) return;
+
+    const mode = options.autotest ? 'autotest' : 'explore';
+    const startedAt = new Date();
+    const startedAtMs = performance.now();
+    runNumber++;
+    activeRun = {
+      number: runNumber,
+      status: 'running',
+      mode,
+      startedAt,
+    };
+    running = true;
+    error = null;
+    render();
+
+    try {
+      await waitForPaint();
+      if (disposed) return;
+      const result = options.autotest
+        ? await options.autotest(graph, {
+          budget: 1000,
+          name: 'devtools-autotest',
+          flush: async () => { await new Promise(r => setTimeout(r, 0)); },
+        })
+        : await options.explore!(graph, {
+          budget: 1000,
+          flush: async () => { await new Promise(r => setTimeout(r, 0)); },
+        });
+      lastRunResult = result;
+      lastRun = {
+        number: runNumber,
+        status: 'completed',
+        mode,
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: performance.now() - startedAtMs,
+        generatedCases: result.scenarios.length,
+      };
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      lastRun = {
+        number: runNumber,
+        status: 'failed',
+        mode,
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: performance.now() - startedAtMs,
+      };
+    } finally {
+      activeRun = null;
+      running = false;
+      render();
+    }
+  }
+
+  function renderRunStatus(status: AutotestRunStatus, hasPreviousResult: boolean): HTMLElement {
+    const box = document.createElement('div');
+    const isRunning = status.status === 'running';
+    const isFailed = status.status === 'failed';
+    const label = status.mode === 'autotest' ? 'Autotest' : 'Explore';
+    box.style.cssText = `
+      color:${isFailed ? '#ff5d8f' : isRunning ? '#f8d66d' : '#8b949e'};
+      padding:8px;
+      background:${isFailed ? 'rgba(255,93,143,0.08)' : isRunning ? 'rgba(248,214,109,0.08)' : 'rgba(255,255,255,0.03)'};
+      border:1px solid ${isFailed ? 'rgba(255,93,143,0.2)' : isRunning ? 'rgba(248,214,109,0.2)' : '#21262d'};
+      border-radius:4px;
+      margin-bottom:10px;
+      font-size:0.72rem;
+      line-height:1.45;
+    `;
+
+    if (isRunning) {
+      box.innerHTML = `
+        <div style="color:#f8d66d; font-weight:600;">${label} run #${status.number} running</div>
+        <div>Started: ${formatClock(status.startedAt)}</div>
+        <div>Generating cases from graph/assertion metadata, driving the graph, and checking assertions.</div>
+        ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
+      `;
+      return box;
+    }
+
+    box.innerHTML = `
+      <div style="font-weight:600;">Last ${label.toLowerCase()} run: #${status.number} ${status.status}</div>
+      <div>Started: ${formatClock(status.startedAt)} · Finished: ${status.finishedAt ? formatClock(status.finishedAt) : 'n/a'} · Duration: ${formatDuration(status.durationMs)}</div>
+      <div>Generated cases: ${status.generatedCases ?? 'n/a'}</div>
+    `;
+    return box;
+  }
 
   function render() {
     if (disposed) return;
@@ -116,39 +246,30 @@ export function createAssertionsPanel(
     title.textContent = 'Autotest';
 
     const checkBtn = document.createElement('button');
-    checkBtn.textContent = options?.autotest ? 'Run Autotest' : options?.explore ? 'Explore' : 'Check All';
+    checkBtn.textContent = running
+      ? (options?.autotest ? 'Running...' : 'Exploring...')
+      : options?.autotest ? 'Run Autotest' : options?.explore ? 'Explore' : 'Check All';
     checkBtn.style.cssText = `background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:3px 10px; border-radius:4px; cursor:${options?.autotest || options?.explore ? 'pointer' : 'not-allowed'}; font-size:0.75rem;`;
-    checkBtn.disabled = !options?.autotest && !options?.explore;
+    checkBtn.disabled = running || (!options?.autotest && !options?.explore);
     if (checkBtn.disabled) checkBtn.style.opacity = '0.55';
-    checkBtn.addEventListener('click', async () => {
-      if (options?.autotest || options?.explore) {
-        checkBtn.textContent = options?.autotest ? 'Running...' : 'Exploring...';
-        checkBtn.style.opacity = '0.6';
-        checkBtn.style.pointerEvents = 'none';
-        try {
-          lastRunResult = options?.autotest
-            ? await options.autotest(graph, {
-              budget: 1000,
-              name: 'devtools-autotest',
-              flush: async () => { await new Promise(r => setTimeout(r, 0)); },
-            })
-            : await options.explore!(graph, {
-              budget: 1000,
-              flush: async () => { await new Promise(r => setTimeout(r, 0)); },
-            });
-          render();
-        } catch (err) {
-          console.error('[Veriscope] autotest failed:', err);
-          checkBtn.textContent = options?.autotest ? 'Run Autotest' : 'Explore';
-          checkBtn.style.opacity = '1';
-          checkBtn.style.pointerEvents = '';
-        }
-      }
-    });
+    checkBtn.addEventListener('click', runAutotestFromPanel);
 
     header.appendChild(title);
     header.appendChild(checkBtn);
     container.appendChild(header);
+
+    if (activeRun) {
+      container.appendChild(renderRunStatus(activeRun, lastRunResult !== null));
+    } else if (lastRun) {
+      container.appendChild(renderRunStatus(lastRun, false));
+    }
+
+    if (error) {
+      const errorBox = document.createElement('div');
+      errorBox.style.cssText = 'color:#ff5d8f; padding:8px; background:rgba(255,93,143,0.08); border:1px solid rgba(255,93,143,0.2); border-radius:4px; margin-bottom:10px;';
+      errorBox.textContent = error;
+      container.appendChild(errorBox);
+    }
 
     // Autotest/explore results (if available)
     if (lastRunResult) {

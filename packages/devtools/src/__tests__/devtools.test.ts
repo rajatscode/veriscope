@@ -504,6 +504,49 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('shows in-flight autotest runs and preserves the prior result during rerun', async () => {
+    const graph = new CircuitGraph();
+    let resolveFirst: ((value: AutotestResult) => void) | undefined;
+    let resolveSecond: ((value: AutotestResult) => void) | undefined;
+    const autotest = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<AutotestResult>(resolve => {
+        resolveFirst = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<AutotestResult>(resolve => {
+        resolveSecond = resolve;
+      }));
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'autotest', autotest, coverage });
+
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Autotest run #1 running');
+    expect(host.textContent).toContain('Generating cases from graph/assertion metadata');
+
+    await flushPromises();
+    expect(autotest).toHaveBeenCalledTimes(1);
+    resolveFirst?.(autotestResult());
+    await flushPromises();
+    expect(host.textContent).toContain('Last autotest run: #1 completed');
+    expect(host.textContent).toContain('Generated cases: 1');
+    expect(host.textContent).toContain('Autotest Results');
+
+    buttonByText(host, 'Run Autotest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.textContent).toContain('Autotest run #2 running');
+    expect(host.textContent).toContain('Showing the previous completed result until this run finishes.');
+    expect(host.textContent).toContain('Autotest Results');
+
+    await flushPromises();
+    expect(autotest).toHaveBeenCalledTimes(2);
+    resolveSecond?.(autotestResult());
+    await flushPromises();
+    expect(host.textContent).toContain('Last autotest run: #2 completed');
+
+    handle.dispose();
+  });
+
   it('runs mutation callbacks and renders killed and surviving mutants', async () => {
     const graph = new CircuitGraph();
     const mutate = vi.fn(async () => mutationResult());
