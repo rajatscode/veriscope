@@ -23,6 +23,9 @@ function buildSampleReport() {
   collector.recordCross('ab-cross', [true, false]);
   collector.recordCross('ab-cross', [false, true]);
 
+  collector.declareOperationOutcomes('submit', ['resolved', 'rejected']);
+  collector.recordOperationOutcome('submit', 'resolved');
+
   return collector.getReport();
 }
 
@@ -39,6 +42,9 @@ describe('formatConsole', () => {
     expect(output).toContain('red->green');
     expect(output).toContain('Cross Coverage');
     expect(output).toContain('ab-cross');
+    expect(output).toContain('Operation Outcome Coverage');
+    expect(output).toContain('submit');
+    expect(output).toContain('Coverage Gaps');
     expect(output).toContain('Summary');
   });
 
@@ -61,6 +67,8 @@ describe('formatJSON', () => {
     expect(parsed.transitions).toHaveLength(1);
     expect(parsed.transitions[0].transitions['red->green']).toBe(1);
     expect(parsed.cross).toHaveLength(1);
+    expect(parsed.operations).toHaveLength(1);
+    expect(parsed.gaps.length).toBeGreaterThan(0);
     expect(parsed.summary.totalPoints).toBeGreaterThan(0);
   });
 });
@@ -72,6 +80,8 @@ describe('formatHTML', () => {
 
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('Toggle Coverage');
+    expect(html).toContain('Operation Outcome Coverage');
+    expect(html).toContain('Coverage Gaps');
     expect(html).toContain('class="covered"');
     expect(html).toContain('class="uncovered"');
     expect(html).toContain('</html>');

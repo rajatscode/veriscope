@@ -214,6 +214,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       violations,
       coverage: summarizeCoverage(report),
       steps,
+      snapshot: graph.snapshot({ tool: '@veriscope/test/explore', steps }),
     };
   } finally {
     graph.disableCoverage();
@@ -229,13 +230,44 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
 }
 
 function summarizeCoverage(report: CoverageReport): ExploreResult['coverage'] {
+  const toggleCovered = report.toggle.reduce(
+    (sum, entry) => sum + (entry.seenTrue ? 1 : 0) + (entry.seenFalse ? 1 : 0),
+    0,
+  );
+  const toggleTotal = report.toggle.length * 2;
+  const transitionsCovered = report.transitions.reduce((sum, entry) => sum + entry.transitions.size, 0);
+  const transitionsTotal = report.transitions.reduce((sum, entry) => {
+    const stateCount = entry.states.size;
+    return sum + (stateCount > 1 ? stateCount * (stateCount - 1) : entry.transitions.size);
+  }, 0);
+  const crossCovered = report.cross.reduce((sum, entry) => sum + entry.observed.size, 0);
+  const crossTotal = report.cross.reduce((sum, entry) => sum + entry.total, 0);
+  const operationsCovered = report.operations.reduce(
+    (sum, entry) =>
+      sum + [...entry.declaredOutcomes].filter(outcome => entry.observedOutcomes.has(outcome)).length,
+    0,
+  );
+  const operationsTotal = report.operations.reduce((sum, entry) => sum + entry.declaredOutcomes.size, 0);
+
   return {
-    toggle: report.toggle.reduce(
-      (sum, entry) => sum + (entry.seenTrue ? 1 : 0) + (entry.seenFalse ? 1 : 0),
-      0,
-    ),
-    transitions: report.transitions.reduce((sum, entry) => sum + entry.transitions.size, 0),
-    cross: report.cross.reduce((sum, entry) => sum + entry.observed.size, 0),
+    toggle: metric(toggleCovered, toggleTotal),
+    transitions: metric(transitionsCovered, transitionsTotal),
+    cross: metric(crossCovered, crossTotal),
+    operations: metric(operationsCovered, operationsTotal),
+    overall: {
+      covered: report.summary.coveredPoints,
+      total: report.summary.totalPoints,
+      percentage: report.summary.percentage,
+    },
+    gaps: report.gaps,
+  };
+}
+
+function metric(covered: number, total: number) {
+  return {
+    covered,
+    total,
+    percentage: total > 0 ? (covered / total) * 100 : 100,
   };
 }
 

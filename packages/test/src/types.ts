@@ -1,4 +1,5 @@
 // types.ts — ExploreResult, Violation, and related types
+import type { CoverageGap, GraphSnapshot } from '@veriscope/graph';
 
 export interface Violation {
   assertionName: string;
@@ -14,14 +15,26 @@ export interface ExploreOptions {
   flush?: () => void | Promise<void>;
 }
 
+export interface CoverageMetric {
+  covered: number;
+  total: number;
+  percentage: number;
+}
+
+export interface ExploreCoverage {
+  toggle: CoverageMetric;
+  transitions: CoverageMetric;
+  cross: CoverageMetric;
+  operations: CoverageMetric;
+  overall: CoverageMetric;
+  gaps: CoverageGap[];
+}
+
 export interface ExploreResult {
   violations: Violation[];
-  coverage: {
-    toggle: number;
-    transitions: number;
-    cross: number;
-  };
+  coverage: ExploreCoverage;
   steps: number;
+  snapshot?: GraphSnapshot;
 }
 
 export interface ParsedExpression {

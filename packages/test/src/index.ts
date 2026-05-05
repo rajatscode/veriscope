@@ -4,7 +4,14 @@ export { enumerateBooleanCombinations } from './truth-table.js';
 export { traceReads } from './read-tracer.js';
 export { parseComputeFn } from './fn-parser.js';
 export { shrinkSequence } from './shrink.js';
-export type { ExploreOptions, ExploreResult, Violation, ParsedExpression } from './types.js';
+export type {
+  CoverageMetric,
+  ExploreCoverage,
+  ExploreOptions,
+  ExploreResult,
+  Violation,
+  ParsedExpression,
+} from './types.js';
 export type { TruthTableSignal, TruthTableRow } from './truth-table.js';
 export type { ShrinkStep } from './shrink.js';
 export { discoverMappings, exploreViaInteractions } from './interaction.js';

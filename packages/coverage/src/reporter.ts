@@ -1,6 +1,6 @@
 // reporter.ts — Formats CoverageReport as JSON/HTML/console
 
-import type { CoverageReport, ToggleCoverage, TransitionCoverage, CrossCoverage } from '@veriscope/graph';
+import type { CoverageReport } from '@veriscope/graph';
 
 /**
  * Format a coverage report for console output with aligned columns.
@@ -61,6 +61,35 @@ export function formatConsole(report: CoverageReport): string {
   }
   lines.push('');
 
+  // Operation outcome coverage
+  lines.push('--- Operation Outcome Coverage ---');
+  if (report.operations.length === 0) {
+    lines.push('  (no operation outcome coverage)');
+  } else {
+    for (const op of report.operations) {
+      const declared = [...op.declaredOutcomes];
+      const covered = declared.filter(outcome => op.observedOutcomes.has(outcome));
+      const pct = declared.length > 0 ? ((covered.length / declared.length) * 100).toFixed(1) : '100.0';
+      lines.push(`  Operation: ${op.operationName}  (${covered.length}/${declared.length} outcomes, ${pct}%)`);
+      for (const outcome of declared) {
+        const count = op.observedOutcomes.get(outcome) ?? 0;
+        lines.push(`    ${outcome.padEnd(12)} ${count > 0 ? `x${count}` : 'missing'}`);
+      }
+    }
+  }
+  lines.push('');
+
+  // Gaps
+  lines.push('--- Coverage Gaps ---');
+  if (report.gaps.length === 0) {
+    lines.push('  (no uncovered declared bins)');
+  } else {
+    for (const gap of report.gaps) {
+      lines.push(`  ${gap.kind}:${gap.id} missing ${gap.missing.join(', ')}`);
+    }
+  }
+  lines.push('');
+
   // Summary
   lines.push('--- Summary ---');
   lines.push(`  Total points:   ${report.summary.totalPoints}`);
@@ -89,6 +118,12 @@ export function formatJSON(report: CoverageReport): string {
       observed: Object.fromEntries(c.observed),
       total: c.total,
     })),
+    operations: report.operations.map(o => ({
+      operationName: o.operationName,
+      declaredOutcomes: [...o.declaredOutcomes],
+      observedOutcomes: Object.fromEntries(o.observedOutcomes),
+    })),
+    gaps: report.gaps,
     summary: report.summary,
   };
   return JSON.stringify(serializable, null, 2);
@@ -188,6 +223,34 @@ export function formatHTML(report: CoverageReport): string {
     }
   } else {
     lines.push('<p>No cross coverage groups.</p>');
+  }
+
+  // Operations
+  lines.push('<h2>Operation Outcome Coverage</h2>');
+  if (report.operations.length > 0) {
+    for (const op of report.operations) {
+      lines.push(`<h3>${esc(op.operationName)}</h3>`);
+      lines.push('<table><tr><th>Outcome</th><th>Observed</th></tr>');
+      for (const outcome of op.declaredOutcomes) {
+        const count = op.observedOutcomes.get(outcome) ?? 0;
+        const cls = count > 0 ? 'covered' : 'uncovered';
+        lines.push(`<tr><td>${esc(outcome)}</td><td class="${cls}">${count}</td></tr>`);
+      }
+      lines.push('</table>');
+    }
+  } else {
+    lines.push('<p>No operation outcome coverage.</p>');
+  }
+
+  lines.push('<h2>Coverage Gaps</h2>');
+  if (report.gaps.length > 0) {
+    lines.push('<ul>');
+    for (const gap of report.gaps) {
+      lines.push(`<li>${esc(gap.kind)}:${esc(gap.id)} missing ${esc(gap.missing.join(', '))}</li>`);
+    }
+    lines.push('</ul>');
+  } else {
+    lines.push('<p>No uncovered declared bins.</p>');
   }
 
   lines.push('</body></html>');

@@ -200,7 +200,30 @@ describe('explore', () => {
 
     const result = await explore(g, { budget: 10 });
 
-    expect(result.coverage.toggle).toBeGreaterThan(0);
+    expect(result.coverage.toggle.covered).toBeGreaterThan(0);
+    expect(result.coverage.toggle.total).toBeGreaterThan(0);
+    expect(result.coverage.overall.total).toBeGreaterThan(0);
+  });
+
+  it('reports uncovered coverage gaps with explicit denominators', async () => {
+    const g = new CircuitGraph();
+    let flagVal = false;
+
+    const flag = g.registerNode({ name: 'flag', type: 'signal' });
+    g.setNodeValue(flag, () => flagVal);
+    g.setNodeSetter(flag, (v: boolean) => {
+      flagVal = v;
+    });
+
+    const assertId = g.registerNode({ name: 'flag-observed', type: 'assertion', deps: [flag] });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 2 });
+
+    expect(result.coverage.toggle.total).toBe(2);
+    expect(result.coverage.toggle.covered).toBeLessThan(result.coverage.toggle.total);
+    expect(result.coverage.gaps.some(gap => gap.kind === 'toggle' && gap.id === flag)).toBe(true);
+    expect(result.snapshot?.captureContext?.tool).toBe('@veriscope/test/explore');
   });
 
   it('reports no violations when assertions hold', async () => {

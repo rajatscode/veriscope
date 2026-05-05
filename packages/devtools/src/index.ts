@@ -2,7 +2,7 @@
 // Provides waveform viewing, graph visualization, assertion monitoring, and coverage display
 // Bridge is imported for side effects only: import '@veriscope/devtools/bridge'
 
-import type { CircuitGraph, CoverageCollector } from '@veriscope/graph';
+import type { CircuitGraph, CoverageCollector, GraphSnapshot } from '@veriscope/graph';
 import { createTabLayout } from './layout.js';
 import { createWaveformPanel } from './waveform.js';
 import { createVisualizerPanel } from './visualizer.js';
@@ -13,8 +13,16 @@ export type { TabId } from './layout.js';
 
 export interface ExploreResult {
   violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
-  coverage: { toggle: number; transitions: number; cross: number };
+  coverage: {
+    toggle: { covered: number; total: number; percentage: number };
+    transitions: { covered: number; total: number; percentage: number };
+    cross: { covered: number; total: number; percentage: number };
+    operations: { covered: number; total: number; percentage: number };
+    overall: { covered: number; total: number; percentage: number };
+    gaps: Array<{ kind: string; id: string; missing: string[] }>;
+  };
   steps: number;
+  snapshot?: GraphSnapshot;
 }
 
 export interface DevtoolsOptions {
