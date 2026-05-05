@@ -1,4 +1,4 @@
-import { useMemo, useRef, useSyncExternalStore, useEffect } from 'react';
+import { useMemo, useRef, useEffect } from 'react';
 import { graph as defaultGraph } from '@veriscope/graph';
 import type { ReadonlySignal, Signal, CircuitGraph } from '@veriscope/graph';
 
@@ -10,7 +10,6 @@ interface UseDerivedOptions {
  * Create a derived (computed) signal that tracks dependencies and registers in the graph.
  *
  * Re-derives when any dependency changes, but only notifies the graph on actual value changes.
- * Uses useSyncExternalStore for tear-free reads.
  */
 export function useDerived<T>(
   computeFn: () => T,
@@ -22,8 +21,16 @@ export function useDerived<T>(
   const nodeIdRef = useRef<string | null>(null);
   const prevRef = useRef<T | undefined>(undefined);
   const valueRef = useRef<T>(undefined as T);
-  const subscribersRef = useRef(new Set<() => void>());
   const graphRef = useRef(g);
+  const computeRef = useRef(computeFn);
+  computeRef.current = computeFn;
+
+  const computeForGraph = () => {
+    const nextValue = computeRef.current();
+    valueRef.current = nextValue;
+    prevRef.current = nextValue;
+    return nextValue;
+  };
 
   // Register in graph once
   if (nodeIdRef.current === null) {
@@ -31,10 +38,8 @@ export function useDerived<T>(
       name,
       type: 'derived',
       deps: deps.map(d => d.nodeId),
+      computeFn: computeForGraph,
     });
-    // Compute initial value
-    valueRef.current = computeFn();
-    prevRef.current = valueRef.current;
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
   }
 
@@ -48,8 +53,6 @@ export function useDerived<T>(
     prevRef.current = newValue;
     valueRef.current = newValue;
     graphRef.current.notifyChange(nodeIdRef.current!, old, newValue);
-    // Notify external store subscribers
-    for (const sub of subscribersRef.current) sub();
   } else {
     valueRef.current = newValue;
   }
@@ -61,6 +64,7 @@ export function useDerived<T>(
         name,
         type: 'derived',
         deps: deps.map(d => d.nodeId),
+        computeFn: computeForGraph,
       });
       graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
     }

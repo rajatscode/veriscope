@@ -23,6 +23,8 @@ function makeReport(overrides: Partial<CoverageReport> = {}): CoverageReport {
         total: 4,
       },
     ],
+    operations: [],
+    gaps: [],
     summary: { totalPoints: 8, coveredPoints: 5, percentage: 62.5 },
     ...overrides,
   };

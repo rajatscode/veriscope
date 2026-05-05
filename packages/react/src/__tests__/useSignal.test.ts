@@ -25,6 +25,28 @@ describe('useSignal', () => {
     expect(result.current.val).toBe(5);
   });
 
+  it('supports updater functions via set()', () => {
+    const { result } = renderHook(() => useSignal(1, 'count', { graph }));
+
+    act(() => {
+      result.current.set(prev => prev + 4);
+    });
+
+    expect(result.current.val).toBe(5);
+    expect(graph.getNode(result.current.nodeId)?.getValue?.()).toBe(5);
+  });
+
+  it('supports updater functions through graph-driven setters', () => {
+    const { result } = renderHook(() => useSignal(2, 'count', { graph }));
+
+    act(() => {
+      graph.driveNodeValue(result.current.nodeId, (prev: number) => prev + 3);
+    });
+
+    expect(result.current.val).toBe(5);
+    expect(graph.getNode(result.current.nodeId)?.getValue?.()).toBe(5);
+  });
+
   it('registers signal in CircuitGraph', () => {
     const { result } = renderHook(() => useSignal('initial', 'mySignal', { graph }));
 

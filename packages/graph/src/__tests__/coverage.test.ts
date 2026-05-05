@@ -51,6 +51,24 @@ describe('CoverageCollector', () => {
     expect(report.summary.percentage).toBe(75);
   });
 
+  it('reports explicit gaps for operation outcome domains', () => {
+    const c = new CoverageCollector();
+    c.declareOperationOutcomes('submit', ['resolved', 'rejected', 'timeout']);
+    c.enable();
+    c.recordOperationOutcome('submit', 'resolved');
+
+    const report = c.getReport();
+
+    expect(report.operations[0].operationName).toBe('submit');
+    expect(report.summary.totalPoints).toBe(3);
+    expect(report.summary.coveredPoints).toBe(1);
+    expect(report.gaps).toContainEqual({
+      kind: 'operation',
+      id: 'submit',
+      missing: ['rejected', 'timeout'],
+    });
+  });
+
   it('resets all data', () => {
     const c = new CoverageCollector();
     c.enable();

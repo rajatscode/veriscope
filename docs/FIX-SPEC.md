@@ -1,7 +1,9 @@
 # Veriscope Fix Spec — Propagation Engine + Coverage Wiring
 
-This is a concrete implementation plan for making the packages match `docs/SPEC.md`.
-The VS Tetris example is only the review fixture; package internals are the product.
+This is an audited repair list for making the packages match `docs/SPEC.md`.
+Treat each item as a claim to verify with a failing test before implementation.
+The VS Tetris example is only the review fixture; package internals are the
+product.
 
 ## Preserved Findings
 
@@ -17,9 +19,9 @@ misleading because they only work in narrow cases:
   `notifyChange()` path that can record toggles when coverage is enabled, so the
   fix should wire exploration through that path instead of inventing a parallel
   counter.
-- React hooks are not the first target for this fix. Browser adapters can keep
-  settling through their framework runtime; this spec is about headless graph
-  execution and the package tooling built on top of it.
+- Browser adapters can keep settling through their framework runtime, but they
+  must register enough compute metadata for graph-driven tooling to observe and
+  propagate real derived values.
 - The `flush` callback in `explore()` still matters for browser-mode exploration
   and should stay.
 
@@ -49,8 +51,8 @@ Required behavior:
 - notify graph subscribers when a propagated derived value changes;
 - emit `derived-recompute` events when derived values change;
 - make `getValue()` return the latest propagated value;
-- keep React/Solid adapter behavior intact, since adapters still settle through
-  their framework runtime.
+- wire React/Solid derived hooks to register `computeFn` without replacing
+  framework rendering.
 
 This is not a Comb-style scheduler. It is the minimal execution support needed
 for headless graph tests and autotest tooling to have real derived semantics.
@@ -63,7 +65,8 @@ Required behavior:
 
 - reset or snapshot coverage at the start of an exploration run;
 - enable coverage while exploration drives states;
-- call `graph.propagate()` after each driven signal change;
+- drive changes through `graph.driveNodeValue()` so propagation and event
+  bookkeeping run together;
 - check assertions only after propagation and the caller-provided `flush`;
 - return real coverage totals from `coverage.getReport()`;
 - disable coverage on cleanup, including failure paths;
@@ -100,8 +103,10 @@ driving is required for claims about user workflows.
 
 ## 4. Mutation Runner
 
-Current mutation behavior is not enough if it only applies a graph mutation and
-checks the current assertion state.
+Package-level mutation currently reruns `explore()`, which is the right shape but
+inherits the weaknesses of `explore()`. Demo-local mutation panels that apply a
+mutation and then call `graph.checkAssertions()` are not acceptable product
+surfaces.
 
 Required behavior:
 
@@ -131,13 +136,109 @@ Circuit and Waveform must live-update from the graph/timeline artifact.
 Autotest must combine assertion results with coverage progress. Mutants must run
 through the same scenario runner used by Autotest.
 
+Devtools need browser-level regression coverage. Canvas and DOM-heavy panels are
+part of the product, so unit tests around pure helpers are not enough.
+
 ## 6. Fragile Function Introspection
 
 Parsing `fn.toString()` may remain as a development heuristic, but it must not be
 the core product mechanism. Production-grade exploration needs declared domains,
 declared dependencies, action mappings, and assertion metadata.
 
-## 7. Acceptance Tests
+## 7. Stable Artifact Identity And Snapshot Schema
+
+`docs/SPEC.md` requires runtime IDs and stable paths. Current graph snapshots are
+too thin if they only contain runtime-ish IDs, names, types, deps, and edges.
+
+Required behavior:
+
+- add explicit stable path support for graph nodes;
+- include component/module scope metadata where adapters can provide it;
+- avoid collapsing repeated component instances into the same diff identity;
+- snapshot declared graph metadata, observed events, tick context, lifecycle
+  markers, and capture harness context;
+- make CLI snapshot/diff consume the same artifact schema used by devtools and
+  tests.
+
+The CLI must not advertise a meaningful snapshot command until it can produce
+real scenario-relative artifacts.
+
+## 8. Lifecycle And Waveform History
+
+Disposal currently risks erasing important evidence. The product contract says
+unmounted nodes leave an ended trace rather than silently disappearing.
+
+Required behavior:
+
+- `disposeNode()` removes active topology but preserves waveform/report history;
+- record lifecycle events such as node-created and node-disposed;
+- mark waveform traces ended at a tick/time;
+- cancel or mark pending temporal assertions that cannot finish after disposal;
+- release live coverage bookkeeping without deleting report history.
+
+## 9. Tick And Adapter Settle Semantics
+
+Ticks are supposed to represent synchronous UI causality. The current graph has
+microtask-ish tick closing, but the full adapter contract is not implemented.
+
+Required behavior:
+
+- add explicit `batch` or `runInTick` support;
+- ensure assertions and coverage evaluate on tick close;
+- expose deterministic flush APIs for tests;
+- let adapters provide their own settle barrier, e.g. React `act()`;
+- ensure async continuations start new ticks;
+- link tracked external operation events across ticks instead of merging them.
+
+This remains weaker than Comb scheduling; it records framework behavior rather
+than replacing the framework scheduler.
+
+## 10. External Operation Spans
+
+External request/response flows are central to the spec and are mostly missing
+from this fix list unless called out explicitly.
+
+Required behavior:
+
+- add operation lifecycle APIs such as begin, resolve, reject, abort, timeout,
+  stale, and with-operation context;
+- record request events in the initiating tick;
+- record response/error/abort/timeout handling in later linked ticks;
+- allow operation outcome domains for exploration;
+- add operation outcome coverage;
+- surface operation spans in devtools and failure traces;
+- support assertions over request/response ordering, stale responses, aborts,
+  timeouts, and response-side state updates.
+
+Veriscope should verify UI handling of external operations, not remote server
+correctness.
+
+## 11. Signal API Parity
+
+The spec's signal shape allows updater functions. Adapters and core types should
+match that contract.
+
+Required behavior:
+
+- `Signal<T>.set` accepts `T | ((prev: T) => T)`;
+- React and Solid adapters implement updater semantics consistently;
+- graph setters used by exploration can drive either concrete values or updater
+  functions without bypassing event/tick bookkeeping.
+
+## 12. Assertion Metadata
+
+Bare closure assertions are only live monitors. Explorable assertions need
+metadata that the explorer can trust without parsing function source.
+
+Required behavior:
+
+- distinguish trigger dependencies from property/check dependencies;
+- attach declared domains or operation outcome domains to dependencies;
+- expose assertion coverage, including which assertions were exercised;
+- report when an assertion lacks enough metadata for full exploration coverage;
+- support future operation assertions over external spans.
+
+## 13. Acceptance Tests
 
 Add package tests that fail against the current implementation and pass only
 when the above behavior is real:
@@ -148,7 +249,18 @@ when the above behavior is real:
 - mutation runner kills a deliberately broken behavior by rerunning scenarios;
 - Circuit devtools redraws on graph topology/value events;
 - Waveform devtools records and toggles live signals;
-- VS Tetris mounts package devtools only.
+- VS Tetris mounts package devtools only;
+- repeated component instances get distinct stable paths in snapshots;
+- disposing a node preserves waveform history with an end marker;
+- updater-form signal setters notify the graph correctly;
+- CLI snapshot writes the shared artifact schema, not a placeholder;
+- external operation spans link request and response ticks;
+- operation outcome coverage reports explicit denominators;
+- assertions without explorable metadata are labeled as partial coverage;
+- devtools browser tests prove graph, waveform, autotest, and mutants render and
+  update from package artifacts;
+- the Vitest plugin is tested through a real Vitest run, not only by directly
+  calling reporter hooks.
 
 Minimum derived-chain regression:
 

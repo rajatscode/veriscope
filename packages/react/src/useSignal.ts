@@ -7,6 +7,12 @@ interface UseSignalOptions {
   graph?: CircuitGraph;
 }
 
+type SignalNext<T> = T | ((prev: T) => T);
+
+function resolveNext<T>(old: T, next: SignalNext<T>): T {
+  return typeof next === 'function' ? (next as (prev: T) => T)(old) : next;
+}
+
 /**
  * Create a tracked signal that registers in the CircuitGraph.
  *
@@ -26,6 +32,23 @@ export function useSignal<T>(
   const nodeIdRef = useRef<string | null>(null);
   const graphRef = useRef(g);
 
+  const applyNext = useCallback((next: SignalNext<T>) => {
+    const old = valueRef.current;
+    const nextValue = resolveNext(old, next);
+    if (Object.is(old, nextValue)) return;
+    valueRef.current = nextValue;
+    setValue(nextValue);
+  }, []);
+
+  const set = useCallback((next: SignalNext<T>) => {
+    const nodeId = nodeIdRef.current;
+    if (!nodeId) {
+      applyNext(next);
+      return;
+    }
+    graphRef.current.driveNodeValue(nodeId, next);
+  }, [applyNext]);
+
   // Register in graph once
   if (nodeIdRef.current === null) {
     const metadata: Record<string, any> = {};
@@ -36,25 +59,11 @@ export function useSignal<T>(
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
     graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
-    graphRef.current.setNodeSetter(nodeIdRef.current, (next: T) => {
-      const old = valueRef.current;
-      if (Object.is(old, next)) return;
-      valueRef.current = next;
-      setValue(next);
-      graphRef.current.notifyChange(nodeIdRef.current!, old, next);
-    });
+    graphRef.current.setNodeSetter(nodeIdRef.current, applyNext);
   }
 
   // Keep ref in sync
   valueRef.current = value;
-
-  const set = useCallback((next: T) => {
-    const old = valueRef.current;
-    if (Object.is(old, next)) return;
-    valueRef.current = next;
-    setValue(next);
-    graphRef.current.notifyChange(nodeIdRef.current!, old, next);
-  }, []);
 
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
@@ -67,13 +76,7 @@ export function useSignal<T>(
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
       graphRef.current.setNodeValue(nodeIdRef.current, () => valueRef.current);
-      graphRef.current.setNodeSetter(nodeIdRef.current, (next: T) => {
-        const old = valueRef.current;
-        if (Object.is(old, next)) return;
-        valueRef.current = next;
-        setValue(next);
-        graphRef.current.notifyChange(nodeIdRef.current!, old, next);
-      });
+      graphRef.current.setNodeSetter(nodeIdRef.current, applyNext);
     }
     return () => {
       if (nodeIdRef.current) {

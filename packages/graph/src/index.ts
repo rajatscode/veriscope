@@ -10,12 +10,18 @@ export type {
   GraphSnapshot,
   GraphDiff,
   NodeType,
+  AssertionMetadata,
   AssertionViolation,
   CdcWarning,
+  OperationSpan,
+  OperationStatus,
+  WaveformPoint,
 } from './types.js';
 export type {
   ToggleCoverage,
   TransitionCoverage,
   CrossCoverage,
+  OperationOutcomeCoverage,
+  CoverageGap,
   CoverageReport,
 } from './coverage.js';

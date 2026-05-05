@@ -7,6 +7,12 @@ interface UseSignalOptions {
   graph?: CircuitGraph;
 }
 
+type SignalNext<T> = T | ((prev: T) => T);
+
+function resolveNext<T>(old: T, next: SignalNext<T>): T {
+  return typeof next === 'function' ? (next as (prev: T) => T)(old) : next;
+}
+
 /**
  * Create a tracked signal that registers in the CircuitGraph.
  * Wraps Solid's createSignal with graph instrumentation.
@@ -31,20 +37,24 @@ export function useSignal<T>(
 
   g.setNodeValue(nodeId, value); // Solid's getter IS the getValue
 
+  const applyNext = (next: SignalNext<T>) => {
+    const old = value();
+    const nextValue = resolveNext(old, next);
+    if (Object.is(old, nextValue)) return;
+    setValue(() => nextValue as any);
+  };
+
   const signal: Signal<T> = {
     get val() { return value(); },
-    set(next: T) {
-      const old = value();
-      if (Object.is(old, next)) return;
+    set(next: SignalNext<T>) {
       g.openTick();
-      setValue(() => next as any);
-      g.notifyChange(nodeId, old, next);
+      g.driveNodeValue(nodeId, next);
     },
     nodeId,
     name,
   };
 
-  g.setNodeSetter(nodeId, (v: any) => signal.set(v));
+  g.setNodeSetter(nodeId, applyNext);
   onCleanup(() => g.disposeNode(nodeId));
 
   return signal;

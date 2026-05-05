@@ -20,10 +20,24 @@ export interface CrossCoverage {
   total: number; // 2^n possible combos for n boolean signals
 }
 
+export interface OperationOutcomeCoverage {
+  operationName: string;
+  declaredOutcomes: Set<string>;
+  observedOutcomes: Map<string, number>;
+}
+
+export interface CoverageGap {
+  kind: 'toggle' | 'transition' | 'cross' | 'operation' | 'assertion';
+  id: string;
+  missing: string[];
+}
+
 export interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
   cross: CrossCoverage[];
+  operations: OperationOutcomeCoverage[];
+  gaps: CoverageGap[];
   summary: { totalPoints: number; coveredPoints: number; percentage: number };
 }
 
@@ -40,6 +54,7 @@ export class CoverageCollector {
   private toggleMap = new Map<string, ToggleCoverage>();
   private transitionMap = new Map<string, TransitionCoverage>();
   private crossGroups = new Map<string, CrossCoverage>();
+  private operationOutcomes = new Map<string, OperationOutcomeCoverage>();
   private previousValues = new Map<string, any>();
 
   /** Start collecting coverage data. */
@@ -90,6 +105,40 @@ export class CoverageCollector {
   }
 
   /**
+   * Declare the finite outcome domain for an operation.
+   */
+  declareOperationOutcomes(operationName: string, outcomes: string[]): void {
+    let entry = this.operationOutcomes.get(operationName);
+    if (!entry) {
+      entry = {
+        operationName,
+        declaredOutcomes: new Set(),
+        observedOutcomes: new Map(),
+      };
+      this.operationOutcomes.set(operationName, entry);
+    }
+    for (const outcome of outcomes) entry.declaredOutcomes.add(outcome);
+  }
+
+  /**
+   * Record an observed operation outcome.
+   */
+  recordOperationOutcome(operationName: string, outcome: string): void {
+    if (!this.enabled) return;
+    let entry = this.operationOutcomes.get(operationName);
+    if (!entry) {
+      entry = {
+        operationName,
+        declaredOutcomes: new Set([outcome]),
+        observedOutcomes: new Map(),
+      };
+      this.operationOutcomes.set(operationName, entry);
+    }
+    entry.declaredOutcomes.add(outcome);
+    entry.observedOutcomes.set(outcome, (entry.observedOutcomes.get(outcome) ?? 0) + 1);
+  }
+
+  /**
    * Register a cross-coverage group before recording observations.
    */
   registerCrossGroup(groupId: string, signalIds: string[]): void {
@@ -129,6 +178,8 @@ export class CoverageCollector {
     const toggle = [...this.toggleMap.values()];
     const transitions = [...this.transitionMap.values()];
     const cross = [...this.crossGroups.values()];
+    const operations = [...this.operationOutcomes.values()];
+    const gaps: CoverageGap[] = [];
 
     let totalPoints = 0;
     let coveredPoints = 0;
@@ -137,11 +188,29 @@ export class CoverageCollector {
       totalPoints += 2;
       if (t.seenTrue) coveredPoints++;
       if (t.seenFalse) coveredPoints++;
+      const missing: string[] = [];
+      if (!t.seenTrue) missing.push('true');
+      if (!t.seenFalse) missing.push('false');
+      if (missing.length > 0) gaps.push({ kind: 'toggle', id: t.signalId, missing });
     }
 
     for (const c of cross) {
       totalPoints += c.total;
       coveredPoints += c.observed.size;
+      const missing: string[] = [];
+      const n = c.signals.length;
+      for (let i = 0; i < c.total && missing.length < 128; i++) {
+        const key = Array.from({ length: n }, (_, bit) => (i >> (n - 1 - bit)) & 1 ? '1' : '0').join(',');
+        if (!c.observed.has(key)) missing.push(key);
+      }
+      if (missing.length > 0) gaps.push({ kind: 'cross', id: c.groupId, missing });
+    }
+
+    for (const op of operations) {
+      totalPoints += op.declaredOutcomes.size;
+      coveredPoints += [...op.declaredOutcomes].filter(outcome => op.observedOutcomes.has(outcome)).length;
+      const missing = [...op.declaredOutcomes].filter(outcome => !op.observedOutcomes.has(outcome));
+      if (missing.length > 0) gaps.push({ kind: 'operation', id: op.operationName, missing });
     }
 
     const percentage = totalPoints > 0 ? (coveredPoints / totalPoints) * 100 : 0;
@@ -150,6 +219,8 @@ export class CoverageCollector {
       toggle,
       transitions,
       cross,
+      operations,
+      gaps,
       summary: { totalPoints, coveredPoints, percentage },
     };
   }
@@ -159,6 +230,7 @@ export class CoverageCollector {
     this.toggleMap.clear();
     this.transitionMap.clear();
     this.crossGroups.clear();
+    this.operationOutcomes.clear();
     this.previousValues.clear();
   }
 }

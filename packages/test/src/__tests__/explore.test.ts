@@ -160,6 +160,49 @@ describe('explore', () => {
     expect(result.violations[0].assertionName).toBe('mutex');
   });
 
+  it('catches assertions that read propagated derived graph values', async () => {
+    const g = new CircuitGraph();
+    let aVal = false;
+
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: boolean) => {
+      aVal = v;
+    });
+
+    const b = g.registerNode({
+      name: 'b',
+      type: 'derived',
+      deps: [a],
+      computeFn: () => !aVal,
+    });
+
+    const assertId = g.registerNode({ name: 'b-never-false', type: 'assertion', deps: [b] });
+    g.setAssertionFn(assertId, () => g.getNode(b)!.getValue!(), 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.violations.some(v => v.assertionName === 'b-never-false')).toBe(true);
+  });
+
+  it('returns real toggle coverage from driven states', async () => {
+    const g = new CircuitGraph();
+    let flagVal = false;
+
+    const flag = g.registerNode({ name: 'flag', type: 'signal' });
+    g.setNodeValue(flag, () => flagVal);
+    g.setNodeSetter(flag, (v: boolean) => {
+      flagVal = v;
+    });
+
+    const assertId = g.registerNode({ name: 'flag-observed', type: 'assertion', deps: [flag] });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await explore(g, { budget: 10 });
+
+    expect(result.coverage.toggle).toBeGreaterThan(0);
+  });
+
   it('reports no violations when assertions hold', async () => {
     const g = new CircuitGraph();
     let aVal = false;

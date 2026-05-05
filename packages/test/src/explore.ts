@@ -1,6 +1,6 @@
 // explore.ts — Main explore() function: backward-cone-driven state exploration
 
-import type { CircuitGraph } from '@veriscope/graph';
+import { coverage, type CircuitGraph, type CoverageReport } from '@veriscope/graph';
 import { backwardCone } from './backward-solve.js';
 import { parseComputeFn } from './fn-parser.js';
 import type { ExploreOptions, ExploreResult, Violation } from './types.js';
@@ -21,6 +21,8 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
   let steps = 0;
 
   graph.enterTestMode();
+  coverage.reset();
+  graph.enableCoverage();
 
   // Save original signal values so we can restore after exploration
   const signalNodes = graph.getNodes().filter(n => n.type === 'signal' && n.getValue);
@@ -29,197 +31,211 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     savedValues.set(node.id, node.getValue!());
   }
 
-  // 1. Discover assertions
-  const assertions = graph.getAssertions();
+  try {
+    // 1. Discover assertions
+    const assertions = graph.getAssertions();
 
-  // 2. For each assertion, find its upstream roots
-  for (const assertion of assertions) {
-    const roots = backwardCone(graph, assertion.id);
-    const rootNodes = roots
-      .map(id => graph.getNode(id))
-      .filter((n): n is NonNullable<typeof n> => n != null);
+    // 2. For each assertion, find its upstream roots
+    for (const assertion of assertions) {
+      const roots = backwardCone(graph, assertion.id);
+      const rootNodes = roots
+        .map(id => graph.getNode(id))
+        .filter((n): n is NonNullable<typeof n> => n != null);
 
-    // 3a. Separate boolean and non-boolean roots
-    const boolRoots = rootNodes.filter(n => {
-      if (!n.getValue) return false;
-      const v = n.getValue();
-      return typeof v === 'boolean';
-    });
+      // 3a. Separate boolean and non-boolean roots
+      const boolRoots = rootNodes.filter(n => {
+        if (!n.getValue) return false;
+        const v = n.getValue();
+        return typeof v === 'boolean';
+      });
 
-    const nonBoolRoots = rootNodes.filter(n => {
-      if (!n.getValue) return false;
-      const v = n.getValue();
-      return typeof v !== 'boolean';
-    });
+      const nonBoolRoots = rootNodes.filter(n => {
+        if (!n.getValue) return false;
+        const v = n.getValue();
+        return typeof v !== 'boolean';
+      });
 
-    // 3b. Detect patterns in the assertion to determine non-boolean values to try
-    const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
-    const fnSource = userCheckFn.toString();
-    const nonNullSignals = new Set<string>();
-    const nullableSignals = new Set<string>();
+      // 3b. Detect patterns in the assertion to determine non-boolean values to try
+      const userCheckFn = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+      const fnSource = userCheckFn.toString();
+      const nonNullSignals = new Set<string>();
+      const nullableSignals = new Set<string>();
 
-    for (const m of fnSource.matchAll(/(\w+)\.val\s*!==\s*null\b/g)) {
-      nonNullSignals.add(m[1]);
-    }
-    for (const m of fnSource.matchAll(/(\w+)\.val\s*===\s*null\b/g)) {
-      nullableSignals.add(m[1]);
-    }
+      for (const m of fnSource.matchAll(/(\w+)\.val\s*!==\s*null\b/g)) {
+        nonNullSignals.add(m[1]);
+      }
+      for (const m of fnSource.matchAll(/(\w+)\.val\s*===\s*null\b/g)) {
+        nullableSignals.add(m[1]);
+      }
 
-    const totalCombos = Math.max(1, (1 << boolRoots.length) * (nonBoolRoots.length > 0 ? 2 : 1));
+      const totalCombos = Math.max(1, (1 << boolRoots.length) * (nonBoolRoots.length > 0 ? 2 : 1));
 
-    if ((boolRoots.length > 0 || nonBoolRoots.length > 0) && rootNodes.length <= 15) {
-      // 4. Enumerate combinations of booleans × non-boolean value variants
-      for (let i = 0; i < totalCombos && steps < budget; i++) {
-        const boolIdx = i % (1 << boolRoots.length);
-        const nonBoolIdx = Math.floor(i / (1 << boolRoots.length));
-        const boolCombo = boolRoots.map((_, j) => !!(boolIdx & (1 << j)));
+      if ((boolRoots.length > 0 || nonBoolRoots.length > 0) && rootNodes.length <= 15) {
+        // 4. Enumerate combinations of booleans × non-boolean value variants
+        for (let i = 0; i < totalCombos && steps < budget; i++) {
+          const boolIdx = i % (1 << boolRoots.length);
+          const nonBoolIdx = Math.floor(i / (1 << boolRoots.length));
+          const boolCombo = boolRoots.map((_, j) => !!(boolIdx & (1 << j)));
 
-        graph.openTick();
+          graph.openTick();
 
-        // Set boolean roots
-        boolRoots.forEach((node, j) => {
-          if (node.setValue) {
-            node.setValue(boolCombo[j]);
-          }
-        });
-
-        // Set non-boolean roots
-        nonBoolRoots.forEach((node) => {
-          if (node.setValue && node.type === 'signal') {
-            const currentVal = node.getValue?.();
-            let valueToSet: any;
-
-            if (nonNullSignals.has(node.name)) {
-              // Signal is checked for !== null: try non-null value
-              valueToSet = nonBoolIdx === 0 ?
-                (typeof currentVal === 'string' ? 'error' : 1) :
-                (typeof currentVal === 'string' ? 'test' : 42);
-            } else if (nullableSignals.has(node.name)) {
-              // Signal is checked for === null: try null
-              valueToSet = null;
-            } else {
-              // Generic non-boolean: alternate between null/initial and non-null
-              valueToSet = nonBoolIdx === 0 ? currentVal :
-                (typeof currentVal === 'string' ? 'value' : 1);
+          // Set boolean roots
+          boolRoots.forEach((node, j) => {
+            if (node.setValue) {
+              graph.driveNodeValue(node.id, boolCombo[j]);
             }
+          });
 
-            node.setValue(valueToSet);
+          // Set non-boolean roots
+          nonBoolRoots.forEach((node) => {
+            if (node.setValue && node.type === 'signal') {
+              const currentVal = node.getValue?.();
+              let valueToSet: any;
+
+              if (nonNullSignals.has(node.name)) {
+                // Signal is checked for !== null: try non-null value
+                valueToSet = nonBoolIdx === 0 ?
+                  (typeof currentVal === 'string' ? 'error' : 1) :
+                  (typeof currentVal === 'string' ? 'test' : 42);
+              } else if (nullableSignals.has(node.name)) {
+                // Signal is checked for === null: try null
+                valueToSet = null;
+              } else {
+                // Generic non-boolean: alternate between null/initial and non-null
+                valueToSet = nonBoolIdx === 0 ? currentVal :
+                  (typeof currentVal === 'string' ? 'value' : 1);
+              }
+
+              graph.driveNodeValue(node.id, valueToSet);
+            }
+          });
+
+          await flush();
+
+          // Check assertions
+          const v = graph.checkAssertions();
+          graph.closeTick();
+
+          if (v.length > 0) {
+            const signalValues: Record<string, any> = {};
+            boolRoots.forEach((n, j) => {
+              signalValues[n.name] = boolCombo[j];
+            });
+            nonBoolRoots.forEach((n) => {
+              signalValues[n.name] = n.getValue?.();
+            });
+
+            for (const violation of v) {
+              violations.push({
+                assertionName: violation.name,
+                tick: graph.currentTick,
+                signalValues,
+                sequence: [
+                  ...boolCombo.map((val, j) => ({
+                    signal: boolRoots[j].name,
+                    value: val,
+                  })),
+                  ...nonBoolRoots.map((n) => ({
+                    signal: n.name,
+                    value: n.getValue?.(),
+                  })),
+                ],
+              });
+            }
           }
-        });
 
+          // 5. Check for pending eventually assertions and try to resolve them
+          await resolveEventuallyAssertions(graph, assertions, rootNodes, flush);
+
+          steps++;
+        }
+      } else if (boolRoots.length === 0 && nonBoolRoots.length === 0) {
+        // No roots found — just check assertion at current state
+        graph.openTick();
         await flush();
-
-        // Check assertions
         const v = graph.checkAssertions();
         graph.closeTick();
-
         if (v.length > 0) {
-          const signalValues: Record<string, any> = {};
-          boolRoots.forEach((n, j) => {
-            signalValues[n.name] = boolCombo[j];
-          });
-          nonBoolRoots.forEach((n) => {
-            signalValues[n.name] = n.getValue?.();
-          });
-
           for (const violation of v) {
             violations.push({
               assertionName: violation.name,
               tick: graph.currentTick,
-              signalValues,
-              sequence: [
-                ...boolCombo.map((val, j) => ({
-                  signal: boolRoots[j].name,
-                  value: val,
-                })),
-                ...nonBoolRoots.map((n) => ({
-                  signal: n.name,
-                  value: n.getValue?.(),
-                })),
-              ],
+              signalValues: {},
+              sequence: [],
             });
           }
         }
-
-        // 5. Check for pending eventually assertions and try to resolve them
-        await resolveEventuallyAssertions(graph, assertions, rootNodes, flush);
-
         steps++;
       }
-    } else if (boolRoots.length === 0 && nonBoolRoots.length === 0) {
-      // No roots found — just check assertion at current state
-      graph.openTick();
-      await flush();
-      const v = graph.checkAssertions();
-      graph.closeTick();
-      if (v.length > 0) {
-        for (const violation of v) {
-          violations.push({
-            assertionName: violation.name,
-            tick: graph.currentTick,
-            signalValues: {},
-            sequence: [],
-          });
+    }
+
+    // 6. Adversarial pass — try to break each assertion
+    if (steps < budget) {
+      const advViolations = await adversarialPass(graph, assertions, flush, budget - steps);
+      violations.push(...advViolations.violations);
+      steps += advViolations.steps;
+    }
+
+    // 7. Coverage completion pass — drive untoggled booleans and FSM states
+    if (steps < budget) {
+      for (const node of signalNodes) {
+        if (steps >= budget) break;
+        if (!node.setValue) continue;
+
+        const currentVal = node.getValue?.();
+
+        if (typeof currentVal === 'boolean') {
+          // Toggle to both true and false
+          for (const val of [true, false]) {
+            graph.openTick();
+            graph.driveNodeValue(node.id, val);
+            await flush();
+            graph.closeTick();
+            steps++;
+          }
+        }
+
+        // FSM signals with known states — drive through each state
+        if (node.metadata?.states && Array.isArray(node.metadata.states)) {
+          for (const state of node.metadata.states) {
+            if (steps >= budget) break;
+            graph.openTick();
+            graph.driveNodeValue(node.id, state);
+            await flush();
+            graph.closeTick();
+            steps++;
+          }
         }
       }
-      steps++;
     }
-  }
 
-  // 6. Adversarial pass — try to break each assertion
-  if (steps < budget) {
-    const advViolations = await adversarialPass(graph, assertions, flush, budget - steps);
-    violations.push(...advViolations.violations);
-    steps += advViolations.steps;
-  }
-
-  // 7. Coverage completion pass — drive untoggled booleans and FSM states
-  if (steps < budget) {
+    const report = coverage.getReport();
+    return {
+      violations,
+      coverage: summarizeCoverage(report),
+      steps,
+    };
+  } finally {
+    graph.disableCoverage();
+    graph.openTick();
     for (const node of signalNodes) {
-      if (steps >= budget) break;
-      if (!node.setValue) continue;
-
-      const currentVal = node.getValue?.();
-
-      if (typeof currentVal === 'boolean') {
-        // Toggle to both true and false
-        for (const val of [true, false]) {
-          graph.openTick();
-          node.setValue(val);
-          await flush();
-          graph.closeTick();
-          steps++;
-        }
-      }
-
-      // FSM signals with known states — drive through each state
-      if (node.metadata?.states && Array.isArray(node.metadata.states)) {
-        for (const state of node.metadata.states) {
-          if (steps >= budget) break;
-          graph.openTick();
-          node.setValue(state);
-          await flush();
-          graph.closeTick();
-          steps++;
-        }
+      if (node.setValue && savedValues.has(node.id)) {
+        graph.driveNodeValue(node.id, savedValues.get(node.id));
       }
     }
+    graph.closeTick();
+    graph.exitTestMode();
   }
+}
 
-  // Restore original signal values
-  graph.openTick();
-  for (const node of signalNodes) {
-    if (node.setValue && savedValues.has(node.id)) {
-      node.setValue(savedValues.get(node.id));
-    }
-  }
-  graph.closeTick();
-  graph.exitTestMode();
-
+function summarizeCoverage(report: CoverageReport): ExploreResult['coverage'] {
   return {
-    violations,
-    coverage: { toggle: 0, transitions: 0, cross: 0 },
-    steps,
+    toggle: report.toggle.reduce(
+      (sum, entry) => sum + (entry.seenTrue ? 1 : 0) + (entry.seenFalse ? 1 : 0),
+      0,
+    ),
+    transitions: report.transitions.reduce((sum, entry) => sum + entry.transitions.size, 0),
+    cross: report.cross.reduce((sum, entry) => sum + entry.observed.size, 0),
   };
 }
 
@@ -328,7 +344,7 @@ async function driveFromParsed(
   for (const name of parsed.negations) {
     const node = nodeByName.get(name);
     if (node?.setValue) {
-      node.setValue(false);
+      graph.driveNodeValue(node.id, false);
     }
   }
 
@@ -336,7 +352,7 @@ async function driveFromParsed(
   for (const name of parsed.affirmatives) {
     const node = nodeByName.get(name);
     if (node?.setValue) {
-      node.setValue(true);
+      graph.driveNodeValue(node.id, true);
     }
   }
 
@@ -345,7 +361,7 @@ async function driveFromParsed(
     for (const name of group) {
       const node = nodeByName.get(name);
       if (node?.setValue) {
-        node.setValue(true);
+        graph.driveNodeValue(node.id, true);
         break; // only need one disjunct to be true
       }
     }
@@ -371,7 +387,7 @@ async function driveObservational(
 
     for (const val of [true, false]) {
       graph.openTick();
-      node.setValue!(val);
+      graph.driveNodeValue(node.id, val);
       await flush();
       graph.checkAssertions();
       graph.closeTick();
@@ -488,7 +504,7 @@ async function adversarialPass(
         for (const [name, value] of targetValues) {
           const node = nodeByName.get(name);
           if (node?.setValue) {
-            node.setValue(value);
+            graph.driveNodeValue(node.id, value);
           }
         }
         await flush();

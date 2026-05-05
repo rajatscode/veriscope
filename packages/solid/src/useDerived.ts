@@ -17,14 +17,22 @@ export function useDerived<T>(
   options?: UseDerivedOptions,
 ): ReadonlySignal<T> {
   const g = options?.graph ?? defaultGraph;
+  let prev: T | undefined;
+  let current = undefined as T;
+
+  const computeForGraph = () => {
+    const result = fn();
+    current = result;
+    prev = result;
+    return result;
+  };
 
   const nodeId = g.registerNode({
     name,
     type: 'derived',
     deps: deps.map(d => d.nodeId),
+    computeFn: computeForGraph,
   });
-
-  let prev: T | undefined;
 
   const memo = createMemo(() => {
     // Read all deps to establish Solid's tracking
@@ -34,10 +42,11 @@ export function useDerived<T>(
       g.notifyChange(nodeId, prev, result);
       prev = result;
     }
+    current = result;
     return result;
   });
 
-  g.setNodeValue(nodeId, memo);
+  g.setNodeValue(nodeId, () => current);
 
   onCleanup(() => g.disposeNode(nodeId));
 

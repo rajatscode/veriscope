@@ -22,6 +22,64 @@ describe('CircuitGraph', () => {
     g.stopRecording();
   });
 
+  it('propagates headless derived nodes in dependency order', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (next: boolean) => {
+      aVal = next;
+    });
+
+    const b = g.registerNode({
+      name: 'notA',
+      type: 'derived',
+      deps: [a],
+      computeFn: () => !aVal,
+    });
+    const c = g.registerNode({
+      name: 'label',
+      type: 'derived',
+      deps: [b],
+      computeFn: () => g.getNode(b)!.getValue!() ? 'enabled' : 'disabled',
+    });
+
+    expect(g.getNode(b)!.getValue!()).toBe(true);
+    expect(g.getNode(c)!.getValue!()).toBe('enabled');
+
+    const events: string[] = [];
+    g.subscribe(event => {
+      if (event.type === 'derived-recompute') events.push(event.nodeId);
+    });
+
+    g.openTick();
+    g.driveNodeValue(a, true);
+
+    expect(g.getNode(b)!.getValue!()).toBe(false);
+    expect(g.getNode(c)!.getValue!()).toBe('disabled');
+    expect(events).toEqual([b, c]);
+
+    g.closeTick();
+    g.exitTestMode();
+  });
+
+  it('resolves updater functions when driving headless signal nodes', () => {
+    const g = new CircuitGraph();
+    let count = 1;
+    const countId = g.registerNode({ name: 'count', type: 'signal' });
+    g.setNodeValue(countId, () => count);
+    g.setNodeSetter(countId, (next: number) => {
+      count = next;
+    });
+
+    g.driveNodeValue(countId, (prev: number) => prev + 2);
+
+    expect(count).toBe(3);
+    expect(g.getNode(countId)?.getValue?.()).toBe(3);
+  });
+
   it('diffs two snapshots', () => {
     const g1 = new CircuitGraph();
     g1.registerNode({ name: 'a', type: 'signal' });
@@ -228,6 +286,75 @@ describe('CircuitGraph', () => {
     expect(snap.nodes).toHaveLength(1);
     expect(snap.nodes[0].name).toBe('x');
     expect(snap.nodes[0].type).toBe('signal');
+  });
+
+  it('snapshots use stable paths and keep repeated instances distinct', () => {
+    const g = new CircuitGraph();
+    g.registerNode({ name: 'cell.value', type: 'signal', stablePath: 'Board/Cell:a/value' });
+    g.registerNode({ name: 'cell.value', type: 'signal', stablePath: 'Board/Cell:b/value' });
+    g.registerNode({ name: 'status', type: 'signal', metadata: { scope: 'Board' } });
+    g.registerNode({ name: 'status', type: 'signal', metadata: { scope: 'Board' } });
+
+    const snap = g.snapshot({ fixture: 'stable-path-test' });
+    const paths = snap.nodes.map(n => n.stablePath);
+
+    expect(snap.schemaVersion).toBe(1);
+    expect(snap.captureContext?.fixture).toBe('stable-path-test');
+    expect(paths).toContain('Board/Cell:a/value');
+    expect(paths).toContain('Board/Cell:b/value');
+    expect(paths).toContain('Board/status');
+    expect(paths).toContain('Board/status[1]');
+  });
+
+  it('preserves waveform history and records an end marker when disposing nodes', () => {
+    const g = new CircuitGraph();
+    let value = false;
+    const flag = g.registerNode({ name: 'flag', type: 'signal' });
+    g.setNodeValue(flag, () => value);
+
+    g.startRecording();
+    value = true;
+    g.notifyChange(flag, false, true);
+    g.disposeNode(flag);
+
+    expect(g.getNode(flag)).toBeUndefined();
+    const wave = g.getWaveformData().get(flag);
+    expect(wave).toBeDefined();
+    expect(wave?.at(-1)?.lifecycle).toBe('ended');
+
+    const snap = g.snapshot();
+    expect(snap.disposedNodes?.some(n => n.runtimeId === flag && n.disposedAtTick !== undefined)).toBe(true);
+    expect(snap.waveforms?.flag?.at(-1)?.lifecycle).toBe('ended');
+  });
+
+  it('records external operation spans and links response-side events', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+    const status = g.registerNode({ name: 'status', type: 'signal' });
+    let statusValue = 'idle';
+    g.setNodeValue(status, () => statusValue);
+    g.setNodeSetter(status, (next: string) => {
+      statusValue = next;
+    });
+
+    g.openTick();
+    const op = g.beginOperation('submit', { outcomes: ['resolved', 'rejected', 'timeout'] });
+    g.closeTick();
+
+    g.openTick();
+    g.resolveOperation(op, { ok: true });
+    g.withOperation(op, () => {
+      g.driveNodeValue(status, 'success');
+    });
+    g.closeTick();
+
+    const [span] = g.getOperations();
+    expect(span.name).toBe('submit');
+    expect(span.startedAtTick).toBe(0);
+    expect(span.completedAtTick).toBe(1);
+    expect(span.status).toBe('resolved');
+    expect(span.events.some(e => e.type === 'signal-change' && e.operationId === op)).toBe(true);
+    expect(g.snapshot().operations?.[0].events.some(e => e.operationId === op)).toBe(true);
   });
 
   it('enableCoverage records toggle for boolean signals', () => {

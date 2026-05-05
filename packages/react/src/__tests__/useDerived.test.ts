@@ -65,6 +65,27 @@ describe('useDerived', () => {
     expect(node?.deps).toContain(yResult.current.nodeId);
   });
 
+  it('registers computeFn so graph driving propagates derived values', () => {
+    const events: any[] = [];
+    graph.subscribe(e => events.push(e));
+
+    const { result } = renderHook(() => {
+      const sig = useSignal(2, 'x', { graph });
+      const derived = useDerived(() => sig.val * 2, [sig], 'doubled', { graph });
+      return { sig, derived };
+    });
+
+    const derivedNodeId = result.current.derived.nodeId;
+
+    act(() => {
+      graph.driveNodeValue(result.current.sig.nodeId, 5);
+    });
+
+    expect(result.current.derived.val).toBe(10);
+    expect(graph.getNode(derivedNodeId)?.getValue?.()).toBe(10);
+    expect(events.some(e => e.type === 'derived-recompute' && e.nodeId === derivedNodeId)).toBe(true);
+  });
+
   it('notifies graph only on actual value changes', () => {
     const events: any[] = [];
     graph.subscribe(e => events.push(e));

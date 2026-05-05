@@ -1,6 +1,13 @@
 // merge.ts — Merge coverage reports across test runs
 
-import type { CoverageReport, ToggleCoverage, TransitionCoverage, CrossCoverage } from '@veriscope/graph';
+import type {
+  CoverageGap,
+  CoverageReport,
+  CrossCoverage,
+  OperationOutcomeCoverage,
+  ToggleCoverage,
+  TransitionCoverage,
+} from '@veriscope/graph';
 
 /**
  * Merge multiple coverage reports into a single aggregate report.
@@ -13,6 +20,7 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
   const toggleMap = new Map<string, ToggleCoverage>();
   const transitionMap = new Map<string, TransitionCoverage>();
   const crossMap = new Map<string, CrossCoverage>();
+  const operationMap = new Map<string, OperationOutcomeCoverage>();
 
   for (const report of reports) {
     // Merge toggle coverage
@@ -63,12 +71,33 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
         });
       }
     }
+
+    // Merge operation outcome coverage
+    for (const op of report.operations ?? []) {
+      const existing = operationMap.get(op.operationName);
+      if (existing) {
+        for (const outcome of op.declaredOutcomes) {
+          existing.declaredOutcomes.add(outcome);
+        }
+        for (const [outcome, count] of op.observedOutcomes) {
+          existing.observedOutcomes.set(outcome, (existing.observedOutcomes.get(outcome) ?? 0) + count);
+        }
+      } else {
+        operationMap.set(op.operationName, {
+          operationName: op.operationName,
+          declaredOutcomes: new Set(op.declaredOutcomes),
+          observedOutcomes: new Map(op.observedOutcomes),
+        });
+      }
+    }
   }
 
   // Recalculate summary
   const toggle = [...toggleMap.values()];
   const transitions = [...transitionMap.values()];
   const cross = [...crossMap.values()];
+  const operations = [...operationMap.values()];
+  const gaps: CoverageGap[] = [];
 
   let totalPoints = 0;
   let coveredPoints = 0;
@@ -77,11 +106,29 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
     totalPoints += 2;
     if (t.seenTrue) coveredPoints++;
     if (t.seenFalse) coveredPoints++;
+    const missing: string[] = [];
+    if (!t.seenTrue) missing.push('true');
+    if (!t.seenFalse) missing.push('false');
+    if (missing.length > 0) gaps.push({ kind: 'toggle', id: t.signalId, missing });
   }
 
   for (const c of cross) {
     totalPoints += c.total;
     coveredPoints += c.observed.size;
+    const missing: string[] = [];
+    const n = c.signals.length;
+    for (let i = 0; i < c.total && missing.length < 128; i++) {
+      const key = Array.from({ length: n }, (_, bit) => (i >> (n - 1 - bit)) & 1 ? '1' : '0').join(',');
+      if (!c.observed.has(key)) missing.push(key);
+    }
+    if (missing.length > 0) gaps.push({ kind: 'cross', id: c.groupId, missing });
+  }
+
+  for (const op of operations) {
+    totalPoints += op.declaredOutcomes.size;
+    coveredPoints += [...op.declaredOutcomes].filter(outcome => op.observedOutcomes.has(outcome)).length;
+    const missing = [...op.declaredOutcomes].filter(outcome => !op.observedOutcomes.has(outcome));
+    if (missing.length > 0) gaps.push({ kind: 'operation', id: op.operationName, missing });
   }
 
   const percentage = totalPoints > 0 ? (coveredPoints / totalPoints) * 100 : 0;
@@ -90,6 +137,8 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
     toggle,
     transitions,
     cross,
+    operations,
+    gaps,
     summary: { totalPoints, coveredPoints, percentage },
   };
 }
@@ -112,6 +161,12 @@ export function saveCoverageToFile(report: CoverageReport, path: string): void {
       observed: Object.fromEntries(c.observed),
       total: c.total,
     })),
+    operations: report.operations.map(o => ({
+      operationName: o.operationName,
+      declaredOutcomes: [...o.declaredOutcomes],
+      observedOutcomes: Object.fromEntries(o.observedOutcomes),
+    })),
+    gaps: report.gaps,
     summary: report.summary,
   };
 
@@ -140,6 +195,12 @@ export function loadCoverageFromFile(path: string): CoverageReport {
       observed: new Map(Object.entries(c.observed).map(([k, v]) => [k, v as number])),
       total: c.total,
     })),
+    operations: (raw.operations ?? []).map((o: any) => ({
+      operationName: o.operationName,
+      declaredOutcomes: new Set(o.declaredOutcomes as string[]),
+      observedOutcomes: new Map(Object.entries(o.observedOutcomes ?? {}).map(([k, v]) => [k, v as number])),
+    })),
+    gaps: raw.gaps ?? [],
     summary: raw.summary,
   };
 }

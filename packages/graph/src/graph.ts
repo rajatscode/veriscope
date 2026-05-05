@@ -1,7 +1,20 @@
 // graph.ts — CircuitGraph: introspectable reactive dependency graph
 // Extracted from Comb's runtime, simplified for framework-agnostic use
 
-import type { GraphNode, GraphEdge, GraphEvent, GraphSnapshot, GraphDiff, NodeType, AssertionViolation, CdcWarning } from './types.js';
+import type {
+  AssertionMetadata,
+  AssertionViolation,
+  CdcWarning,
+  GraphDiff,
+  GraphEdge,
+  GraphEvent,
+  GraphNode,
+  GraphSnapshot,
+  NodeType,
+  OperationSpan,
+  OperationStatus,
+  WaveformPoint,
+} from './types.js';
 import { coverage } from './coverage.js';
 
 const EVENT_BUFFER_SIZE = 256;
@@ -14,9 +27,16 @@ export class CircuitGraph {
   private events: GraphEvent[] = [];
   private eventWriteIdx = 0;
   private eventsFull = false;
+  private eventSeq = 0;
   private listeners = new Set<(event: GraphEvent) => void>();
   private recording = false;
-  private waveforms = new Map<string, Array<{ t: number; v: any }>>();
+  private waveforms = new Map<string, WaveformPoint[]>();
+  private disposedNodes = new Map<string, GraphNode>();
+  private stablePathCounts = new Map<string, number>();
+  private operations = new Map<string, OperationSpan>();
+  private operationStack: string[] = [];
+  private operationCounter = 0;
+  private captureContext: Record<string, any> = {};
   private _currentTick = 0;
   private testMode = false;
   private tickOpen = false;
@@ -33,17 +53,47 @@ export class CircuitGraph {
 
   // --- Node management ---
 
-  registerNode(info: { name: string; type: NodeType; deps?: string[]; metadata?: Record<string, any> }): string {
+  registerNode(info: {
+    name: string;
+    type: NodeType;
+    deps?: string[];
+    stablePath?: string;
+    metadata?: Record<string, any>;
+    assertionMetadata?: AssertionMetadata;
+    computeFn?: () => any;
+  }): string {
     const id = `${info.name}_${idCounter++}`;
-    this.nodes.set(id, {
+    const stablePath = this.allocateStablePath(info.name, info.stablePath, info.metadata);
+    const node: GraphNode = {
       id,
+      stablePath,
       name: info.name,
       type: info.type,
       deps: info.deps ?? [],
       getValue: null,
       setValue: null,
       metadata: info.metadata,
-    });
+      assertionMetadata: info.assertionMetadata,
+      computeFn: info.computeFn,
+      createdAtTick: this._currentTick,
+    };
+    this.nodes.set(id, node);
+
+    if (info.computeFn) {
+      try {
+        node.currentValue = info.computeFn();
+        node.hasCurrentValue = true;
+      } catch (_) {
+        node.hasCurrentValue = false;
+      }
+      node.getValue = () => {
+        if (!node.hasCurrentValue) {
+          node.currentValue = node.computeFn!();
+          node.hasCurrentValue = true;
+        }
+        return node.currentValue;
+      };
+    }
 
     // Add edges from deps
     if (info.deps) {
@@ -52,7 +102,28 @@ export class CircuitGraph {
       }
     }
 
+    this.emitEvent({
+      type: 'node-created',
+      nodeId: id,
+      stablePath,
+      tick: this._currentTick,
+      metadata: {
+        name: info.name,
+        type: info.type,
+        deps: info.deps ?? [],
+      },
+    });
+
     return id;
+  }
+
+  private allocateStablePath(name: string, explicit?: string, metadata?: Record<string, any>): string {
+    const base = explicit
+      ?? metadata?.stablePath
+      ?? (metadata?.scope ? `${metadata.scope}/${name}` : name);
+    const count = this.stablePathCounts.get(base) ?? 0;
+    this.stablePathCounts.set(base, count + 1);
+    return count === 0 ? base : `${base}[${count}]`;
   }
 
   addEdge(from: string, to: string): void {
@@ -72,6 +143,102 @@ export class CircuitGraph {
     if (node) node.setValue = setter;
   }
 
+  driveNodeValue(id: string, value: any): void {
+    const node = this.nodes.get(id);
+    if (!node?.setValue) return;
+
+    const oldValue = node.getValue?.();
+    const nextValue = typeof value === 'function' ? value(oldValue) : value;
+    const beforeEventSeq = this.eventSeq;
+    node.setValue(nextValue);
+    const newValue = node.getValue?.();
+
+    if (!Object.is(oldValue, newValue) && this.eventSeq === beforeEventSeq) {
+      this.notifyChange(id, oldValue, newValue);
+    }
+
+    if (!Object.is(oldValue, newValue)) {
+      this.propagate(id);
+    }
+  }
+
+  propagate(fromNodeId?: string): void {
+    const candidates = this.collectDownstreamDerivedNodes(fromNodeId);
+    const ordered = this.topologicalDerivedOrder(candidates);
+
+    for (const id of ordered) {
+      const node = this.nodes.get(id);
+      if (!node?.computeFn) continue;
+
+      const oldValue = node.getValue?.();
+      const newValue = node.computeFn();
+      node.currentValue = newValue;
+      node.hasCurrentValue = true;
+
+      if (!Object.is(oldValue, newValue)) {
+        this.notifyChange(id, oldValue, newValue);
+      }
+    }
+  }
+
+  private collectDownstreamDerivedNodes(fromNodeId?: string): Set<string> {
+    const candidates = new Set<string>();
+
+    if (!fromNodeId) {
+      for (const node of this.nodes.values()) {
+        if (node.type === 'derived') candidates.add(node.id);
+      }
+      return candidates;
+    }
+
+    const queue = [fromNodeId];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      for (const edge of this.edges) {
+        if (edge.from !== current) continue;
+        const downstream = this.nodes.get(edge.to);
+        if (!downstream) continue;
+        if (downstream.type === 'derived') candidates.add(downstream.id);
+        queue.push(downstream.id);
+      }
+    }
+
+    return candidates;
+  }
+
+  private topologicalDerivedOrder(candidates: Set<string>): string[] {
+    const ids = [...candidates];
+    const indegree = new Map(ids.map(id => [id, 0]));
+    const children = new Map(ids.map(id => [id, [] as string[]]));
+
+    for (const edge of this.edges) {
+      if (!candidates.has(edge.from) || !candidates.has(edge.to)) continue;
+      indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
+      children.get(edge.from)?.push(edge.to);
+    }
+
+    const queue = ids.filter(id => (indegree.get(id) ?? 0) === 0);
+    const ordered: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      ordered.push(id);
+      for (const child of children.get(id) ?? []) {
+        indegree.set(child, (indegree.get(child) ?? 0) - 1);
+        if ((indegree.get(child) ?? 0) === 0) queue.push(child);
+      }
+    }
+
+    for (const id of ids) {
+      if (!ordered.includes(id)) ordered.push(id);
+    }
+
+    return ordered;
+  }
+
   setAssertionFn(id: string, fn: () => boolean, kind: 'always' | 'never' | 'after'): void {
     const node = this.nodes.get(id);
     if (node) {
@@ -88,15 +255,40 @@ export class CircuitGraph {
     }
   }
 
+  setAssertionMetadata(id: string, metadata: AssertionMetadata): void {
+    const node = this.nodes.get(id);
+    if (node) {
+      node.assertionMetadata = {
+        ...node.assertionMetadata,
+        ...metadata,
+      };
+    }
+  }
+
   getAssertionUserCheckFn(id: string): (() => boolean) | undefined {
     const node = this.nodes.get(id);
     return node?.metadata?.userCheckFn;
   }
 
   disposeNode(id: string): void {
-    this.nodes.delete(id);
+    const node = this.nodes.get(id);
+    if (!node) return;
+
+    node.disposedAtTick = this._currentTick;
+    this.disposedNodes.set(id, { ...node, deps: [...node.deps] });
+    this.markWaveformEnded(id);
     this.edges = this.edges.filter(e => e.from !== id && e.to !== id);
-    this.waveforms.delete(id);
+    this.nodes.delete(id);
+    this.emitEvent({
+      type: 'node-disposed',
+      nodeId: id,
+      stablePath: node.stablePath,
+      tick: this._currentTick,
+      metadata: {
+        name: node.name,
+        type: node.type,
+      },
+    });
   }
 
   // --- Event recording (ring buffer) ---
@@ -107,6 +299,7 @@ export class CircuitGraph {
   }
 
   private pushEvent(event: GraphEvent): void {
+    this.eventSeq++;
     if (this.eventsFull) {
       this.events[this.eventWriteIdx] = event;
     } else {
@@ -115,6 +308,13 @@ export class CircuitGraph {
     this.eventWriteIdx = (this.eventWriteIdx + 1) % EVENT_BUFFER_SIZE;
     if (!this.eventsFull && this.events.length >= EVENT_BUFFER_SIZE) {
       this.eventsFull = true;
+    }
+  }
+
+  private emitEvent(event: GraphEvent): void {
+    this.pushEvent(event);
+    for (const listener of this.listeners) {
+      listener(event);
     }
   }
 
@@ -155,10 +355,12 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type: eventType,
       nodeId,
+      stablePath: node.stablePath,
       tick: this._currentTick,
       oldValue,
       newValue,
     };
+    this.attachActiveOperation(event);
 
     this.pushEvent(event);
     if (this.recording) this.recordWaveform(nodeId, newValue);
@@ -224,8 +426,10 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type: 'effect-run',
       nodeId,
+      stablePath: this.nodes.get(nodeId)?.stablePath,
       tick: this._currentTick,
     };
+    this.attachActiveOperation(event);
     this.pushEvent(event);
     for (const listener of this.listeners) {
       listener(event);
@@ -236,8 +440,10 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type: 'assertion-armed',
       nodeId,
+      stablePath: this.nodes.get(nodeId)?.stablePath,
       tick: this._currentTick,
     };
+    this.attachActiveOperation(event);
     this.pushEvent(event);
     for (const listener of this.listeners) listener(event);
   }
@@ -246,8 +452,10 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type: 'assertion-passed',
       nodeId,
+      stablePath: this.nodes.get(nodeId)?.stablePath,
       tick: this._currentTick,
     };
+    this.attachActiveOperation(event);
     this.pushEvent(event);
     for (const listener of this.listeners) listener(event);
   }
@@ -256,10 +464,133 @@ export class CircuitGraph {
     const event: GraphEvent = {
       type: 'assertion-failed',
       nodeId,
+      stablePath: this.nodes.get(nodeId)?.stablePath,
       tick: this._currentTick,
     };
+    this.attachActiveOperation(event);
     this.pushEvent(event);
     for (const listener of this.listeners) listener(event);
+  }
+
+  // --- External operation spans ---
+
+  beginOperation(name: string, metadata?: Record<string, any>): string {
+    if (!this.testMode) {
+      this.ensureTickOpen();
+      this.scheduleTickClose();
+    }
+
+    const id = `${name}_${this.operationCounter++}`;
+    const outcomes = metadata?.outcomes ?? metadata?.outcomeDomain;
+    if (Array.isArray(outcomes)) {
+      coverage.declareOperationOutcomes(name, outcomes.map(String));
+    }
+
+    const span: OperationSpan = {
+      id,
+      name,
+      status: 'pending',
+      startedAtTick: this._currentTick,
+      metadata,
+      events: [],
+      parentId: this.currentOperationId(),
+    };
+    this.operations.set(id, span);
+
+    this.emitOperationEvent(span, 'operation-begin', 'pending', metadata);
+    return id;
+  }
+
+  resolveOperation(id: string, value?: any): void {
+    this.completeOperation(id, 'resolved', 'operation-resolve', { value });
+  }
+
+  rejectOperation(id: string, error?: any): void {
+    this.completeOperation(id, 'rejected', 'operation-reject', { error });
+  }
+
+  abortOperation(id: string, reason?: any): void {
+    this.completeOperation(id, 'aborted', 'operation-abort', { reason });
+  }
+
+  timeoutOperation(id: string): void {
+    this.completeOperation(id, 'timeout', 'operation-timeout');
+  }
+
+  markOperationStale(id: string, newerId?: string): void {
+    const span = this.operations.get(id);
+    if (span) span.staleBecauseOf = newerId;
+    this.completeOperation(id, 'stale', 'operation-stale', { newerId });
+  }
+
+  withOperation<T>(id: string, fn: () => T): T {
+    this.operationStack.push(id);
+    try {
+      return fn();
+    } finally {
+      this.operationStack.pop();
+    }
+  }
+
+  getOperations(): OperationSpan[] {
+    return [...this.operations.values()].map(op => ({
+      ...op,
+      events: [...op.events],
+    }));
+  }
+
+  currentOperationId(): string | undefined {
+    return this.operationStack[this.operationStack.length - 1];
+  }
+
+  private completeOperation(
+    id: string,
+    status: OperationStatus,
+    eventType: GraphEvent['type'],
+    metadata?: Record<string, any>,
+  ): void {
+    if (!this.testMode) {
+      this.ensureTickOpen();
+      this.scheduleTickClose();
+    }
+
+    const span = this.operations.get(id);
+    if (!span) return;
+    span.status = status;
+    span.completedAtTick = this._currentTick;
+    if (this.coverageEnabled) {
+      coverage.recordOperationOutcome(span.name, status);
+    }
+    this.emitOperationEvent(span, eventType, status, metadata);
+  }
+
+  private emitOperationEvent(
+    span: OperationSpan,
+    type: GraphEvent['type'],
+    status: OperationStatus,
+    metadata?: Record<string, any>,
+  ): void {
+    const event: GraphEvent = {
+      type,
+      nodeId: `operation:${span.id}`,
+      tick: this._currentTick,
+      operationId: span.id,
+      operationName: span.name,
+      status,
+      metadata,
+    };
+    span.events.push(event);
+    this.emitEvent(event);
+  }
+
+  private attachActiveOperation(event: GraphEvent): void {
+    const operationId = this.currentOperationId();
+    if (!operationId) return;
+    const span = this.operations.get(operationId);
+    if (!span) return;
+    event.operationId = span.id;
+    event.operationName = span.name;
+    span.events.push(event);
   }
 
   // --- Queries ---
@@ -276,7 +607,16 @@ export class CircuitGraph {
     return this.nodes.get(id);
   }
 
-  getAssertions(): Array<{ id: string; name: string; kind: string; checkFn: () => boolean; deps: string[]; originalCheckFn?: () => boolean }> {
+  getAssertions(): Array<{
+    id: string;
+    name: string;
+    kind: string;
+    checkFn: () => boolean;
+    deps: string[];
+    stablePath: string;
+    metadata?: AssertionMetadata;
+    originalCheckFn?: () => boolean;
+  }> {
     return [...this.nodes.values()]
       .filter(n => n.type === 'assertion' && n.assertionFn)
       .map(n => ({
@@ -285,6 +625,8 @@ export class CircuitGraph {
         kind: n.assertionKind ?? 'always',
         checkFn: n.assertionFn!,
         deps: n.deps,
+        stablePath: n.stablePath,
+        metadata: n.assertionMetadata,
         originalCheckFn: n.metadata?.userCheckFn,
       }));
   }
@@ -330,23 +672,70 @@ export class CircuitGraph {
 
   // --- Snapshots & diffing ---
 
-  snapshot(): GraphSnapshot {
+  setCaptureContext(context: Record<string, any>): void {
+    this.captureContext = { ...context };
+  }
+
+  snapshot(captureContext?: Record<string, any>): GraphSnapshot {
+    const nodePath = (id: string) =>
+      this.nodes.get(id)?.stablePath
+      ?? this.disposedNodes.get(id)?.stablePath
+      ?? id;
+
     return {
-      nodes: this.getNodes().map(n => ({
-        id: n.id,
-        name: n.name,
-        type: n.type,
-        deps: n.deps,
+      schemaVersion: 1,
+      capturedAt: new Date().toISOString(),
+      currentTick: this._currentTick,
+      captureContext: {
+        ...this.captureContext,
+        ...captureContext,
+      },
+      nodes: this.getNodes().map(n => this.snapshotNode(n, nodePath)),
+      edges: this.getEdges().map(edge => ({
+        from: nodePath(edge.from),
+        to: nodePath(edge.to),
       })),
-      edges: this.getEdges(),
+      events: this.getRecentEvents(EVENT_BUFFER_SIZE),
+      waveforms: Object.fromEntries(
+        [...this.waveforms.entries()].map(([id, points]) => [nodePath(id), points.map(p => ({ ...p }))]),
+      ),
+      disposedNodes: [...this.disposedNodes.values()].map(n => this.snapshotNode(n, nodePath)),
+      operations: this.getOperations(),
     };
   }
 
+  private snapshotNode(n: GraphNode, nodePath: (id: string) => string): GraphSnapshot['nodes'][number] {
+    return {
+      id: n.stablePath,
+      runtimeId: n.id,
+      stablePath: n.stablePath,
+      name: n.name,
+      type: n.type,
+      deps: n.deps,
+      depPaths: n.deps.map(nodePath),
+      metadata: this.serializableMetadata(n.metadata),
+      assertionMetadata: n.assertionMetadata,
+      createdAtTick: n.createdAtTick,
+      disposedAtTick: n.disposedAtTick,
+    };
+  }
+
+  private serializableMetadata(metadata: Record<string, any> | undefined): Record<string, any> | undefined {
+    if (!metadata) return undefined;
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+      if (typeof value === 'function') continue;
+      result[key] = value;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
   static diffGraphs(a: GraphSnapshot, b: GraphSnapshot): GraphDiff {
-    const aNodeIds = new Set(a.nodes.map(n => n.name));
-    const bNodeIds = new Set(b.nodes.map(n => n.name));
-    const aNodeMap = new Map(a.nodes.map(n => [n.name, n]));
-    const bNodeMap = new Map(b.nodes.map(n => [n.name, n]));
+    const identity = (n: GraphSnapshot['nodes'][number]) => n.stablePath ?? n.id ?? n.name;
+    const aNodeIds = new Set(a.nodes.map(identity));
+    const bNodeIds = new Set(b.nodes.map(identity));
+    const aNodeMap = new Map(a.nodes.map(n => [identity(n), n]));
+    const bNodeMap = new Map(b.nodes.map(n => [identity(n), n]));
 
     const addedNodes: string[] = [];
     const removedNodes: string[] = [];
@@ -443,7 +832,7 @@ export class CircuitGraph {
         try {
           const v = node.getValue();
           if (v !== undefined) {
-            this.waveforms.set(id, [{ t, v }]);
+          this.waveforms.set(id, [{ t, v, tick: this._currentTick, lifecycle: 'active' }]);
           }
         } catch (_) { /* getValue may not be ready yet */ }
       }
@@ -454,7 +843,7 @@ export class CircuitGraph {
     this.recording = false;
   }
 
-  getWaveformData(): Map<string, Array<{ t: number; v: any }>> {
+  getWaveformData(): Map<string, WaveformPoint[]> {
     return new Map(this.waveforms);
   }
 
@@ -464,8 +853,24 @@ export class CircuitGraph {
       buf = [];
       this.waveforms.set(nodeId, buf);
     }
-    buf.push({ t: this.now(), v: value });
+    buf.push({ t: this.now(), v: value, tick: this._currentTick, lifecycle: 'active' });
     if (buf.length > 2000) buf.shift();
+  }
+
+  private markWaveformEnded(nodeId: string): void {
+    const node = this.nodes.get(nodeId);
+    let buf = this.waveforms.get(nodeId);
+    if (!buf) {
+      buf = [];
+      this.waveforms.set(nodeId, buf);
+    }
+    let value: any = undefined;
+    try {
+      value = node?.getValue?.();
+    } catch (_) {
+      value = undefined;
+    }
+    buf.push({ t: this.now(), v: value, tick: this._currentTick, lifecycle: 'ended' });
   }
 
   // --- Reset ---
@@ -476,9 +881,16 @@ export class CircuitGraph {
     this.events = [];
     this.eventWriteIdx = 0;
     this.eventsFull = false;
+    this.eventSeq = 0;
     this.listeners.clear();
     this.recording = false;
     this.waveforms.clear();
+    this.disposedNodes.clear();
+    this.stablePathCounts.clear();
+    this.operations.clear();
+    this.operationStack = [];
+    this.operationCounter = 0;
+    this.captureContext = {};
     this._currentTick = 0;
     this.testMode = false;
     this.tickOpen = false;
