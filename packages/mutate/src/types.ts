@@ -30,4 +30,6 @@ export interface MutateResult {
   invalid: Array<{ mutation: string; description: string; error: string }>;
   equivalent: Array<{ mutation: string; description: string; reason: string }>;
   score: number; // 0-100
+  /** Present only when a randomized/fuzzing runner is used. The default runner is deterministic. */
+  seed?: string | number;
 }

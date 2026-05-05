@@ -4,6 +4,16 @@ interface MutantsPanelOptions {
   mutate?: () => Promise<MutateResult>;
 }
 
+interface MutationRunStatus {
+  number: number;
+  status: 'running' | 'completed' | 'failed';
+  startedAt: Date;
+  finishedAt?: Date;
+  durationMs?: number;
+  generatedMutants?: number;
+  seed?: string | number;
+}
+
 function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -17,6 +27,34 @@ function percent(value: number): string {
   return Number.isFinite(value) ? `${value.toFixed(1)}%` : 'n/a';
 }
 
+function formatClock(value: Date): string {
+  return value.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatDuration(ms: number | undefined): string {
+  if (!Number.isFinite(ms)) return 'n/a';
+  if ((ms ?? 0) < 1000) return `${Math.max(0, Math.round(ms ?? 0))}ms`;
+  return `${((ms ?? 0) / 1000).toFixed(2)}s`;
+}
+
+function mutationSeedText(seed: string | number | undefined): string {
+  return seed === undefined ? 'deterministic/no seed reported' : String(seed);
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
 export function createMutantsPanel(
   container: HTMLElement,
   options?: MutantsPanelOptions,
@@ -27,20 +65,86 @@ export function createMutantsPanel(
   let running = false;
   let result: MutateResult | null = null;
   let error: string | null = null;
+  let runNumber = 0;
+  let activeRun: MutationRunStatus | null = null;
+  let lastRun: MutationRunStatus | null = null;
 
   async function run() {
     if (!options?.mutate || running) return;
+    const startedAt = new Date();
+    const startedAtMs = performance.now();
+    runNumber++;
+    activeRun = {
+      number: runNumber,
+      status: 'running',
+      startedAt,
+    };
     running = true;
     error = null;
     render();
     try {
-      result = await options.mutate();
+      await waitForPaint();
+      if (disposed) return;
+      const nextResult = await options.mutate();
+      result = nextResult;
+      lastRun = {
+        number: runNumber,
+        status: 'completed',
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: performance.now() - startedAtMs,
+        generatedMutants: nextResult.total,
+        seed: nextResult.seed,
+      };
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+      lastRun = {
+        number: runNumber,
+        status: 'failed',
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: performance.now() - startedAtMs,
+      };
     } finally {
+      activeRun = null;
       running = false;
       render();
     }
+  }
+
+  function renderRunStatus(status: MutationRunStatus, hasPreviousResult: boolean): HTMLElement {
+    const box = document.createElement('div');
+    const isRunning = status.status === 'running';
+    const isFailed = status.status === 'failed';
+    box.style.cssText = `
+      color:${isFailed ? '#ff5d8f' : isRunning ? '#f8d66d' : '#8b949e'};
+      padding:8px;
+      background:${isFailed ? 'rgba(255,93,143,0.08)' : isRunning ? 'rgba(248,214,109,0.08)' : 'rgba(255,255,255,0.03)'};
+      border:1px solid ${isFailed ? 'rgba(255,93,143,0.2)' : isRunning ? 'rgba(248,214,109,0.2)' : '#21262d'};
+      border-radius:4px;
+      margin-bottom:10px;
+      font-size:0.72rem;
+      line-height:1.45;
+    `;
+
+    if (isRunning) {
+      box.innerHTML = `
+        <div style="color:#f8d66d; font-weight:600;">Run #${status.number} running</div>
+        <div>Started: ${escapeHtml(formatClock(status.startedAt))}</div>
+        <div>Applying generated mutations and rerunning autotest.</div>
+        ${hasPreviousResult ? '<div>Showing the previous completed result until this run finishes.</div>' : ''}
+      `;
+      return box;
+    }
+
+    const finished = status.finishedAt ? formatClock(status.finishedAt) : 'n/a';
+    const generated = status.generatedMutants === undefined ? 'n/a' : String(status.generatedMutants);
+    box.innerHTML = `
+      <div style="font-weight:600;">Last run: #${status.number} ${status.status}</div>
+      <div>Started: ${escapeHtml(formatClock(status.startedAt))} · Finished: ${escapeHtml(finished)} · Duration: ${escapeHtml(formatDuration(status.durationMs))}</div>
+      <div>Generated mutants: ${escapeHtml(generated)} · Seed: ${escapeHtml(mutationSeedText(status.seed))}</div>
+    `;
+    return box;
   }
 
   function renderList(
@@ -113,6 +217,12 @@ export function createMutantsPanel(
       empty.textContent = 'No mutation runner is registered for this graph. Pass a callback backed by @veriscope/mutate to enable this panel.';
       container.appendChild(empty);
       return;
+    }
+
+    if (activeRun) {
+      container.appendChild(renderRunStatus(activeRun, result !== null));
+    } else if (lastRun) {
+      container.appendChild(renderRunStatus(lastRun, false));
     }
 
     if (error) {
