@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { assertAfter, assertAlways, coverage, graph } from '@veriscope/graph';
 import { useDerived, useSignal, useTrackedEffect } from '@veriscope/react';
 import { mountDevtools } from '@veriscope/devtools';
+import { runAutotest } from '@veriscope/test';
 import { leftSources, rightSources } from './reviewSources';
 import {
   COLS,
@@ -566,7 +567,8 @@ function EmbeddedDevtools() {
     if (!hostRef.current) return;
     const handle = mountDevtools(hostRef.current, graph, {
       coverage,
-      initialTab: 'waveform',
+      autotest: runAutotest,
+      initialTab: 'circuit',
       height: '380px',
     });
     const id = window.setInterval(() => handle.refresh(), 700);

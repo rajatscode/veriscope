@@ -1,6 +1,6 @@
-// layout.ts — Tab layout: Waveform | Graph | Assertions | Coverage
+// layout.ts — Tab layout: Circuit | Waveform | Autotest | Mutants
 
-export type TabId = 'waveform' | 'graph' | 'assertions' | 'coverage';
+export type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
 
 export interface TabDefinition {
   id: TabId;
@@ -8,10 +8,10 @@ export interface TabDefinition {
 }
 
 const TABS: TabDefinition[] = [
+  { id: 'circuit', label: 'Circuit' },
   { id: 'waveform', label: 'Waveform' },
-  { id: 'graph', label: 'Graph' },
-  { id: 'assertions', label: 'Assertions' },
-  { id: 'coverage', label: 'Coverage' },
+  { id: 'autotest', label: 'Autotest' },
+  { id: 'mutants', label: 'Mutants' },
 ];
 
 export interface TabLayout {
@@ -49,7 +49,7 @@ export function createTabLayout(container: HTMLElement): TabLayout {
   // Create tab buttons and content panels
   const tabButtons = new Map<TabId, HTMLElement>();
   const contentPanels = new Map<TabId, HTMLElement>();
-  let activeTab: TabId = 'waveform';
+  let activeTab: TabId = 'circuit';
   const changeListeners: Array<(tab: TabId) => void> = [];
 
   for (const tab of TABS) {
@@ -92,7 +92,7 @@ export function createTabLayout(container: HTMLElement): TabLayout {
   }
 
   // Initialize first tab
-  setActive('waveform');
+  setActive('circuit');
 
   return {
     container,

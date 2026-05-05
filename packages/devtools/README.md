@@ -1,6 +1,6 @@
 # @veriscope/devtools
 
-Standalone web-based debugging UI for inspecting a `@veriscope/graph` `CircuitGraph` at runtime, with waveform viewing, graph visualization, assertion monitoring, and coverage display.
+Standalone web-based debugging UI for inspecting a `@veriscope/graph` `CircuitGraph` at runtime, with circuit, waveform, autotest, and mutation testing panels.
 
 ## Installation
 
@@ -12,6 +12,7 @@ npm install @veriscope/devtools
 
 ```ts
 import { mountDevtools } from '@veriscope/devtools';
+import { runAutotest } from '@veriscope/test';
 import type { CircuitGraph, CoverageCollector } from '@veriscope/graph';
 
 const container = document.getElementById('devtools')!;
@@ -20,12 +21,13 @@ const coverage: CoverageCollector = /* optional */;
 
 const handle = mountDevtools(container, graph, {
   coverage,
-  initialTab: 'waveform',
+  autotest: runAutotest,
+  initialTab: 'circuit',
   height: '400px',
 });
 
 // Later: programmatic control
-handle.setTab('assertions');
+handle.setTab('autotest');
 handle.refresh();
 handle.dispose();
 ```
@@ -61,15 +63,21 @@ function mountDevtools(
 ```ts
 interface DevtoolsOptions {
   coverage?: CoverageCollector;
-  initialTab?: 'waveform' | 'graph' | 'assertions' | 'coverage';
+  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
+  explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+  mutate?: () => Promise<MutateResult>;
+  initialTab?: 'circuit' | 'waveform' | 'autotest' | 'mutants';
   height?: string;
 }
 ```
 
 | Property     | Type                                                    | Default      | Description                                                                                      |
 |--------------|---------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------|
-| `coverage`   | `CoverageCollector`                                     | `undefined`  | A `CoverageCollector` instance from `@veriscope/graph`. Without it the Coverage tab shows an empty state message. |
-| `initialTab` | `'waveform' \| 'graph' \| 'assertions' \| 'coverage'`  | `'waveform'` | Which tab is active on mount.                                                                    |
+| `coverage`   | `CoverageCollector`                                     | `undefined`  | A `CoverageCollector` instance from `@veriscope/graph`; runtime coverage is shown inside Autotest. |
+| `autotest`   | `runAutotest`-compatible callback                       | `undefined`  | Enables the Autotest tab to drive exploration and report assertions, coverage, and gaps.         |
+| `explore`    | `explore`-compatible callback                           | `undefined`  | Fallback exploration runner when no autotest callback is supplied.                               |
+| `mutate`     | mutation runner callback                                | `undefined`  | Enables the Mutants tab. Usually wraps `@veriscope/mutate` with an app-specific graph factory.   |
+| `initialTab` | `'circuit' \| 'waveform' \| 'autotest' \| 'mutants'`   | `'circuit'`  | Which tab is active on mount. Legacy aliases `graph`, `assertions`, and `coverage` are accepted by `mountDevtools`. |
 | `height`     | `string`                                                | `'360px'`    | CSS height of the devtools panel.                                                                |
 
 ---
@@ -82,7 +90,7 @@ Returned by `mountDevtools`. Provides programmatic control over the panel.
 interface DevtoolsHandle {
   dispose: () => void;
   refresh: () => void;
-  setTab: (tab: 'waveform' | 'graph' | 'assertions' | 'coverage') => void;
+  setTab: (tab: 'circuit' | 'waveform' | 'autotest' | 'mutants') => void;
 }
 ```
 
@@ -99,7 +107,7 @@ interface DevtoolsHandle {
 Re-exported type representing valid tab identifiers.
 
 ```ts
-type TabId = 'waveform' | 'graph' | 'assertions' | 'coverage';
+type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
 ```
 
 ---
@@ -180,47 +188,27 @@ function createVisualizerPanel(
 - Nodes are color-coded by type: signal (`#6ee7f9`), derived (`#a78bfa`), effect (`#72f1b8`), assertion (`#ff5d8f`).
 - Edges are drawn as bezier curves with arrowheads.
 - Hover tooltip shows node name, type, current value (if available via `node.getValue()`), and dependency count.
+- Subscribes to graph events and redraws as nodes, edges, signal values, derived values, effects, and assertion states change.
 
 ---
 
-### `createAssertionsPanel(container, graph)`
+### Autotest Panel
 
-Live assertion monitor that subscribes to graph events and tracks pass/fail/armed status.
-
-```ts
-function createAssertionsPanel(
-  container: HTMLElement,
-  graph: CircuitGraph,
-): { dispose: () => void; refresh: () => void };
-```
+Live assertion/autotest monitor that subscribes to graph events and tracks pass/fail/armed status.
 
 **Features:**
 
 - Subscribes to the graph's event stream (`graph.subscribe`) and listens for `assertion-armed`, `assertion-passed`, and `assertion-failed` events.
 - Displays a summary bar showing counts of passed, failed, armed, and unchecked assertions.
 - Each assertion row shows: status indicator (colored dot), assertion name, kind badge, and cumulative pass/fail counts.
-- "Check All" button triggers `graph.checkAssertions()` and re-renders.
+- "Run Autotest" drives `runAutotest()` when provided, then reports status, violations, coverage percentage, and gap count.
+- Runtime `CoverageCollector` summaries are shown in this panel when provided.
 
 ---
 
-### `createCoveragePanel(container, collector)`
+### Mutants Panel
 
-Coverage display showing toggle coverage, FSM transition matrices, and cross coverage grids.
-
-```ts
-function createCoveragePanel(
-  container: HTMLElement,
-  collector: CoverageCollector,
-): { dispose: () => void; refresh: () => void };
-```
-
-**Features:**
-
-- Summary bar shows overall coverage percentage with a color-coded progress bar (green >= 80%, yellow >= 50%, red < 50%).
-- **Toggle coverage:** Grid showing which boolean signals have been observed as `true` and `false`.
-- **Transition coverage:** Per-FSM matrix showing observed state transitions with hit counts. States are listed on both axes (from/to).
-- **Cross coverage:** Per-group grid of observed value combinations across multiple signals, displayed as small colored cells (green = hit, dark = not hit). Supports up to 64 combinations per group. Hover for bin key and count.
-- Enable/Disable button to toggle coverage collection at runtime via `collector.enable()` / `collector.disable()`.
+Mutation testing surface for generated graph mutations. Pass a callback backed by `@veriscope/mutate` to enable the button; the panel reports total, killed, survived, invalid, equivalent, and score after the runner completes.
 
 ---
 
@@ -269,14 +257,14 @@ interface TabDefinition {
 
 Time-series waveform viewer. Shows all `signal` and `derived` nodes from the `CircuitGraph` as waveform traces on a shared timeline. Assertion nodes appear as colored overlay bars. Supports panning, zooming, dual markers with delta-t display, a hierarchy browser sidebar for signal management, and a cross-signal search bar.
 
-### Graph
+### Circuit
 
-Dependency graph visualizer. Displays all graph nodes as color-coded boxes arranged in topological layers with bezier-curve edges showing data flow. Hover any node to see its current value and dependency count.
+Dependency graph visualizer. Displays all graph nodes as color-coded boxes arranged in topological layers with bezier-curve edges showing data flow. Hover any node to see its current value and dependency count. Redraws live from graph events.
 
-### Assertions
+### Autotest
 
-Live assertion status monitor. Lists every assertion node from the graph with its current state (unknown, armed, passed, or failed) and cumulative pass/fail counts. Subscribes to graph events for real-time updates. Includes a "Check All" button to manually trigger assertion evaluation.
+Live assertion status and autotest monitor. Lists every assertion node from the graph with its current state and cumulative pass/fail counts. Runs exploration/autotest when supplied and reports coverage/gaps.
 
-### Coverage
+### Mutants
 
-Coverage collection dashboard. Requires a `CoverageCollector` passed via options. Shows overall coverage percentage, a toggle coverage matrix (true/false observation per signal), FSM transition coverage matrices with hit counts, and cross coverage grids showing which value combinations have been observed.
+Mutation testing monitor. Runs an app-provided mutation callback and reports killed and surviving generated mutations.

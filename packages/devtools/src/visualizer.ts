@@ -1,7 +1,7 @@
 // visualizer.ts — Graph visualizer: nodes as colored boxes, edges as lines
 // Simple force-directed-ish layout without external dependencies
 
-import type { CircuitGraph } from '@veriscope/graph';
+import type { CircuitGraph, GraphEvent } from '@veriscope/graph';
 
 const NODE_COLORS: Record<string, string> = {
   signal: '#6ee7f9',
@@ -137,6 +137,16 @@ export function createVisualizerPanel(
 
   let disposed = false;
   let layoutResult: LayoutNode[] = [];
+  let frameRequested = false;
+
+  function scheduleDraw() {
+    if (disposed || frameRequested) return;
+    frameRequested = true;
+    requestAnimationFrame(() => {
+      frameRequested = false;
+      draw();
+    });
+  }
 
   function draw() {
     if (disposed) return;
@@ -281,10 +291,29 @@ export function createVisualizerPanel(
 
   canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
+  const unsubscribe = graph.subscribe((event: GraphEvent) => {
+    if (
+      event.type === 'node-created' ||
+      event.type === 'node-disposed' ||
+      event.type === 'signal-change' ||
+      event.type === 'derived-recompute' ||
+      event.type === 'effect-run' ||
+      event.type === 'assertion-armed' ||
+      event.type === 'assertion-passed' ||
+      event.type === 'assertion-failed'
+    ) {
+      scheduleDraw();
+    }
+  });
+
   draw();
 
   return {
-    dispose() { disposed = true; container.innerHTML = ''; },
+    dispose() {
+      disposed = true;
+      unsubscribe();
+      container.innerHTML = '';
+    },
     refresh() { draw(); },
   };
 }

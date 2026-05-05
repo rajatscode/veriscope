@@ -1,5 +1,5 @@
 // @veriscope/devtools — Standalone web-based debugging UI
-// Provides waveform viewing, graph visualization, assertion monitoring, and coverage display
+// Provides circuit, waveform, autotest, and mutation testing panels
 // Bridge is imported for side effects only: import '@veriscope/devtools/bridge'
 
 import type { CircuitGraph, CoverageCollector, GraphSnapshot } from '@veriscope/graph';
@@ -7,7 +7,7 @@ import { createTabLayout } from './layout.js';
 import { createWaveformPanel } from './waveform.js';
 import { createVisualizerPanel } from './visualizer.js';
 import { createAssertionsPanel } from './assertions.js';
-import { createCoveragePanel } from './coverage.js';
+import { createMutantsPanel } from './mutants.js';
 
 export type { TabId } from './layout.js';
 
@@ -25,13 +25,39 @@ export interface ExploreResult {
   snapshot?: GraphSnapshot;
 }
 
+export interface AutotestResult extends ExploreResult {
+  status: 'passed' | 'failed';
+  assertions: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    status: 'passed' | 'failed';
+    partialCoverage: boolean;
+    reason?: string;
+  }>;
+}
+
+export interface MutateResult {
+  total: number;
+  killed: number;
+  killedMutations: Array<{ mutation: string; description: string; scenarioId?: string; assertionName?: string }>;
+  survived: Array<{ mutation: string; description: string }>;
+  invalid?: Array<{ mutation: string; description: string; error: string }>;
+  equivalent?: Array<{ mutation: string; description: string; reason: string }>;
+  score: number;
+}
+
 export interface DevtoolsOptions {
-  /** CoverageCollector instance (optional — coverage tab will show empty state without it) */
+  /** CoverageCollector instance. Runtime coverage is shown inside the Autotest tab. */
   coverage?: CoverageCollector;
-  /** explore() function from @veriscope/test (optional — enables state space exploration in assertions tab) */
+  /** runAutotest() from @veriscope/test. Enables the Autotest tab. */
+  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
+  /** explore() function from @veriscope/test (optional fallback when no autotest runner is provided) */
   explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+  /** Mutation runner callback, normally backed by @veriscope/mutate. Enables the Mutants tab. */
+  mutate?: () => Promise<MutateResult>;
   /** Initial active tab */
-  initialTab?: 'waveform' | 'graph' | 'assertions' | 'coverage';
+  initialTab?: 'circuit' | 'waveform' | 'autotest' | 'mutants' | 'graph' | 'assertions' | 'coverage';
   /** Height of the devtools panel (default: '360px') */
   height?: string;
 }
@@ -42,7 +68,7 @@ export interface DevtoolsHandle {
   /** Force refresh all panels */
   refresh: () => void;
   /** Switch to a specific tab */
-  setTab: (tab: 'waveform' | 'graph' | 'assertions' | 'coverage') => void;
+  setTab: (tab: 'circuit' | 'waveform' | 'autotest' | 'mutants') => void;
 }
 
 /**
@@ -64,56 +90,54 @@ export function mountDevtools(
   const layout = createTabLayout(container);
   const disposers: Array<() => void> = [];
 
+  // Circuit panel
+  const circuitContainer = layout.contentPanels.get('circuit')!;
+  let visualizer: ReturnType<typeof createVisualizerPanel> | null = null;
+
   // Waveform panel
   const waveformContainer = layout.contentPanels.get('waveform')!;
   const waveform = createWaveformPanel(waveformContainer, graph);
   disposers.push(waveform.dispose);
 
-  // Graph visualizer panel
-  const graphContainer = layout.contentPanels.get('graph')!;
-  let visualizer: ReturnType<typeof createVisualizerPanel> | null = null;
+  // Autotest panel
+  const autotestContainer = layout.contentPanels.get('autotest')!;
+  let autotest: ReturnType<typeof createAssertionsPanel> | null = null;
 
-  // Assertions panel
-  const assertionsContainer = layout.contentPanels.get('assertions')!;
-  let assertions: ReturnType<typeof createAssertionsPanel> | null = null;
-
-  // Coverage panel
-  const coverageContainer = layout.contentPanels.get('coverage')!;
-  let coveragePanel: ReturnType<typeof createCoveragePanel> | null = null;
+  // Mutants panel
+  const mutantsContainer = layout.contentPanels.get('mutants')!;
+  let mutants: ReturnType<typeof createMutantsPanel> | null = null;
 
   // Lazy-init panels on tab switch (avoid unnecessary work for hidden tabs)
   function ensurePanel(tab: string) {
-    if (tab === 'graph' && !visualizer) {
-      visualizer = createVisualizerPanel(graphContainer, graph);
+    if (tab === 'circuit' && !visualizer) {
+      visualizer = createVisualizerPanel(circuitContainer, graph);
       disposers.push(visualizer.dispose);
     }
-    if (tab === 'assertions' && !assertions) {
-      assertions = createAssertionsPanel(assertionsContainer, graph, { explore: options?.explore });
-      disposers.push(assertions.dispose);
+    if (tab === 'autotest' && !autotest) {
+      autotest = createAssertionsPanel(autotestContainer, graph, {
+        autotest: options?.autotest,
+        explore: options?.explore,
+        coverage: options?.coverage,
+      });
+      disposers.push(autotest.dispose);
     }
-    if (tab === 'coverage' && !coveragePanel) {
-      if (options?.coverage) {
-        coveragePanel = createCoveragePanel(coverageContainer, options.coverage);
-        disposers.push(coveragePanel.dispose);
-      } else {
-        // Show a message that no coverage collector was provided
-        coverageContainer.style.cssText = 'height:100%; display:flex; align-items:center; justify-content:center; color:#666; font-size:0.8rem; font-family:"SF Mono",monospace;';
-        coverageContainer.textContent = 'No CoverageCollector provided. Pass { coverage } option to mountDevtools().';
-      }
+    if (tab === 'mutants' && !mutants) {
+      mutants = createMutantsPanel(mutantsContainer, { mutate: options?.mutate });
+      disposers.push(mutants.dispose);
     }
   }
 
   layout.onTabChange((tab) => {
     ensurePanel(tab);
     // Refresh the newly active panel
+    if (tab === 'circuit') visualizer?.refresh();
     if (tab === 'waveform') waveform.refresh();
-    if (tab === 'graph') visualizer?.refresh();
-    if (tab === 'assertions') assertions?.refresh();
-    if (tab === 'coverage') coveragePanel?.refresh();
+    if (tab === 'autotest') autotest?.refresh();
+    if (tab === 'mutants') mutants?.refresh();
   });
 
   // Initialize with the requested tab
-  const initialTab = options?.initialTab ?? 'waveform';
+  const initialTab = normalizeTab(options?.initialTab ?? 'circuit');
   layout.setActive(initialTab);
   ensurePanel(initialTab);
 
@@ -123,14 +147,20 @@ export function mountDevtools(
       layout.dispose();
     },
     refresh() {
-      waveform.refresh();
       visualizer?.refresh();
-      assertions?.refresh();
-      coveragePanel?.refresh();
+      waveform.refresh();
+      autotest?.refresh();
+      mutants?.refresh();
     },
     setTab(tab) {
       layout.setActive(tab);
       ensurePanel(tab);
     },
   };
+}
+
+function normalizeTab(tab: NonNullable<DevtoolsOptions['initialTab']>): 'circuit' | 'waveform' | 'autotest' | 'mutants' {
+  if (tab === 'graph') return 'circuit';
+  if (tab === 'assertions' || tab === 'coverage') return 'autotest';
+  return tab;
 }

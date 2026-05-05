@@ -1,7 +1,7 @@
 // assertions.ts — Assertion monitor panel: live pass/fail status for all assertions
 
-import type { CircuitGraph, GraphEvent } from '@veriscope/graph';
-import type { ExploreResult } from './index.js';
+import type { CircuitGraph, CoverageCollector, GraphEvent } from '@veriscope/graph';
+import type { AutotestResult, ExploreResult } from './index.js';
 
 interface AssertionEntry {
   nodeId: string;
@@ -14,7 +14,13 @@ interface AssertionEntry {
 }
 
 interface AssertionsPanelOptions {
+  autotest?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void>; name?: string }) => Promise<AutotestResult>;
   explore?: (graph: CircuitGraph, options?: { budget?: number; flush?: () => void | Promise<void> }) => Promise<ExploreResult>;
+  coverage?: CoverageCollector;
+}
+
+function isAutotestResult(result: AutotestResult | ExploreResult): result is AutotestResult {
+  return Array.isArray((result as Partial<AutotestResult>).assertions);
 }
 
 export function createAssertionsPanel(
@@ -27,7 +33,17 @@ export function createAssertionsPanel(
   const entries = new Map<string, AssertionEntry>();
   let unsubscribe: (() => void) | null = null;
   let disposed = false;
-  let lastExploreResult: ExploreResult | null = null;
+  let lastRunResult: AutotestResult | ExploreResult | null = null;
+  let renderScheduled = false;
+
+  function scheduleRender() {
+    if (disposed || renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      render();
+    });
+  }
 
   function buildEntries() {
     const assertions = graph.getAssertions();
@@ -70,6 +86,8 @@ export function createAssertionsPanel(
       else if (event.type === 'assertion-passed') { entry.status = 'passed'; entry.passCount++; }
       else if (event.type === 'assertion-failed') { entry.status = 'failed'; entry.failCount++; }
       render();
+    } else if (options?.coverage && (event.type === 'signal-change' || event.type === 'derived-recompute' || event.type === 'operation-resolve' || event.type === 'operation-reject' || event.type === 'operation-abort' || event.type === 'operation-timeout')) {
+      scheduleRender();
     }
   }
 
@@ -82,26 +100,41 @@ export function createAssertionsPanel(
     header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;';
     const title = document.createElement('div');
     title.style.cssText = 'font-size:0.9rem; font-weight:600; color:#c9d1d9;';
-    title.textContent = 'Assertions';
+    title.textContent = 'Autotest';
 
     const checkBtn = document.createElement('button');
-    checkBtn.textContent = options?.explore ? 'Explore' : 'Check All';
+    checkBtn.textContent = options?.autotest ? 'Run Autotest' : options?.explore ? 'Explore' : 'Check All';
     checkBtn.style.cssText = 'background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;';
     checkBtn.addEventListener('click', async () => {
-      if (options?.explore) {
-        checkBtn.textContent = 'Exploring...';
+      if (options?.autotest || options?.explore) {
+        checkBtn.textContent = options?.autotest ? 'Running...' : 'Exploring...';
         checkBtn.style.opacity = '0.6';
         checkBtn.style.pointerEvents = 'none';
         try {
-          lastExploreResult = await options.explore(graph, {
-            budget: 1000,
-            flush: async () => { await new Promise(r => setTimeout(r, 0)); },
-          });
+          lastRunResult = options?.autotest
+            ? await options.autotest(graph, {
+              budget: 1000,
+              name: 'devtools-autotest',
+              flush: async () => { await new Promise(r => setTimeout(r, 0)); },
+            })
+            : await options.explore!(graph, {
+              budget: 1000,
+              flush: async () => { await new Promise(r => setTimeout(r, 0)); },
+            });
           buildEntries();
+          if (isAutotestResult(lastRunResult)) {
+            for (const assertion of lastRunResult.assertions) {
+              const entry = entries.get(assertion.id);
+              if (!entry) continue;
+              entry.status = assertion.status;
+              if (assertion.status === 'failed') entry.failCount++;
+              else entry.passCount++;
+            }
+          }
           render();
         } catch (err) {
-          console.error('[Veriscope] explore() failed:', err);
-          checkBtn.textContent = 'Explore';
+          console.error('[Veriscope] autotest failed:', err);
+          checkBtn.textContent = options?.autotest ? 'Run Autotest' : 'Explore';
           checkBtn.style.opacity = '1';
           checkBtn.style.pointerEvents = '';
         }
@@ -132,15 +165,29 @@ export function createAssertionsPanel(
     `;
     container.appendChild(summary);
 
-    // Explore results (if available)
-    if (lastExploreResult) {
+    if (options?.coverage && !lastRunResult) {
+      const report = options.coverage.getReport();
+      const coverageBox = document.createElement('div');
+      coverageBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
+      coverageBox.innerHTML = `
+        <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Runtime Coverage</div>
+        <div style="color:#8b949e;">Coverage: ${report.summary.percentage.toFixed(1)}% (${report.summary.coveredPoints}/${report.summary.totalPoints}) · Gaps: ${report.gaps.length}</div>
+      `;
+      container.appendChild(coverageBox);
+    }
+
+    // Autotest/explore results (if available)
+    if (lastRunResult) {
       const resultBox = document.createElement('div');
       resultBox.style.cssText = 'margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; font-size:0.72rem;';
-      const v = lastExploreResult.violations;
-      const s = lastExploreResult.steps;
+      const v = lastRunResult.violations;
+      const s = lastRunResult.steps;
+      const coverage = lastRunResult.coverage;
+      const status = 'status' in lastRunResult ? lastRunResult.status : (v.length > 0 ? 'failed' : 'passed');
       resultBox.innerHTML = `
-        <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Exploration Results</div>
-        <div style="color:#8b949e;">Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
+        <div style="color:#c9d1d9; margin-bottom:4px; font-weight:600;">Autotest Results</div>
+        <div style="color:#8b949e;">Status: <span style="color:${status === 'failed' ? '#ff5d8f' : '#72f1b8'}">${status}</span> · Steps: ${s} · Violations: <span style="color:${v.length > 0 ? '#ff5d8f' : '#72f1b8'}">${v.length}</span></div>
+        <div style="color:#8b949e; margin-top:4px;">Coverage: ${coverage.overall.percentage.toFixed(1)}% (${coverage.overall.covered}/${coverage.overall.total}) · Gaps: ${coverage.gaps.length}</div>
       `;
       if (v.length > 0) {
         const list = document.createElement('div');

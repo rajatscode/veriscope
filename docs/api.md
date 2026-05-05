@@ -699,9 +699,12 @@ function mountDevtools(
 ): DevtoolsHandle;
 
 interface DevtoolsOptions {
-  coverage?: CoverageCollector;
-  initialTab?: TabId;       // default: 'waveform'
-  height?: string;          // default: '360px'
+  coverage?: CoverageCollector; // shown inside Autotest runtime coverage
+  autotest?: typeof runAutotest;
+  explore?: typeof explore;     // fallback when no autotest runner is provided
+  mutate?: () => Promise<MutateResult>;
+  initialTab?: TabId;           // default: 'circuit'
+  height?: string;              // default: '360px'
 }
 
 interface DevtoolsHandle {
@@ -710,10 +713,17 @@ interface DevtoolsHandle {
   setTab(tab: TabId): void;
 }
 
-type TabId = 'waveform' | 'graph' | 'assertions' | 'coverage';
+type TabId = 'circuit' | 'waveform' | 'autotest' | 'mutants';
 ```
 
 ### Tabs
+
+#### Circuit
+
+Live dependency graph visualizer. Topological layer layout (left-to-right). Color-coded nodes:
+- Signal: `#6ee7f9`, Derived: `#a78bfa`, Effect: `#72f1b8`, Assertion: `#ff5d8f`
+- Bezier curve edges with arrowheads, hover tooltip with name/type/value/dep count
+- Subscribes to graph events so topology, values, and assertion state redraw while the app runs
 
 #### Waveform
 
@@ -725,19 +735,13 @@ Time-series viewer for all signal and derived nodes. Features:
 - Export to JSON, zoom controls, keyboard shortcuts (`+`/`-` zoom, arrows pan, Home fit, Esc clear markers)
 - Persistence via `localStorage`
 
-#### Graph
+#### Autotest
 
-Dependency graph visualizer. Topological layer layout (left-to-right). Color-coded nodes:
-- Signal: `#6ee7f9`, Derived: `#a78bfa`, Effect: `#72f1b8`, Assertion: `#ff5d8f`
-- Bezier curve edges with arrowheads, hover tooltip with name/type/value/dep count
+Live assertion/autotest surface. Subscribes to graph events for real-time pass/fail/armed tracking. When provided, `runAutotest()` drives exploration and reports assertion status, coverage percentage, and explicit coverage gaps. Runtime `CoverageCollector` summaries are shown here too.
 
-#### Assertions
+#### Mutants
 
-Live assertion monitor. Subscribes to graph events for real-time pass/fail/armed tracking. Summary bar with counts. "Check All" button for manual evaluation.
-
-#### Coverage
-
-Coverage dashboard (requires `CoverageCollector`). Overall percentage bar (green >= 80%, yellow >= 50%, red < 50%). Toggle matrix, FSM transition matrices with hit counts, cross coverage grids.
+Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to run generated mutations, rerun autotest, and report killed, survived, invalid, and equivalent mutations.
 
 ### Panel Constructors
 
@@ -745,8 +749,6 @@ Coverage dashboard (requires `CoverageCollector`). Overall percentage bar (green
 function createTabLayout(container: HTMLElement): TabLayout
 function createWaveformPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
 function createVisualizerPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
-function createAssertionsPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
-function createCoveragePanel(container: HTMLElement, collector: CoverageCollector): { dispose: () => void; refresh: () => void }
 ```
 
 ### Types
