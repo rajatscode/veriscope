@@ -636,6 +636,7 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('passed');
     expect(host.textContent).toContain('fails');
     expect(host.textContent).toContain('failed · partial');
+    expect(host.textContent).toContain('expected test failure');
     expect(host.textContent).toContain('after · 1 cases');
     expect(host.textContent).toContain('Generated Cases (1 passed, 1 failed)');
     expect(host.textContent).toContain('Evidence Cases (2)');

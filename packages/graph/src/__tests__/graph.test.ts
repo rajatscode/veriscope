@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CircuitGraph } from '../graph';
 import { coverage } from '../coverage';
-import { assertNoStaleOperations, assertOperationStatus } from '../assertions';
+import { assertAfter, assertAlways, assertNoStaleOperations, assertOperationStatus } from '../assertions';
 
 describe('CircuitGraph', () => {
   it('registers nodes and edges', () => {
@@ -295,6 +295,43 @@ describe('CircuitGraph', () => {
     expect(assertions[0].kind).toBe('always');
     expect(assertions[0].checkFn).toBe(checkFn);
     expect(assertions[0].deps).toContain(depNode);
+  });
+
+  it('assertAlways registers check dependency metadata by default', () => {
+    const g = new CircuitGraph();
+    const ready = g.registerNode({ name: 'ready', type: 'signal' });
+
+    const assertionId = assertAlways(() => true, 'ready-visible', g, [{ nodeId: ready }]);
+    const assertion = g.getAssertions().find(entry => entry.id === assertionId);
+
+    expect(assertion?.metadata?.checkDeps).toEqual([ready]);
+    expect(assertion?.metadata?.partial).toBe(false);
+    expect(assertion?.metadata?.reason).toBeUndefined();
+  });
+
+  it('assertAfter accepts explicit property dependency metadata', () => {
+    const g = new CircuitGraph();
+    const submitted = g.registerNode({ name: 'submitted', type: 'signal' });
+    const loading = g.registerNode({ name: 'loading', type: 'signal' });
+
+    const assertionId = assertAfter(
+      { nodeId: submitted },
+      'posedge',
+      'immediately',
+      () => true,
+      {
+        name: 'submit-starts-loading',
+        checkDeps: [{ nodeId: loading }],
+        domains: { [submitted]: [false, true], [loading]: [false, true] },
+      },
+      g,
+    );
+    const assertion = g.getAssertions().find(entry => entry.id === assertionId);
+
+    expect(assertion?.deps).toEqual([submitted, loading]);
+    expect(assertion?.metadata?.triggerDeps).toEqual([submitted]);
+    expect(assertion?.metadata?.checkDeps).toEqual([loading]);
+    expect(assertion?.metadata?.partial).toBe(false);
   });
 
   it('getAssertions excludes assertion nodes without assertionFn', () => {

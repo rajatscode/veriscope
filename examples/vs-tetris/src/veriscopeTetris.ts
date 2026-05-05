@@ -303,20 +303,18 @@ export function registerTetrisAssertions(
     'posedge',
     'eventually',
     () => bindings.getSendHasRecipient(),
-    { name: 'after-garbage-pulse-recipient-eventually-visible' },
+    {
+      name: 'after-garbage-pulse-recipient-eventually-visible',
+      checkDeps: [bindings.sendHasRecipientNodeId],
+      domains: {
+        [bindings.garbagePulseNodeId]: [false],
+        'arena.garbagePulse': [false, true],
+      },
+      partial: true,
+      reason: 'demonstrates temporal after/eventually semantics over the garbage send pulse',
+    },
     targetGraph,
   );
-  targetGraph.addEdge(bindings.sendHasRecipientNodeId, temporalDeliveryId);
-  targetGraph.setAssertionMetadata(temporalDeliveryId, {
-    triggerDeps: [bindings.garbagePulseNodeId],
-    checkDeps: [bindings.sendHasRecipientNodeId],
-    domains: {
-      [bindings.garbagePulseNodeId]: [false],
-      'arena.garbagePulse': [false, true],
-    },
-    partial: true,
-    reason: 'demonstrates temporal after/eventually semantics over the garbage send pulse',
-  });
   ids['after-garbage-pulse-recipient-eventually-visible'] = temporalDeliveryId;
   disposables.push(temporalDeliveryId);
 

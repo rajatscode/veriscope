@@ -4,7 +4,9 @@
 // assertAfter: after an edge, property must hold (immediately, eventually, or within N ticks)
 
 import { graph, CircuitGraph } from './graph.js';
-import type { OperationStatus, Signal } from './types.js';
+import type { AssertionMetadata, OperationStatus } from './types.js';
+
+type AssertionDep = { nodeId: string };
 
 /**
  * Assert that a property holds at all times.
@@ -15,11 +17,28 @@ export function assertAlways(
   checkFn: () => boolean,
   name: string,
   targetGraph: CircuitGraph = graph,
-  deps?: Array<{ nodeId: string }>,
+  deps?: AssertionDep[],
+  metadata?: AssertionMetadata,
 ): string {
   const depIds = deps?.map(d => d.nodeId);
-  const nodeId = targetGraph.registerNode({ name, type: 'assertion', deps: depIds });
+  const inferredPartial = depIds === undefined || depIds.length === 0;
+  const nodeId = targetGraph.registerNode({
+    name,
+    type: 'assertion',
+    deps: depIds,
+    assertionMetadata: {
+      ...metadata,
+      checkDeps: metadata?.checkDeps ?? depIds,
+      partial: metadata?.partial ?? inferredPartial,
+      reason: metadata?.reason ?? (
+        (metadata?.partial ?? inferredPartial)
+          ? 'missing explorable assertion dependency metadata'
+          : undefined
+      ),
+    },
+  });
   targetGraph.setAssertionFn(nodeId, checkFn, 'always');
+  targetGraph.setAssertionUserCheckFn(nodeId, checkFn);
   return nodeId;
 }
 
@@ -31,9 +50,10 @@ export function assertNever(
   checkFn: () => boolean,
   name: string,
   targetGraph: CircuitGraph = graph,
-  deps?: Array<{ nodeId: string }>,
+  deps?: AssertionDep[],
+  metadata?: AssertionMetadata,
 ): string {
-  const nodeId = assertAlways(() => !checkFn(), name, targetGraph, deps);
+  const nodeId = assertAlways(() => !checkFn(), name, targetGraph, deps, metadata);
   // Store the original user checkFn so explore() can parse the actual signal reads
   // (assertAlways stores `() => !checkFn()` which hides the .val references)
   targetGraph.setAssertionUserCheckFn(nodeId, checkFn);
@@ -44,6 +64,11 @@ interface AssertAfterOptions {
   name: string;
   edgeValue?: any;
   devWatchdogMs?: number;
+  checkDeps?: AssertionDep[] | string[];
+  domains?: Record<string, any[]>;
+  operationDomains?: Record<string, string[]>;
+  partial?: boolean;
+  reason?: string;
 }
 
 /**
@@ -63,16 +88,25 @@ export function assertAfter(
   options: AssertAfterOptions,
   targetGraph: CircuitGraph = graph,
 ): string {
+  const checkDeps = normalizeDeps(options.checkDeps);
+  const partial = options.partial ?? checkDeps.length === 0;
   const nodeId = targetGraph.registerNode({
     name: options.name,
     type: 'assertion',
-    deps: [signal.nodeId],
+    deps: [signal.nodeId, ...checkDeps],
     assertionMetadata: {
       triggerDeps: [signal.nodeId],
+      checkDeps,
       edge,
       temporalOperator: typeof operator === 'object' ? 'withinTicks' : operator,
-      partial: true,
-      reason: 'assertAfter property dependencies can be supplied as checkDeps for deeper exploration',
+      domains: options.domains,
+      operationDomains: options.operationDomains,
+      partial,
+      reason: options.reason ?? (
+        partial
+          ? 'assertAfter property dependencies can be supplied as checkDeps for deeper exploration'
+          : undefined
+      ),
     },
   });
 
@@ -171,6 +205,11 @@ export function assertAfter(
   });
 
   return nodeId;
+}
+
+function normalizeDeps(deps: AssertAfterOptions['checkDeps']): string[] {
+  if (!deps) return [];
+  return deps.map(dep => typeof dep === 'string' ? dep : dep.nodeId);
 }
 
 export function assertOperationStatus(

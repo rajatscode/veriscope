@@ -359,6 +359,12 @@ export function createAssertionsPanel(
           row.appendChild(name);
           row.appendChild(statusBadge);
           assertionBox.appendChild(row);
+          if (assertion.partialCoverage && assertion.reason) {
+            const reason = document.createElement('div');
+            reason.style.cssText = 'color:#f8d66d; margin:-1px 0 4px 22px; font-size:0.64rem; overflow-wrap:anywhere;';
+            reason.textContent = assertion.reason;
+            assertionBox.appendChild(reason);
+          }
         }
 
         resultBox.appendChild(assertionBox);
