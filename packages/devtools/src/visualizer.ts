@@ -106,22 +106,27 @@ function displayModel(graph: CircuitGraph): DisplayModel {
     };
   }
 
-  // Group by dotted prefix (e.g., "player1.score" → prefix "player1")
+  // Detect repeated numbered-prefix patterns (e.g., p1.*, p2.*, p3.* all with similar suffixes)
   const prefixGroups = new Map<string, GraphNode[]>();
+  const prefixPattern = /^(.+?)(\d+)$/; // Match prefixes ending in numbers like "p1", "p2", "player3"
+
   for (const node of nodes) {
     const dotIndex = node.name.indexOf('.');
     if (dotIndex === -1) continue;
     const prefix = node.name.substring(0, dotIndex);
-    const group = prefixGroups.get(prefix) ?? [];
+    const match = prefix.match(prefixPattern);
+    if (!match) continue; // Only group numbered prefixes like p1, p2, player3
+    const basePrefix = match[1]; // e.g., "p" from "p1"
+    const group = prefixGroups.get(basePrefix) ?? [];
     group.push(node);
-    prefixGroups.set(prefix, group);
+    prefixGroups.set(basePrefix, group);
   }
 
   // Only keep groups with MIN_GROUP_SIZE+ members
   const groupedNodeIds = new Set<string>();
-  for (const [prefix, members] of prefixGroups) {
+  for (const [basePrefix, members] of prefixGroups) {
     if (members.length < MIN_GROUP_SIZE) {
-      prefixGroups.delete(prefix);
+      prefixGroups.delete(basePrefix);
     } else {
       for (const member of members) groupedNodeIds.add(member.id);
     }
@@ -156,13 +161,18 @@ function displayModel(graph: CircuitGraph): DisplayModel {
     });
   }
 
-  for (const [prefix, members] of prefixGroups) {
-    const groupId = `group:${prefix}`;
+  for (const [basePrefix, members] of prefixGroups) {
+    const groupId = `group:${basePrefix}*`;
     groupedMembers += members.length;
     for (const member of members) groupIdByNode.set(member.id, groupId);
+
+    // Find all unique number prefixes for the label
+    const numberPrefixes = new Set(members.map(m => m.name.substring(0, m.name.indexOf('.'))));
+    const label = `${basePrefix}[${numberPrefixes.size}].*`;
+
     displayNodes.push({
       id: groupId,
-      name: `${prefix}.*`,
+      name: label,
       type: 'derived',
       deps: unique(members.flatMap(member => member.deps).map(id => groupIdByNode.get(id) ?? id).filter(id => id !== groupId)),
       memberIds: members.map(member => member.id),
@@ -533,7 +543,7 @@ export function createVisualizerPanel(
       ? ` · Selected ${selectedNode.name}: ${flow.upstreamNodes.size} upstream, ${flow.downstreamNodes.size} downstream`
       : ' · Click a node to highlight flow';
     status.textContent = groupedMembers > 0
-      ? `${activityText}${flowText} · Grouped ${groupedMembers} prefix-similar nodes`
+      ? `${activityText}${flowText} · Grouped ${groupedMembers} repeated-instance nodes`
       : `${activityText}${flowText}`;
 
     const ctx = canvas.getContext('2d')!;
