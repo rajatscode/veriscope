@@ -1007,4 +1007,53 @@ describe('CircuitGraph', () => {
     expect(bVal).toBe(10);
     expect(g.getNode(derived)?.getValue?.()).toBe(11);
   });
+
+  // --- Buffer stats ---
+
+  it('getBufferStats returns correct values before overflow', () => {
+    const g = new CircuitGraph({ eventBufferSize: 8 });
+    g.enterTestMode();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    // registerNode emits 1 event (node-created)
+    const stats = g.getBufferStats();
+    expect(stats.capacity).toBe(8);
+    expect(stats.used).toBe(1);
+    expect(stats.overflowCount).toBe(0);
+  });
+
+  it('getBufferStats overflow count increments correctly', () => {
+    const g = new CircuitGraph({ eventBufferSize: 4 });
+    g.enterTestMode();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    // 1 event from registerNode, push 5 more to overflow a size-4 buffer
+    for (let i = 0; i < 5; i++) {
+      g.notifyChange(a, i, i + 1);
+    }
+    const stats = g.getBufferStats();
+    expect(stats.capacity).toBe(4);
+    expect(stats.used).toBe(4);
+    expect(stats.overflowCount).toBe(2);
+  });
+
+  it('custom buffer size works', () => {
+    const g = new CircuitGraph({ eventBufferSize: 16 });
+    expect(g.getBufferStats().capacity).toBe(16);
+  });
+
+  it('default buffer size is 256', () => {
+    const g = new CircuitGraph();
+    expect(g.getBufferStats().capacity).toBe(256);
+  });
+
+  it('reset clears overflow count', () => {
+    const g = new CircuitGraph({ eventBufferSize: 4 });
+    g.enterTestMode();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    for (let i = 0; i < 10; i++) {
+      g.notifyChange(a, i, i + 1);
+    }
+    expect(g.getBufferStats().overflowCount).toBeGreaterThan(0);
+    g.reset();
+    expect(g.getBufferStats().overflowCount).toBe(0);
+  });
 });

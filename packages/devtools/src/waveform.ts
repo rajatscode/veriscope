@@ -978,6 +978,11 @@ export function createWaveformPanel(
   searchBar.appendChild(searchCount);
   controlBar.appendChild(searchBar);
 
+  // Overflow indicator
+  const overflowIndicator = document.createElement('span');
+  overflowIndicator.style.cssText = 'color:#d29922; font-size:0.65rem; font-family:"SF Mono","Fira Code",monospace; display:none; margin-left:8px;';
+  controlBar.appendChild(overflowIndicator);
+
   // Export JSON button
   const exportBtn = document.createElement('button');
   exportBtn.style.cssText = 'background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:1px 6px; border-radius:2px; cursor:pointer; font-size:0.7rem; margin-left:8px;';
@@ -1095,6 +1100,14 @@ export function createWaveformPanel(
     const data = graph.getWaveformData();
     const dataEnd = dataEndTime(data);
     const chartW = w - LABEL_W;
+
+    const bufferStats = graph.getBufferStats();
+    if (bufferStats.overflowCount > 0) {
+      overflowIndicator.textContent = `\u26A0 ${bufferStats.overflowCount} events truncated`;
+      overflowIndicator.style.display = '';
+    } else {
+      overflowIndicator.style.display = 'none';
+    }
 
     if (!viewInitialized || !userInteracted) {
       // Find the time range where actual changes happen (skip flat initial snapshots)

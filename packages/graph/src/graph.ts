@@ -18,11 +18,13 @@ import type {
 } from './types.js';
 import { coverage } from './coverage.js';
 
-const EVENT_BUFFER_SIZE = 256;
+const DEFAULT_EVENT_BUFFER_SIZE = 256;
 
 let idCounter = 0;
 
 export class CircuitGraph {
+  private _eventBufferSize: number;
+  private _eventOverflowCount = 0;
   private instrumentationEnabled = true;
   private nodes = new Map<string, GraphNode>();
   private edges: GraphEdge[] = [];
@@ -52,6 +54,10 @@ export class CircuitGraph {
   private cycleListeners = new Set<(nodeIds: string[]) => void>();
   private _propagating = false;
   private _pendingPropagations: string[] = [];
+
+  constructor(options?: { eventBufferSize?: number }) {
+    this._eventBufferSize = options?.eventBufferSize ?? DEFAULT_EVENT_BUFFER_SIZE;
+  }
 
   /** Current simulation tick (increments on closeTick). */
   get currentTick(): number {
@@ -371,11 +377,12 @@ export class CircuitGraph {
     event.seq = this.eventSeq++;
     if (this.eventsFull) {
       this.events[this.eventWriteIdx] = event;
+      this._eventOverflowCount++;
     } else {
       this.events.push(event);
     }
-    this.eventWriteIdx = (this.eventWriteIdx + 1) % EVENT_BUFFER_SIZE;
-    if (!this.eventsFull && this.events.length >= EVENT_BUFFER_SIZE) {
+    this.eventWriteIdx = (this.eventWriteIdx + 1) % this._eventBufferSize;
+    if (!this.eventsFull && this.events.length >= this._eventBufferSize) {
       this.eventsFull = true;
     }
   }
@@ -832,12 +839,20 @@ export class CircuitGraph {
   getRecentEvents(n = 50): GraphEvent[] {
     if (!this.eventsFull) return this.events.slice(-n);
     const result: GraphEvent[] = [];
-    const total = Math.min(n, EVENT_BUFFER_SIZE);
+    const total = Math.min(n, this._eventBufferSize);
     for (let i = 0; i < total; i++) {
-      const idx = (this.eventWriteIdx - 1 - i + EVENT_BUFFER_SIZE) % EVENT_BUFFER_SIZE;
+      const idx = (this.eventWriteIdx - 1 - i + this._eventBufferSize) % this._eventBufferSize;
       result.unshift(this.events[idx]);
     }
     return result;
+  }
+
+  getBufferStats(): { capacity: number; used: number; overflowCount: number } {
+    return {
+      capacity: this._eventBufferSize,
+      used: this.eventsFull ? this._eventBufferSize : this.events.length,
+      overflowCount: this._eventOverflowCount,
+    };
   }
 
   // --- Subscriptions ---
@@ -872,7 +887,7 @@ export class CircuitGraph {
         from: nodePath(edge.from),
         to: nodePath(edge.to),
       })),
-      events: this.getRecentEvents(EVENT_BUFFER_SIZE).map(event => this.snapshotEvent(event)),
+      events: this.getRecentEvents(this._eventBufferSize).map(event => this.snapshotEvent(event)),
       waveforms: Object.fromEntries(
         [...this.waveforms.entries()].map(([id, points]) => [nodePath(id), points.map(p => ({ ...p }))]),
       ),
@@ -1138,6 +1153,7 @@ export class CircuitGraph {
     this.eventWriteIdx = 0;
     this.eventsFull = false;
     this.eventSeq = 0;
+    this._eventOverflowCount = 0;
     this.listeners = listeners;
     this.recording = false;
     this.waveforms.clear();
