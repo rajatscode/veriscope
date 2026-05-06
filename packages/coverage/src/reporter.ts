@@ -49,6 +49,23 @@ export function formatConsole(report: CoverageReport): string {
   }
   lines.push('');
 
+  // Numeric activity
+  lines.push('--- Numeric Activity ---');
+  if ((report.numericActivity ?? []).length === 0) {
+    lines.push('  (no numeric counter/gauge activity)');
+  } else {
+    lines.push('  Signal            Samples  Range         Direction');
+    lines.push('  ─────────────────────────────────────────────────');
+    for (const item of report.numericActivity ?? []) {
+      const direction =
+        item.increments > 0 && item.decrements > 0 ? 'mixed' :
+        item.increments > 0 ? 'up' :
+        item.decrements > 0 ? 'down' : 'flat';
+      lines.push(`  ${item.signalId.padEnd(18)}${String(item.samples).padEnd(9)}${`${item.min}..${item.max}`.padEnd(14)}${direction}`);
+    }
+  }
+  lines.push('');
+
   // Cross coverage
   lines.push('--- Cross Coverage ---');
   if (report.cross.length === 0) {
@@ -117,6 +134,7 @@ export function formatJSON(report: CoverageReport): string {
       states: [...t.states],
       plannedTransitions: [...(t.plannedTransitions ?? [])],
     })),
+    numericActivity: report.numericActivity ?? [],
     cross: report.cross.map(c => ({
       groupId: c.groupId,
       signals: c.signals,
@@ -206,6 +224,18 @@ export function formatHTML(report: CoverageReport): string {
     }
   } else {
     lines.push('<p>No FSM coverage points.</p>');
+  }
+
+  // Numeric activity
+  lines.push('<h2>Numeric Activity</h2>');
+  if ((report.numericActivity ?? []).length > 0) {
+    lines.push('<table><tr><th>Signal</th><th>Samples</th><th>Range</th><th>Largest Step</th></tr>');
+    for (const item of report.numericActivity ?? []) {
+      lines.push(`<tr><td>${esc(item.signalId)}</td><td>${item.samples}</td><td>${item.min}..${item.max}</td><td>${item.largestStep}</td></tr>`);
+    }
+    lines.push('</table>');
+  } else {
+    lines.push('<p>No numeric counter/gauge activity.</p>');
   }
 
   // Cross

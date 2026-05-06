@@ -39,8 +39,8 @@ export function checkThresholds(report: CoverageReport, thresholds: CoverageThre
   }
 
   // Transition coverage: observed planned transitions / planned transitions.
-  // Without a generated plan, observed runtime transitions are complete by
-  // definition and do not create speculative missing bins.
+  // Without a generated plan, observed finite-state runtime transitions are
+  // complete by definition and do not create speculative missing bins.
   if (thresholds.transitions !== undefined) {
     let totalPlanned = 0;
     let totalCovered = 0;

@@ -1,6 +1,6 @@
 # @veriscope/coverage
 
-Formats, merges, threshold-checks, and persists Veriscope reactive coverage reports (toggle, observed/planned transition, cross, and external operation outcome coverage) with built-in Vitest integration.
+Formats, merges, threshold-checks, and persists Veriscope reactive coverage reports (toggle, observed/planned transition, numeric activity, cross, and external operation outcome coverage) with built-in Vitest integration.
 
 ## Installation
 
@@ -52,7 +52,7 @@ export default {
 
 #### `formatConsole(report: CoverageReport): string`
 
-Formats a coverage report as aligned, human-readable text for terminal output. Includes sections for toggle coverage (signal / true / false / covered), observed/planned transition coverage, cross coverage (observed combinations per group with percentages), operation outcome coverage, explicit gaps, and a summary with total points, covered points, and overall percentage.
+Formats a coverage report as aligned, human-readable text for terminal output. Includes sections for toggle coverage (signal / true / false / covered), observed/planned transition coverage, numeric counter/gauge activity, cross coverage (observed combinations per group with percentages), operation outcome coverage, explicit gaps, and a summary with total points, covered points, and overall percentage.
 
 #### `formatJSON(report: CoverageReport): string`
 
@@ -64,6 +64,7 @@ Renders a coverage report as a self-contained HTML page. Includes:
 - A color-coded summary banner (green at >= 80%, red below).
 - A toggle coverage table with green/red cells for each signal's seen-true and seen-false status.
 - transition matrices with observed cells highlighted and missing planned transitions marked.
+- Numeric activity tables for counters/gauges that should not inflate transition coverage.
 - Cross coverage tables showing observed and uncovered combinations per group.
 
 ### Thresholds
@@ -74,7 +75,7 @@ Checks a coverage report against the provided thresholds. Returns a `ThresholdRe
 
 Coverage calculation per category:
 - **Toggle**: each signal contributes 2 points (seenTrue + seenFalse). Percentage = covered points / (signals * 2) * 100.
-- **Transitions**: percentage = observed planned transitions / planned transitions. If no plan exists, observed runtime transitions are treated as observed activity and do not create speculative missing bins.
+- **Transitions**: percentage = observed planned transitions / planned transitions. If no plan exists, observed runtime finite-state transitions are treated as observed activity and do not create speculative missing bins. Unconstrained numeric changes are reported as numeric activity, not transition coverage.
 - **Cross**: percentage = total observed combinations / total possible combinations across all groups.
 - **Operations**: percentage = observed declared outcomes / declared outcomes for tracked external operations.
 - **Overall**: uses the report's built-in `summary.percentage`.
@@ -119,6 +120,7 @@ Merges multiple coverage reports into a single aggregate report. Useful for comb
 Merge strategy per category:
 - **Toggle**: OR union of `seenTrue`/`seenFalse` across reports for each signal.
 - **Transitions**: union of observed transition keys and planned transition keys per signal/derived node, with counts summed. States sets are also unioned for display.
+- **Numeric activity**: samples and direction counts are summed; min/max/largest step are widened.
 - **Cross**: union of observed combinations per group, with counts summed. `total` takes the max across reports.
 - **Summary**: recalculated from the merged data.
 
@@ -169,6 +171,7 @@ The formatting and threshold functions accept `CoverageReport` from `@veriscope/
 interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
+  numericActivity: NumericActivityCoverage[];
   cross: CrossCoverage[];
   operations: OperationOutcomeCoverage[];
   gaps: CoverageGap[];
@@ -186,6 +189,17 @@ interface TransitionCoverage {
   transitions: Map<string, number>; // "stateA->stateB" -> count
   states: Set<string>;
   plannedTransitions?: Set<string>;
+}
+
+interface NumericActivityCoverage {
+  signalId: string;
+  samples: number;
+  min: number;
+  max: number;
+  increments: number;
+  decrements: number;
+  largestStep: number;
+  lastValue: number;
 }
 
 interface CrossCoverage {

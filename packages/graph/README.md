@@ -120,7 +120,8 @@ Records a value change event. Behavior:
 - Records waveform data if recording is active.
 - Tracks sync/async context for CDC analysis.
 - Fires CDC warnings if an async-set signal feeds an unguarded derived node.
-- Records toggle coverage for boolean values when coverage is enabled.
+- Records toggle coverage for boolean values, finite-state transition coverage,
+  and numeric counter/gauge activity when coverage is enabled.
 - Notifies all subscribers.
 - Outside test mode, auto-manages tick open/close.
 
@@ -298,7 +299,8 @@ A default `CircuitGraph` instance for convenience. The assertion helper function
 HDL-style coverage collection for measuring test completeness. Tracks:
 
 - **Toggle** -- has every boolean signal been both `true` and `false`?
-- **Transition** -- which primitive signal/derived transitions have been observed, and which generated planned transitions were covered?
+- **Transition** -- which finite-state signal/derived transitions have been observed, and which generated planned transitions were covered?
+- **Numeric activity** -- which unconstrained numeric counters/gauges changed, without turning every numeric step into a coverage point?
 - **Cross** -- which combinations of boolean signal values have been observed?
 - **Operation outcomes** -- which declared external operation outcomes were observed?
 
@@ -326,7 +328,11 @@ Records a boolean signal value for toggle coverage.
 
 ##### `recordTransition(fsmId: string, from: string, to: string): void`
 
-Records an observed primitive transition. Tracks all observed states and transition counts.
+Records an observed finite-state transition. Tracks all observed states and transition counts.
+
+##### `recordNumericActivity(signalId: string, from: number, to: number): void`
+
+Records unconstrained numeric counter/gauge activity. Numeric activity is reported for runtime evidence, but it does not contribute to coverage percentages or missing transition gaps.
 
 ##### `declarePlannedTransition(fsmId: string, from: string, to: string): void`
 
@@ -362,7 +368,7 @@ Stores the current value of a signal for future transition detection.
 
 ##### `getReport(): CoverageReport`
 
-Generates a coverage report with toggle, transition, cross, operation outcome, explicit gap data, and a summary with `totalPoints`, `coveredPoints`, and `percentage`.
+Generates a coverage report with toggle, transition, numeric activity, cross, operation outcome, explicit gap data, and a summary with `totalPoints`, `coveredPoints`, and `percentage`.
 
 ##### `reset(): void`
 
@@ -592,6 +598,21 @@ interface TransitionCoverage {
 }
 ```
 
+#### `NumericActivityCoverage`
+
+```ts
+interface NumericActivityCoverage {
+  signalId: string;
+  samples: number;
+  min: number;
+  max: number;
+  increments: number;
+  decrements: number;
+  largestStep: number;
+  lastValue: number;
+}
+```
+
 #### `CrossCoverage`
 
 ```ts
@@ -609,6 +630,7 @@ interface CrossCoverage {
 interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
+  numericActivity: NumericActivityCoverage[];
   cross: CrossCoverage[];
   operations: OperationOutcomeCoverage[];
   gaps: CoverageGap[];

@@ -153,6 +153,44 @@ export function createCoveragePanel(
       container.appendChild(section);
     }
 
+    // --- Numeric activity ---
+    if ((report.numericActivity ?? []).length > 0) {
+      const section = document.createElement('div');
+      section.style.cssText = 'margin-bottom:16px;';
+      const sectionTitle = document.createElement('div');
+      sectionTitle.style.cssText = 'font-size:0.8rem; font-weight:600; color:#c9d1d9; margin-bottom:8px;';
+      sectionTitle.textContent = 'Numeric Activity';
+      section.appendChild(sectionTitle);
+
+      const table = document.createElement('div');
+      table.style.cssText = 'display:grid; grid-template-columns:1fr 70px 90px 80px; gap:1px; background:#21262d; border:1px solid #21262d; border-radius:4px; overflow:hidden;';
+      for (const text of ['Signal', 'Samples', 'Range', 'Step']) {
+        const cell = document.createElement('div');
+        cell.style.cssText = 'padding:4px 8px; background:#161b22; color:#666; font-size:0.7rem; font-weight:600;';
+        cell.textContent = text;
+        table.appendChild(cell);
+      }
+
+      for (const item of report.numericActivity ?? []) {
+        const cells = [
+          item.signalId,
+          String(item.samples),
+          `${item.min}..${item.max}`,
+          `max ${item.largestStep}`,
+        ];
+        for (const [index, text] of cells.entries()) {
+          const cell = document.createElement('div');
+          cell.style.cssText = `padding:4px 8px; background:#0d1117; color:${index === 0 ? '#c9d1d9' : '#8b949e'}; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
+          cell.textContent = text;
+          cell.title = text;
+          table.appendChild(cell);
+        }
+      }
+
+      section.appendChild(table);
+      container.appendChild(section);
+    }
+
     // --- Cross coverage ---
     if (report.cross.length > 0) {
       const section = document.createElement('div');
@@ -188,7 +226,7 @@ export function createCoveragePanel(
     }
 
     // Empty state
-    if (report.toggle.length === 0 && report.transitions.length === 0 && report.cross.length === 0) {
+    if (report.toggle.length === 0 && report.transitions.length === 0 && report.cross.length === 0 && (report.numericActivity ?? []).length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'color:#666; padding:20px; text-align:center;';
       empty.textContent = collector.isEnabled()

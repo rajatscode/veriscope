@@ -14,6 +14,17 @@ export interface TransitionCoverage {
   plannedTransitions?: Set<string>; // generated reachable transition bins
 }
 
+export interface NumericActivityCoverage {
+  signalId: string;
+  samples: number;
+  min: number;
+  max: number;
+  increments: number;
+  decrements: number;
+  largestStep: number;
+  lastValue: number;
+}
+
 export interface CrossCoverage {
   groupId: string;
   signals: string[];
@@ -36,6 +47,7 @@ export interface CoverageGap {
 export interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
+  numericActivity: NumericActivityCoverage[];
   cross: CrossCoverage[];
   operations: OperationOutcomeCoverage[];
   gaps: CoverageGap[];
@@ -47,14 +59,16 @@ export interface CoverageReport {
  *
  * Three coverage types, inspired by hardware verification:
  * - Toggle: has every boolean signal been both true and false?
- * - Transition: which primitive transitions were observed, and which planned
- *   generated transitions were covered?
+ * - Transition: which finite-state transitions were observed, and which
+ *   planned generated transitions were covered?
+ * - Numeric activity: which unconstrained numeric counters/gauges changed?
  * - Cross: which combinations of boolean signal values have been observed?
  */
 export class CoverageCollector {
   private enabled = false;
   private toggleMap = new Map<string, ToggleCoverage>();
   private transitionMap = new Map<string, TransitionCoverage>();
+  private numericActivityMap = new Map<string, NumericActivityCoverage>();
   private crossGroups = new Map<string, CrossCoverage>();
   private operationOutcomes = new Map<string, OperationOutcomeCoverage>();
   private previousValues = new Map<string, any>();
@@ -104,6 +118,37 @@ export class CoverageCollector {
     entry.states.add(to);
     const key = `${from}->${to}`;
     entry.transitions.set(key, (entry.transitions.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * Record unconstrained numeric activity without treating every numeric step
+   * as a coverage transition. Tick counters, clocks, and gauges are useful
+   * runtime evidence, but they do not create transition-coverage obligations.
+   */
+  recordNumericActivity(signalId: string, from: number, to: number): void {
+    if (!this.enabled || !Number.isFinite(from) || !Number.isFinite(to)) return;
+    let entry = this.numericActivityMap.get(signalId);
+    if (!entry) {
+      entry = {
+        signalId,
+        samples: 0,
+        min: Math.min(from, to),
+        max: Math.max(from, to),
+        increments: 0,
+        decrements: 0,
+        largestStep: 0,
+        lastValue: from,
+      };
+      this.numericActivityMap.set(signalId, entry);
+    }
+
+    entry.samples++;
+    entry.min = Math.min(entry.min, from, to);
+    entry.max = Math.max(entry.max, from, to);
+    if (to > from) entry.increments++;
+    else if (to < from) entry.decrements++;
+    entry.largestStep = Math.max(entry.largestStep, Math.abs(to - from));
+    entry.lastValue = to;
   }
 
   /**
@@ -216,6 +261,7 @@ export class CoverageCollector {
   getReport(): CoverageReport {
     const toggle = [...this.toggleMap.values()];
     const transitions = [...this.transitionMap.values()];
+    const numericActivity = [...this.numericActivityMap.values()];
     const cross = [...this.crossGroups.values()];
     const operations = [...this.operationOutcomes.values()];
     const gaps: CoverageGap[] = [];
@@ -268,6 +314,7 @@ export class CoverageCollector {
     return {
       toggle,
       transitions,
+      numericActivity,
       cross,
       operations,
       gaps,
@@ -279,6 +326,7 @@ export class CoverageCollector {
   reset(): void {
     this.toggleMap.clear();
     this.transitionMap.clear();
+    this.numericActivityMap.clear();
     this.crossGroups.clear();
     this.operationOutcomes.clear();
     this.previousValues.clear();

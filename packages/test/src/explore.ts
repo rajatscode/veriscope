@@ -177,7 +177,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
               value: n.getValue?.(),
             })),
           ];
-          hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
+          hiddenDuplicateCases += recordScenario(graph, scenarios, seenScenarioKeys, {
             id: `scenario-${scenarioCounter++}`,
             kind: 'enumerated',
             tick: graph.currentTick,
@@ -220,7 +220,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         await flush();
         const v = graph.checkAssertions();
         graph.closeTick();
-        hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
+        hiddenDuplicateCases += recordScenario(graph, scenarios, seenScenarioKeys, {
           id: `scenario-${scenarioCounter++}`,
           kind: 'current-state',
           tick: graph.currentTick,
@@ -256,7 +256,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         scenarioCounter,
       );
       violations.push(...sequenceResult.violations);
-      hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, sequenceResult.scenarios);
+      hiddenDuplicateCases += recordScenarios(graph, scenarios, seenScenarioKeys, sequenceResult.scenarios);
       stoppedByBudget = stoppedByBudget || sequenceResult.stoppedByBudget;
       steps += sequenceResult.steps;
       scenarioCounter = sequenceResult.nextScenarioCounter;
@@ -275,7 +275,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         scenarioCounter,
       );
       violations.push(...operationResult.violations);
-      hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, operationResult.scenarios);
+      hiddenDuplicateCases += recordScenarios(graph, scenarios, seenScenarioKeys, operationResult.scenarios);
       stoppedByBudget = stoppedByBudget || operationResult.stoppedByBudget;
       steps += operationResult.steps;
       scenarioCounter = operationResult.nextScenarioCounter;
@@ -295,7 +295,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
         scenarioCounter,
       );
       violations.push(...coverageDirected.violations);
-      hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, coverageDirected.scenarios);
+      hiddenDuplicateCases += recordScenarios(graph, scenarios, seenScenarioKeys, coverageDirected.scenarios);
       stoppedByBudget = stoppedByBudget || coverageDirected.stoppedByBudget;
       steps += coverageDirected.steps;
       scenarioCounter = coverageDirected.nextScenarioCounter;
@@ -306,7 +306,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     if (steps < budget) {
       const advViolations = await adversarialPass(graph, assertions, flush, restoreScenarioBaseline, budget - steps);
       violations.push(...advViolations.violations);
-      hiddenDuplicateCases += recordScenarios(scenarios, seenScenarioKeys, advViolations.scenarios);
+      hiddenDuplicateCases += recordScenarios(graph, scenarios, seenScenarioKeys, advViolations.scenarios);
       stoppedByBudget = stoppedByBudget || advViolations.stoppedByBudget;
       steps += advViolations.steps;
       await emitProgress('adversarial');
@@ -340,7 +340,7 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
             graph.driveNodeValue(node.id, val);
             await flush();
             graph.closeTick();
-            hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
+            hiddenDuplicateCases += recordScenario(graph, scenarios, seenScenarioKeys, {
               id: `scenario-${scenarioCounter++}`,
               kind: 'coverage-completion',
               tick: graph.currentTick,
@@ -706,18 +706,20 @@ function summarizePlan(
 }
 
 function recordScenarios(
+  graph: CircuitGraph,
   scenarios: ScenarioTrace[],
   seenScenarioKeys: Set<string>,
   nextScenarios: ScenarioTrace[],
 ): number {
   let hidden = 0;
   for (const scenario of nextScenarios) {
-    hidden += recordScenario(scenarios, seenScenarioKeys, scenario);
+    hidden += recordScenario(graph, scenarios, seenScenarioKeys, scenario);
   }
   return hidden;
 }
 
 function recordScenario(
+  graph: CircuitGraph,
   scenarios: ScenarioTrace[],
   seenScenarioKeys: Set<string>,
   scenario: ScenarioTrace,
@@ -726,15 +728,16 @@ function recordScenario(
   if (seenScenarioKeys.has(key)) return 1;
   seenScenarioKeys.add(key);
   scenarios.push(scenario);
-  declarePlannedTransitionsFromScenario(scenario);
+  declarePlannedTransitionsFromScenario(graph, scenario);
   return 0;
 }
 
-function declarePlannedTransitionsFromScenario(scenario: ScenarioTrace): void {
+function declarePlannedTransitionsFromScenario(graph: CircuitGraph, scenario: ScenarioTrace): void {
   for (const observation of scenario.observations ?? []) {
     if (observation.type !== 'signal-change' && observation.type !== 'derived-recompute') continue;
     if (!observation.nodeId) continue;
-    if (!isCoverageTransitionValue(observation.oldValue) || !isCoverageTransitionValue(observation.newValue)) continue;
+    const node = graph.getNode(observation.nodeId);
+    if (!isCoverageTransitionValue(node, observation.oldValue, observation.newValue)) continue;
     if (Object.is(observation.oldValue, observation.newValue)) continue;
     coverage.declarePlannedTransition(
       observation.nodeId,
@@ -744,7 +747,19 @@ function declarePlannedTransitionsFromScenario(scenario: ScenarioTrace): void {
   }
 }
 
-function isCoverageTransitionValue(value: unknown): boolean {
+function isCoverageTransitionValue(node: GraphNodeRef | null | undefined, oldValue: unknown, newValue: unknown): boolean {
+  if (!isPrimitiveTransitionValue(oldValue) || !isPrimitiveTransitionValue(newValue)) return false;
+  if (typeof oldValue === 'number' && typeof newValue === 'number') {
+    const mode = node?.metadata?.coverage;
+    if (mode === 'activity' || mode === 'counter') return false;
+    if (mode === 'transition') return true;
+    const states = node?.metadata?.states;
+    return Array.isArray(states) && states.length > 0;
+  }
+  return true;
+}
+
+function isPrimitiveTransitionValue(value: unknown): boolean {
   return value === null || ['boolean', 'number', 'string'].includes(typeof value);
 }
 

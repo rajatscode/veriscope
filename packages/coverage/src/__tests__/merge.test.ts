@@ -6,6 +6,7 @@ function makeReport(overrides: Partial<CoverageReport> = {}): CoverageReport {
   return {
     toggle: [],
     transitions: [],
+    numericActivity: [],
     cross: [],
     operations: [],
     gaps: [],
@@ -94,6 +95,45 @@ describe('mergeCoverageReports', () => {
     expect(group.observed.get('1,1')).toBe(3);
     expect(group.observed.get('0,1')).toBe(3);
     expect(group.total).toBe(4);
+  });
+
+  it('merges numeric activity without changing coverage points', () => {
+    const r1 = makeReport({
+      numericActivity: [{
+        signalId: 'tick',
+        samples: 2,
+        min: 0,
+        max: 2,
+        increments: 2,
+        decrements: 0,
+        largestStep: 1,
+        lastValue: 2,
+      }],
+    });
+    const r2 = makeReport({
+      numericActivity: [{
+        signalId: 'tick',
+        samples: 1,
+        min: 2,
+        max: 5,
+        increments: 1,
+        decrements: 0,
+        largestStep: 3,
+        lastValue: 5,
+      }],
+    });
+
+    const merged = mergeCoverageReports(r1, r2);
+
+    expect(merged.numericActivity[0]).toMatchObject({
+      signalId: 'tick',
+      samples: 3,
+      min: 0,
+      max: 5,
+      largestStep: 3,
+      lastValue: 5,
+    });
+    expect(merged.summary.totalPoints).toBe(0);
   });
 
   it('merges non-overlapping reports', () => {

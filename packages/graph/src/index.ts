@@ -22,6 +22,7 @@ export type {
 export type {
   ToggleCoverage,
   TransitionCoverage,
+  NumericActivityCoverage,
   CrossCoverage,
   OperationOutcomeCoverage,
   CoverageGap,

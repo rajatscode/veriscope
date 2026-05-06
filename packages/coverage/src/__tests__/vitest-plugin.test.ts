@@ -19,6 +19,7 @@ function makeReport(overrides: Partial<CoverageReport> = {}): CoverageReport {
         states: new Set(['idle', 'active']),
       },
     ],
+    numericActivity: [],
     cross: [
       {
         groupId: 'g1',

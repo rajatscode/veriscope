@@ -52,6 +52,28 @@ describe('CoverageCollector', () => {
     });
   });
 
+  it('records numeric activity without adding coverage points', () => {
+    const c = new CoverageCollector();
+    c.enable();
+    c.recordNumericActivity('tick', 0, 1);
+    c.recordNumericActivity('tick', 1, 2);
+
+    const report = c.getReport();
+
+    expect(report.numericActivity[0]).toMatchObject({
+      signalId: 'tick',
+      samples: 2,
+      min: 0,
+      max: 2,
+      increments: 2,
+      decrements: 0,
+      largestStep: 1,
+      lastValue: 2,
+    });
+    expect(report.transitions).toHaveLength(0);
+    expect(report.summary.totalPoints).toBe(0);
+  });
+
   it('does nothing when disabled', () => {
     const c = new CoverageCollector();
     c.recordToggle('sig1', true);

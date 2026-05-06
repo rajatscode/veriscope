@@ -110,6 +110,20 @@ describe('useSignal', () => {
     expect(node?.metadata?.states).toEqual(['red', 'green', 'blue']);
   });
 
+  it('stores explicit coverage metadata when provided', () => {
+    const { result } = renderHook(() =>
+      useSignal(0, 'mode', {
+        graph,
+        states: [0, 1],
+        coverage: 'transition',
+      })
+    );
+
+    const node = graph.getNode(result.current.nodeId);
+    expect(node?.metadata?.states).toEqual([0, 1]);
+    expect(node?.metadata?.coverage).toBe('transition');
+  });
+
   it('passes stable path and scope metadata through to graph snapshots', () => {
     const { result } = renderHook(() =>
       useSignal(1, 'value', {

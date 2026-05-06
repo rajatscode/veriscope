@@ -404,6 +404,20 @@ describe('CircuitGraph', () => {
     expect(g.currentTick).toBe(0);
   });
 
+  it('clears coverage data on graph reset', () => {
+    const g = new CircuitGraph();
+    coverage.reset();
+    g.enableCoverage();
+    const flag = g.registerNode({ name: 'flag', type: 'signal' });
+    g.notifyChange(flag, false, true);
+    expect(coverage.getReport().toggle).toHaveLength(1);
+
+    g.reset();
+
+    expect(coverage.getReport().toggle).toHaveLength(0);
+    expect(coverage.getReport().numericActivity).toHaveLength(0);
+  });
+
   it('snapshots include node info', () => {
     const g = new CircuitGraph();
     g.registerNode({ name: 'x', type: 'signal' });
@@ -629,6 +643,48 @@ describe('CircuitGraph', () => {
     g.notifyChange(a, 0, 1);
     g.notifyChange(a, 1, 2);
     g.disableCoverage();
+  });
+
+  it('classifies unconstrained numeric changes as activity instead of transition coverage', () => {
+    const g = new CircuitGraph();
+    coverage.reset();
+    g.enableCoverage();
+    const tick = g.registerNode({ name: 'tick', type: 'signal' });
+
+    g.notifyChange(tick, 0, 1);
+    g.notifyChange(tick, 1, 2);
+
+    const report = coverage.getReport();
+    expect(report.transitions).toHaveLength(0);
+    expect(report.numericActivity[0]).toMatchObject({
+      signalId: tick,
+      samples: 2,
+      min: 0,
+      max: 2,
+    });
+    expect(report.summary.totalPoints).toBe(0);
+    g.disableCoverage();
+    coverage.reset();
+  });
+
+  it('records numeric transitions when a numeric node declares finite states', () => {
+    const g = new CircuitGraph();
+    coverage.reset();
+    g.enableCoverage();
+    const mode = g.registerNode({
+      name: 'numericMode',
+      type: 'signal',
+      metadata: { states: [0, 1] },
+    });
+
+    g.notifyChange(mode, 0, 1);
+
+    const report = coverage.getReport();
+    expect(report.transitions[0].fsmId).toBe(mode);
+    expect(report.transitions[0].transitions.get('0->1')).toBe(1);
+    expect(report.numericActivity).toHaveLength(0);
+    g.disableCoverage();
+    coverage.reset();
   });
 
   it('multiple openTick/closeTick cycles advance tick correctly', () => {

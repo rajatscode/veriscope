@@ -4,6 +4,7 @@ import type {
   CoverageGap,
   CoverageReport,
   CrossCoverage,
+  NumericActivityCoverage,
   OperationOutcomeCoverage,
   ToggleCoverage,
   TransitionCoverage,
@@ -20,6 +21,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 export function mergeCoverageReports(...reports: CoverageReport[]): CoverageReport {
   const toggleMap = new Map<string, ToggleCoverage>();
   const transitionMap = new Map<string, TransitionCoverage>();
+  const numericActivityMap = new Map<string, NumericActivityCoverage>();
   const crossMap = new Map<string, CrossCoverage>();
   const operationMap = new Map<string, OperationOutcomeCoverage>();
 
@@ -56,6 +58,22 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
           states: new Set(fsm.states),
           plannedTransitions: new Set(fsm.plannedTransitions ?? []),
         });
+      }
+    }
+
+    // Merge numeric activity
+    for (const item of report.numericActivity ?? []) {
+      const existing = numericActivityMap.get(item.signalId);
+      if (existing) {
+        existing.samples += item.samples;
+        existing.min = Math.min(existing.min, item.min);
+        existing.max = Math.max(existing.max, item.max);
+        existing.increments += item.increments;
+        existing.decrements += item.decrements;
+        existing.largestStep = Math.max(existing.largestStep, item.largestStep);
+        existing.lastValue = item.lastValue;
+      } else {
+        numericActivityMap.set(item.signalId, { ...item });
       }
     }
 
@@ -101,6 +119,7 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
   // Recalculate summary
   const toggle = [...toggleMap.values()];
   const transitions = [...transitionMap.values()];
+  const numericActivity = [...numericActivityMap.values()];
   const cross = [...crossMap.values()];
   const operations = [...operationMap.values()];
   const gaps: CoverageGap[] = [];
@@ -153,6 +172,7 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
   return {
     toggle,
     transitions,
+    numericActivity,
     cross,
     operations,
     gaps,
@@ -173,6 +193,7 @@ export function saveCoverageToFile(report: CoverageReport, path: string): void {
       states: [...t.states],
       plannedTransitions: [...(t.plannedTransitions ?? [])],
     })),
+    numericActivity: report.numericActivity ?? [],
     cross: report.cross.map(c => ({
       groupId: c.groupId,
       signals: c.signals,
@@ -205,6 +226,7 @@ export function loadCoverageFromFile(path: string): CoverageReport {
       states: new Set(t.states as string[]),
       plannedTransitions: new Set((t.plannedTransitions ?? []) as string[]),
     })),
+    numericActivity: raw.numericActivity ?? [],
     cross: raw.cross.map((c: any) => ({
       groupId: c.groupId,
       signals: c.signals,

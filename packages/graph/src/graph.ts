@@ -406,13 +406,12 @@ export class CircuitGraph {
       if (typeof newValue === 'boolean') {
         coverage.recordToggle(nodeId, newValue);
       }
-      if (
-        (node.type === 'signal' || node.type === 'derived')
-        && isTransitionValue(oldValue)
-        && isTransitionValue(newValue)
-        && !Object.is(oldValue, newValue)
-      ) {
-        coverage.recordTransition(nodeId, String(oldValue), String(newValue));
+      if ((node.type === 'signal' || node.type === 'derived') && !Object.is(oldValue, newValue)) {
+        if (shouldRecordFiniteTransition(node, oldValue, newValue)) {
+          coverage.recordTransition(nodeId, String(oldValue), String(newValue));
+        } else if (shouldRecordNumericActivity(node, oldValue, newValue)) {
+          coverage.recordNumericActivity(nodeId, oldValue as number, newValue as number);
+        }
       }
     }
 
@@ -1042,6 +1041,7 @@ export class CircuitGraph {
     this.tickOpen = false;
     this.tickCloseScheduled = false;
     this.coverageEnabled = false;
+    coverage.reset();
     this._inAsyncContext = false;
     this.nodeLastSetContext.clear();
     this.cdcWarningListeners.clear();
@@ -1070,6 +1070,25 @@ function arrayMetadata(metadata: Record<string, any> | undefined, key: string): 
 
 function isTransitionValue(value: unknown): boolean {
   return value === null || ['boolean', 'number', 'string'].includes(typeof value);
+}
+
+function shouldRecordFiniteTransition(node: GraphNode, oldValue: unknown, newValue: unknown): boolean {
+  if (!isTransitionValue(oldValue) || !isTransitionValue(newValue)) return false;
+  if (typeof oldValue === 'number' && typeof newValue === 'number') {
+    const mode = node.metadata?.coverage;
+    if (mode === 'activity' || mode === 'counter') return false;
+    if (mode === 'transition') return true;
+    return Array.isArray(node.metadata?.states) && node.metadata.states.length > 0;
+  }
+  return true;
+}
+
+function shouldRecordNumericActivity(node: GraphNode, oldValue: unknown, newValue: unknown): boolean {
+  if (node.metadata?.coverage === 'transition') return false;
+  return typeof oldValue === 'number'
+    && typeof newValue === 'number'
+    && Number.isFinite(oldValue)
+    && Number.isFinite(newValue);
 }
 
 function stableJson(value: unknown): string {

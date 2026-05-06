@@ -48,8 +48,9 @@ function useSignal<T>(
   initialValue: T,
   name: string,
   options?: {
-    states?: string[];
     graph?: CircuitGraph;
+    states?: Array<string | number | boolean | null>;
+    coverage?: 'auto' | 'transition' | 'activity' | 'counter';
     stablePath?: string;
     scope?: string;
   },
@@ -58,7 +59,8 @@ function useSignal<T>(
 
 - `.val` -- synchronous read (ref-backed, never stale)
 - `.set(next)` -- accepts a value or updater function, skips on `Object.is` equality, triggers React re-render + `graph.notifyChange()`
-- `options.states` -- optional FSM state enumeration for coverage
+- `options.states` -- optional finite state enumeration for transition coverage and exploration
+- `options.coverage` -- optional override for numeric signals. By default, unconstrained numeric changes are counter/gauge activity, not transition coverage.
 - `options.graph` -- defaults to the global singleton
 - `options.stablePath` / `options.scope` -- stable artifact identity for snapshots and repeated component instances
 
@@ -71,7 +73,12 @@ function useDerived<T>(
   computeFn: () => T,
   deps: Array<Signal<any> | ReadonlySignal<any>>,
   name: string,
-  options?: { graph?: CircuitGraph; stablePath?: string; scope?: string },
+  options?: {
+    graph?: CircuitGraph;
+    stablePath?: string;
+    scope?: string;
+    coverage?: 'auto' | 'transition' | 'activity' | 'counter';
+  },
 ): ReadonlySignal<T>;
 ```
 
@@ -490,6 +497,9 @@ function writeSnapshot(graph: CircuitGraph, outputPath: string): void
 ### `CoverageCollector` Class (`@veriscope/graph`)
 
 HDL-style coverage collection. A singleton is exported as `coverage`.
+Finite-state transitions count toward transition coverage; unconstrained numeric
+counters/gauges are tracked as numeric activity and excluded from coverage
+denominators unless a node declares finite states or `coverage: 'transition'`.
 
 ```ts
 import { CoverageCollector, coverage } from '@veriscope/graph';
@@ -501,6 +511,7 @@ disable(): void
 isEnabled(): boolean
 recordToggle(signalId: string, value: boolean): void
 recordTransition(fsmId: string, from: string, to: string): void
+recordNumericActivity(signalId: string, from: number, to: number): void
 declarePlannedTransition(fsmId: string, from: string, to: string): void
 declarePlannedTransitions(fsmId: string, transitions: Array<{ from: string; to: string }>): void
 declareTransitionStates(fsmId: string, states: string[]): void
@@ -520,6 +531,7 @@ reset(): void
 interface CoverageReport {
   toggle: ToggleCoverage[];
   transitions: TransitionCoverage[];
+  numericActivity: NumericActivityCoverage[];
   cross: CrossCoverage[];
   operations: OperationOutcomeCoverage[];
   gaps: CoverageGap[];
@@ -537,6 +549,17 @@ interface TransitionCoverage {
   transitions: Map<string, number>;  // "stateA->stateB" -> count
   states: Set<string>;
   plannedTransitions?: Set<string>;
+}
+
+interface NumericActivityCoverage {
+  signalId: string;
+  samples: number;
+  min: number;
+  max: number;
+  increments: number;
+  decrements: number;
+  largestStep: number;
+  lastValue: number;
 }
 
 interface CrossCoverage {
@@ -595,7 +618,7 @@ function saveCoverageToFile(report: CoverageReport, path: string): void
 function loadCoverageFromFile(path: string): CoverageReport
 ```
 
-Merge strategy: toggle OR-unions `seenTrue`/`seenFalse`; transitions sum observed counts and union planned bins; cross coverage sums counts and unions keys.
+Merge strategy: toggle OR-unions `seenTrue`/`seenFalse`; transitions sum observed counts and union planned bins; numeric activity sums samples and ranges; cross coverage sums counts and unions keys.
 
 ### Vitest Reporter (`@veriscope/coverage`)
 
