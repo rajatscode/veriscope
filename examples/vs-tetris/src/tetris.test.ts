@@ -166,9 +166,14 @@ describe('vs-tetris engine', () => {
     expect(result.checksumMatched).toBe(true);
     expect(result.disabledChecksum).toBe(result.plainChecksum);
     expect(result.plainChecksum).toBe(result.veriscopeChecksum);
-    expect(result.plainMs).toBeGreaterThanOrEqual(0);
-    expect(result.disabledMs).toBeGreaterThanOrEqual(0);
-    expect(result.veriscopeMs).toBeGreaterThanOrEqual(0);
+    expect(result.sampleCount).toBeGreaterThan(1);
+    expect(result.warmupCount).toBeGreaterThan(0);
+    expect(result.plain.samples).toHaveLength(result.sampleCount);
+    expect(result.disabled.samples).toHaveLength(result.sampleCount);
+    expect(result.dev.samples).toHaveLength(result.sampleCount);
+    expect(result.plain.medianMs).toBeGreaterThanOrEqual(0);
+    expect(result.disabled.medianMs).toBeGreaterThanOrEqual(0);
+    expect(result.dev.medianMs).toBeGreaterThanOrEqual(0);
     expect(result.disabledNodeCount).toBe(0);
     expect(result.nodeCount).toBeGreaterThan(0);
     expect(result.assertionCount).toBeGreaterThan(0);

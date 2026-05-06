@@ -1,4 +1,4 @@
-import { coverage, type CircuitGraph } from '@veriscope/graph';
+import { coverage, type CircuitGraph, type GraphNode } from '@veriscope/graph';
 import {
   advanceArena,
   clampOpponentCount,
@@ -13,17 +13,36 @@ import {
 } from './tetris';
 import { createVsTetrisGraph } from './veriscopeTetris';
 
+type PerfMode = 'plain' | 'disabled' | 'dev';
+
+interface ModeRun {
+  mode: PerfMode;
+  ms: number;
+  checksum: string;
+  nodeCount: number;
+  assertionCount: number;
+}
+
+export interface PerfStats {
+  medianMs: number;
+  p95Ms: number;
+  samples: number[];
+}
+
 export interface PerfResult {
   opponentCount: OpponentCount;
   iterations: number;
   seed: number;
-  plainMs: number;
-  disabledMs: number;
-  veriscopeMs: number;
+  sampleCount: number;
+  warmupCount: number;
+  plain: PerfStats;
+  disabled: PerfStats;
+  dev: PerfStats;
   disabledRatio: number;
-  ratio: number;
+  devRatio: number;
   disabledDeltaPerTickUs: number;
-  deltaPerTickUs: number;
+  devDeltaPerTickUs: number;
+  disabledWithinNoise: boolean;
   plainChecksum: string;
   disabledChecksum: string;
   veriscopeChecksum: string;
@@ -33,92 +52,206 @@ export interface PerfResult {
   assertionCount: number;
 }
 
+const SAMPLE_COUNT = 9;
+const WARMUP_COUNT = 2;
+const NOISE_RATIO = 0.05;
+const ORDERS: PerfMode[][] = [
+  ['plain', 'disabled', 'dev'],
+  ['disabled', 'dev', 'plain'],
+  ['dev', 'plain', 'disabled'],
+];
+
 export function measureVsTetrisPerf(opponentCount: OpponentCount, iterations: number): PerfResult {
   const count = clampOpponentCount(opponentCount);
   const ticks = Math.max(1, Math.floor(iterations));
-  const seed = (0x715c0fef ^ (count << 8) ^ ticks) >>> 0;
+  const baseSeed = (0x715c0fef ^ (count << 8) ^ ticks) >>> 0;
   const target = targetIdsFor(count)[0] ?? 'p2';
   const savedRng = snapshotTetrisRng();
   const coverageWasEnabled = coverage.isEnabled();
 
+  const measured: Record<PerfMode, ModeRun[]> = {
+    plain: [],
+    disabled: [],
+    dev: [],
+  };
+  let allChecksumsMatched = true;
+
   try {
     coverage.disable();
 
-    resetTetrisRng(seed);
-    let plainPlayers = resetPlayers(count);
-    let plainProjectionHash = 0;
-    const plainStart = performance.now();
-    for (let i = 0; i < ticks; i++) {
-      const result = advanceArena(plainPlayers, target, { holdHumanGarbage: true });
-      plainPlayers = result.players;
-      plainProjectionHash = mixHash(plainProjectionHash, readPlainSelectors(plainPlayers));
-    }
-    const plainMs = performance.now() - plainStart;
-    const plainChecksum = `${checksumPlayers(plainPlayers)}:${plainProjectionHash}`;
+    for (let sample = -WARMUP_COUNT; sample < SAMPLE_COUNT; sample++) {
+      const measuredSample = sample >= 0;
+      const order = ORDERS[((sample + WARMUP_COUNT) % ORDERS.length + ORDERS.length) % ORDERS.length];
+      const seed = sampleSeed(baseSeed, sample);
+      const runs = new Map<PerfMode, ModeRun>();
 
-    resetTetrisRng(seed);
-    const disabledGraph = createVsTetrisGraph(count, { instrumentationEnabled: false });
-    resetTetrisRng(seed);
-    let disabledPlayers = resetPlayers(count);
-    let disabledProjectionHash = 0;
-    const disabledStart = performance.now();
-    for (let i = 0; i < ticks; i++) {
-      const result = advanceArena(disabledPlayers, target, { holdHumanGarbage: true });
-      disabledPlayers = result.players;
-      disabledProjectionHash = mixHash(disabledProjectionHash, readPlainSelectors(disabledPlayers));
-    }
-    const disabledMs = performance.now() - disabledStart;
-    const disabledChecksum = `${checksumPlayers(disabledPlayers)}:${disabledProjectionHash}`;
+      for (const mode of order) {
+        const run = runMode(mode, count, ticks, target, seed);
+        runs.set(mode, run);
+        if (measuredSample) measured[mode].push(run);
+      }
 
-    resetTetrisRng(seed);
-    const perfGraph = createVsTetrisGraph(count);
-    const playersNode = perfGraph.getNodes().find(node => node.name === 'arena.players');
-    if (!playersNode?.setValue) throw new Error('perf graph missing arena.players signal');
-    perfGraph.enterTestMode();
-    perfGraph.startRecording();
-    let scopedPlayers = playersNode.getValue?.() as PlayerState[];
-    let veriscopeProjectionHash = 0;
-
-    const veriscopeStart = performance.now();
-    for (let i = 0; i < ticks; i++) {
-      const result = advanceArena(scopedPlayers, target, { holdHumanGarbage: true });
-      perfGraph.openTick();
-      perfGraph.driveNodeValue(playersNode.id, result.players);
-      perfGraph.checkAssertions();
-      perfGraph.closeTick();
-      scopedPlayers = result.players;
-      veriscopeProjectionHash = mixHash(veriscopeProjectionHash, readGraphSelectors(perfGraph));
+      const plainChecksum = runs.get('plain')?.checksum;
+      const disabledChecksum = runs.get('disabled')?.checksum;
+      const devChecksum = runs.get('dev')?.checksum;
+      allChecksumsMatched &&= plainChecksum === disabledChecksum && plainChecksum === devChecksum;
     }
-    const veriscopeMs = performance.now() - veriscopeStart;
-    perfGraph.stopRecording();
-    perfGraph.exitTestMode();
-    const veriscopeChecksum = `${checksumPlayers(scopedPlayers)}:${veriscopeProjectionHash}`;
-    const ratio = plainMs > 0 ? veriscopeMs / plainMs : 0;
+
+    const plain = statsFor(measured.plain.map(run => run.ms));
+    const disabled = statsFor(measured.disabled.map(run => run.ms));
+    const dev = statsFor(measured.dev.map(run => run.ms));
+    const disabledRatio = ratio(disabled.medianMs, plain.medianMs);
+    const devRatio = ratio(dev.medianMs, plain.medianMs);
+    const disabledDeltaPerTickUs = ((disabled.medianMs - plain.medianMs) / ticks) * 1000;
+    const devDeltaPerTickUs = ((dev.medianMs - plain.medianMs) / ticks) * 1000;
+    const firstPlain = measured.plain[0];
+    const firstDisabled = measured.disabled[0];
+    const firstDev = measured.dev[0];
 
     return {
       opponentCount: count,
       iterations: ticks,
-      seed,
-      plainMs,
-      disabledMs,
-      veriscopeMs,
-      disabledRatio: plainMs > 0 ? disabledMs / plainMs : 0,
-      ratio,
-      disabledDeltaPerTickUs: ((disabledMs - plainMs) / ticks) * 1000,
-      deltaPerTickUs: ((veriscopeMs - plainMs) / ticks) * 1000,
-      plainChecksum,
-      disabledChecksum,
-      veriscopeChecksum,
-      checksumMatched: plainChecksum === disabledChecksum && plainChecksum === veriscopeChecksum,
-      disabledNodeCount: disabledGraph.getNodes().length,
-      nodeCount: perfGraph.getNodes().length,
-      assertionCount: perfGraph.getAssertions().length,
+      seed: baseSeed,
+      sampleCount: SAMPLE_COUNT,
+      warmupCount: WARMUP_COUNT,
+      plain,
+      disabled,
+      dev,
+      disabledRatio,
+      devRatio,
+      disabledDeltaPerTickUs,
+      devDeltaPerTickUs,
+      disabledWithinNoise: disabled.medianMs <= plain.medianMs * (1 + NOISE_RATIO),
+      plainChecksum: firstPlain?.checksum ?? '',
+      disabledChecksum: firstDisabled?.checksum ?? '',
+      veriscopeChecksum: firstDev?.checksum ?? '',
+      checksumMatched:
+        allChecksumsMatched
+        && firstPlain?.checksum === firstDisabled?.checksum
+        && firstPlain?.checksum === firstDev?.checksum,
+      disabledNodeCount: firstDisabled?.nodeCount ?? 0,
+      nodeCount: firstDev?.nodeCount ?? 0,
+      assertionCount: firstDev?.assertionCount ?? 0,
     };
   } finally {
     restoreTetrisRng(savedRng);
     if (coverageWasEnabled) coverage.enable();
     else coverage.disable();
   }
+}
+
+function runMode(
+  mode: PerfMode,
+  count: OpponentCount,
+  ticks: number,
+  target: string,
+  seed: number,
+): ModeRun {
+  if (mode === 'plain') return runPlain(count, ticks, target, seed);
+  if (mode === 'disabled') return runDisabled(count, ticks, target, seed);
+  return runDev(count, ticks, target, seed);
+}
+
+function runPlain(count: OpponentCount, ticks: number, target: string, seed: number): ModeRun {
+  resetTetrisRng(seed);
+  let players = resetPlayers(count);
+  let projectionHash = 0;
+
+  const start = performance.now();
+  for (let i = 0; i < ticks; i++) {
+    const result = advanceArena(players, target, { holdHumanGarbage: true });
+    players = result.players;
+    projectionHash = mixHash(projectionHash, readPlainSelectors(players));
+  }
+
+  return {
+    mode: 'plain',
+    ms: performance.now() - start,
+    checksum: `${checksumPlayers(players)}:${projectionHash}`,
+    nodeCount: 0,
+    assertionCount: 0,
+  };
+}
+
+function runDisabled(count: OpponentCount, ticks: number, target: string, seed: number): ModeRun {
+  const disabledGraph = createVsTetrisGraph(count, { instrumentationEnabled: false });
+  resetTetrisRng(seed);
+  let players = resetPlayers(count);
+  let projectionHash = 0;
+
+  const start = performance.now();
+  for (let i = 0; i < ticks; i++) {
+    const result = advanceArena(players, target, { holdHumanGarbage: true });
+    players = result.players;
+    projectionHash = mixHash(projectionHash, readPlainSelectors(players));
+  }
+
+  return {
+    mode: 'disabled',
+    ms: performance.now() - start,
+    checksum: `${checksumPlayers(players)}:${projectionHash}`,
+    nodeCount: disabledGraph.getNodes().length,
+    assertionCount: disabledGraph.getAssertions().length,
+  };
+}
+
+function runDev(count: OpponentCount, ticks: number, target: string, seed: number): ModeRun {
+  resetTetrisRng(seed);
+  const perfGraph = createVsTetrisGraph(count);
+  const playersNode = perfGraph.getNodes().find(node => node.name === 'arena.players');
+  if (!playersNode?.setValue) throw new Error('perf graph missing arena.players signal');
+  const selectorNodes = selectorNodeMap(perfGraph);
+
+  perfGraph.enterTestMode();
+  perfGraph.startRecording();
+  let players = playersNode.getValue?.() as PlayerState[];
+  let projectionHash = 0;
+
+  const start = performance.now();
+  for (let i = 0; i < ticks; i++) {
+    const result = advanceArena(players, target, { holdHumanGarbage: true });
+    perfGraph.openTick();
+    perfGraph.driveNodeValue(playersNode.id, result.players);
+    perfGraph.checkAssertions();
+    perfGraph.closeTick();
+    players = result.players;
+    projectionHash = mixHash(projectionHash, readGraphSelectors(selectorNodes));
+  }
+  const ms = performance.now() - start;
+
+  perfGraph.stopRecording();
+  perfGraph.exitTestMode();
+
+  return {
+    mode: 'dev',
+    ms,
+    checksum: `${checksumPlayers(players)}:${projectionHash}`,
+    nodeCount: perfGraph.getNodes().length,
+    assertionCount: perfGraph.getAssertions().length,
+  };
+}
+
+function sampleSeed(baseSeed: number, sample: number): number {
+  return (baseSeed ^ Math.imul(sample + 0x9e3779b9, 0x85ebca6b)) >>> 0;
+}
+
+function statsFor(samples: number[]): PerfStats {
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    medianMs: percentile(sorted, 0.5),
+    p95Ms: percentile(sorted, 0.95),
+    samples: sorted,
+  };
+}
+
+function percentile(sortedSamples: number[], p: number): number {
+  if (sortedSamples.length === 0) return 0;
+  const index = Math.min(sortedSamples.length - 1, Math.max(0, Math.ceil(sortedSamples.length * p) - 1));
+  return sortedSamples[index];
+}
+
+function ratio(value: number, baseline: number): number {
+  return baseline > 0 ? value / baseline : 0;
 }
 
 function readPlainSelectors(players: PlayerState[]): number {
@@ -131,18 +264,23 @@ function readPlainSelectors(players: PlayerState[]): number {
   ]);
 }
 
-function readGraphSelectors(perfGraph: CircuitGraph): number {
-  return hashValues([
-    nodeValue(perfGraph, 'arena.activePlayersForTests'),
-    nodeValue(perfGraph, 'arena.leader'),
-    nodeValue(perfGraph, 'arena.garbageSendHasRecipient'),
-    nodeValue(perfGraph, 'arena.totalSent'),
-    nodeValue(perfGraph, 'arena.totalReceived'),
-  ]);
+function selectorNodeMap(perfGraph: CircuitGraph): GraphNode[] {
+  const nodes = perfGraph.getNodes();
+  return [
+    'arena.activePlayersForTests',
+    'arena.leader',
+    'arena.garbageSendHasRecipient',
+    'arena.totalSent',
+    'arena.totalReceived',
+  ].map(name => {
+    const node = nodes.find(entry => entry.name === name);
+    if (!node?.getValue) throw new Error(`perf graph missing ${name}`);
+    return node;
+  });
 }
 
-function nodeValue(perfGraph: CircuitGraph, name: string): unknown {
-  return perfGraph.getNodes().find(node => node.name === name)?.getValue?.();
+function readGraphSelectors(selectorNodes: GraphNode[]): number {
+  return hashValues(selectorNodes.map(node => node.getValue?.()));
 }
 
 function hashValues(values: unknown[]): number {

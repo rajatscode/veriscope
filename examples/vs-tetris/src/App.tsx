@@ -468,13 +468,17 @@ function PerfWorkbench({ opponentCount }: { opponentCount: OpponentCount }) {
         </div>
       </div>
       <div className="perf-grid">
-        <Metric label="Plain data path" value={result ? `${result.plainMs.toFixed(2)}ms` : '-'} />
-        <Metric label="Veriscope disabled" value={result ? `${result.disabledMs.toFixed(2)}ms` : '-'} />
-        <Metric label="Veriscope dev" value={result ? `${result.veriscopeMs.toFixed(2)}ms` : '-'} />
-        <Metric label="Disabled overhead" value={result ? `${result.disabledRatio.toFixed(2)}x` : '-'} />
-        <Metric label="Dev overhead" value={result ? `${result.ratio.toFixed(2)}x` : '-'} />
-        <Metric label="Disabled delta" value={result ? `${result.disabledDeltaPerTickUs.toFixed(1)}us/tick` : '-'} />
-        <Metric label="Dev delta" value={result ? `${result.deltaPerTickUs.toFixed(1)}us/tick` : '-'} />
+        <Metric label="Plain median" value={result ? formatMs(result.plain.medianMs) : '-'} />
+        <Metric label="Disabled median" value={result ? formatMs(result.disabled.medianMs) : '-'} />
+        <Metric label="Dev median" value={result ? formatMs(result.dev.medianMs) : '-'} />
+        <Metric label="Plain p95" value={result ? formatMs(result.plain.p95Ms) : '-'} />
+        <Metric label="Disabled p95" value={result ? formatMs(result.disabled.p95Ms) : '-'} />
+        <Metric label="Dev p95" value={result ? formatMs(result.dev.p95Ms) : '-'} />
+        <Metric label="Disabled overhead" value={result ? formatDisabledOverhead(result) : '-'} />
+        <Metric label="Dev overhead" value={result ? `${result.devRatio.toFixed(2)}x` : '-'} />
+        <Metric label="Disabled delta" value={result ? formatDisabledDelta(result) : '-'} />
+        <Metric label="Dev delta" value={result ? formatUsPerTick(result.devDeltaPerTickUs) : '-'} />
+        <Metric label="Samples" value={result ? `${result.sampleCount} + ${result.warmupCount} warmups` : '-'} />
         <Metric label="Seed" value={result ? result.seed : '-'} />
         <Metric label="Checksum" value={result ? (result.checksumMatched ? `matched ${result.plainChecksum}` : 'mismatch') : '-'} />
         <Metric label="Dev graph" value={result ? `${result.nodeCount} nodes / ${result.assertionCount} asserts` : '-'} />
@@ -482,6 +486,26 @@ function PerfWorkbench({ opponentCount }: { opponentCount: OpponentCount }) {
       </div>
     </section>
   );
+}
+
+function formatMs(value: number) {
+  return `${value.toFixed(2)}ms`;
+}
+
+function formatUsPerTick(value: number) {
+  return `${value.toFixed(1)}us/tick`;
+}
+
+function formatDisabledOverhead(result: PerfResult) {
+  return result.disabledWithinNoise || result.disabledRatio <= 1
+    ? 'within noise'
+    : `${result.disabledRatio.toFixed(2)}x`;
+}
+
+function formatDisabledDelta(result: PerfResult) {
+  return result.disabledWithinNoise || result.disabledDeltaPerTickUs <= 0
+    ? '~0us/tick'
+    : formatUsPerTick(result.disabledDeltaPerTickUs);
 }
 
 function SetupPanel({
