@@ -40,6 +40,7 @@ export function createTabLayout(container: HTMLElement): TabLayout {
   // Tab bar
   const tabBar = document.createElement('div');
   tabBar.style.cssText = 'display:flex; gap:0; background:#161b22; border-bottom:1px solid #21262d; flex-shrink:0;';
+  tabBar.setAttribute('role', 'tablist');
   container.appendChild(tabBar);
 
   // Content area
@@ -58,6 +59,9 @@ export function createTabLayout(container: HTMLElement): TabLayout {
     const btn = document.createElement('button');
     btn.style.cssText = 'background:none; border:none; border-bottom:2px solid transparent; color:#666; padding:6px 14px; cursor:pointer; font-size:0.75rem; font-family:"SF Mono","Fira Code",monospace; transition:all 0.15s;';
     btn.textContent = tab.label;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+    btn.id = `vs-tab-${tab.id}`;
     btn.addEventListener('click', () => setActive(tab.id));
     btn.addEventListener('mouseenter', () => {
       if (activeTab !== tab.id) btn.style.color = '#c9d1d9';
@@ -71,6 +75,8 @@ export function createTabLayout(container: HTMLElement): TabLayout {
     // Content panel
     const panel = document.createElement('div');
     panel.style.cssText = 'position:absolute; top:0; left:0; right:0; bottom:0; display:none;';
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `vs-tab-${tab.id}`);
     contentArea.appendChild(panel);
     contentPanels.set(tab.id, panel);
   }
@@ -85,12 +91,36 @@ export function createTabLayout(container: HTMLElement): TabLayout {
         btn.style.borderBottomColor = 'transparent';
         btn.style.color = '#666';
       }
+      btn.setAttribute('aria-selected', id === tab ? 'true' : 'false');
+      btn.setAttribute('tabindex', id === tab ? '0' : '-1');
     }
     for (const [id, panel] of contentPanels) {
       panel.style.display = id === tab ? 'block' : 'none';
     }
     for (const cb of changeListeners) cb(tab);
   }
+
+  tabBar.addEventListener('keydown', (e) => {
+    const tabIds = TABS.map(t => t.id);
+    const currentIndex = tabIds.indexOf(activeTab);
+    let newIndex = -1;
+
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      newIndex = (currentIndex + 1) % tabIds.length;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      newIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
+    } else if (e.key === 'Home') {
+      newIndex = 0;
+    } else if (e.key === 'End') {
+      newIndex = tabIds.length - 1;
+    }
+
+    if (newIndex >= 0) {
+      e.preventDefault();
+      setActive(tabIds[newIndex]);
+      tabButtons.get(tabIds[newIndex])?.focus();
+    }
+  });
 
   // Initialize first tab
   setActive('circuit');
