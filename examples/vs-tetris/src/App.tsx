@@ -497,15 +497,13 @@ function formatUsPerTick(value: number) {
 }
 
 function formatDisabledOverhead(result: PerfResult) {
-  return result.disabledWithinNoise || result.disabledRatio <= 1
-    ? 'within noise'
-    : `${result.disabledRatio.toFixed(2)}x`;
+  const suffix = result.disabledWithinNoise || result.disabledRatio <= 1 ? ' noise' : '';
+  return `${result.disabledRatio.toFixed(2)}x${suffix}`;
 }
 
 function formatDisabledDelta(result: PerfResult) {
-  return result.disabledWithinNoise || result.disabledDeltaPerTickUs <= 0
-    ? '~0us/tick'
-    : formatUsPerTick(result.disabledDeltaPerTickUs);
+  const suffix = result.disabledWithinNoise || result.disabledDeltaPerTickUs <= 0 ? ' noise' : '';
+  return `${formatUsPerTick(result.disabledDeltaPerTickUs)}${suffix}`;
 }
 
 function SetupPanel({
