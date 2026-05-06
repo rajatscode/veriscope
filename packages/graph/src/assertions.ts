@@ -55,7 +55,10 @@ export function assertNever(
   deps?: AssertionDep[],
   metadata?: AssertionMetadata,
 ): string {
-  const nodeId = assertAlways(() => !checkFn(), name, targetGraph, deps, metadata);
+  const inverted = () => !checkFn();
+  const nodeId = assertAlways(inverted, name, targetGraph, deps, metadata);
+  // Override kind to 'never' so explorers can distinguish from 'always'
+  targetGraph.setAssertionFn(nodeId, inverted, 'never');
   // Store the original user checkFn so explore() can parse the actual signal reads
   // (assertAlways stores `() => !checkFn()` which hides the .val references)
   targetGraph.setAssertionUserCheckFn(nodeId, checkFn);

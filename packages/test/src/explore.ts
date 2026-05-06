@@ -1385,9 +1385,42 @@ async function adversarialPass(
       if (metadataFoundViolation || steps >= remainingBudget) continue;
     }
 
-    if (assertion.kind === 'always' || assertion.kind === 'never') {
+    if (assertion.kind === 'never') {
+      // For 'never' assertions, userCheckFn returns true when the violation
+      // condition occurs. Drive signals to satisfy it (make it return true).
+      const fnToParse = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
+      const parsed = parseCheckFn(fnToParse);
+      if (parsed) {
+        const assignment: DriveAssignment = [];
+        for (const name of parsed.negations) {
+          const node = nodeByName.get(name);
+          if (node?.setValue) assignment.push({ node, value: false });
+        }
+        for (const name of parsed.affirmatives) {
+          const node = nodeByName.get(name);
+          if (node?.setValue) assignment.push({ node, value: true });
+        }
+        for (const group of parsed.disjuncts) {
+          for (const name of group) {
+            const node = nodeByName.get(name);
+            if (node?.setValue) {
+              assignment.push({ node, value: true });
+              break;
+            }
+          }
+        }
+        if (assignment.length > 0) {
+          const result = await runAdversarialAssignment(
+            graph, assertion, assignment, flush, restoreBaseline,
+            `adversarial-${scenarioCounter++}`,
+          );
+          violations.push(...result.violations);
+          scenarios.push(result.scenario);
+          steps++;
+        }
+      }
+    } else if (assertion.kind === 'always') {
       // Parse the check function to find what would violate it
-      // Use originalCheckFn if available (assertNever wraps the user's fn)
       const fnToParse = graph.getAssertionUserCheckFn(assertion.id) ?? assertion.checkFn;
       const parsed = parseComputeFn(fnToParse);
       if (!parsed) continue;

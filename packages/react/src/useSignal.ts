@@ -53,7 +53,20 @@ export function useSignal<T>(
       applyNext(next);
       return;
     }
-    graphRef.current.driveNodeValue(nodeId, next);
+    if (!graphRef.current.isInBatch()) {
+      graphRef.current.beginBatch();
+      try {
+        graphRef.current.driveNodeValue(nodeId, next);
+      } finally {
+        queueMicrotask(() => {
+          if (graphRef.current.isInBatch()) {
+            graphRef.current.endBatch();
+          }
+        });
+      }
+    } else {
+      graphRef.current.driveNodeValue(nodeId, next);
+    }
   }, [applyNext]);
 
   // Register in graph once

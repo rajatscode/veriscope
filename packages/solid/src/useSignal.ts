@@ -51,8 +51,20 @@ export function useSignal<T>(
   const signal: Signal<T> = {
     get val() { return value(); },
     set(next: SignalNext<T>) {
-      g.openTick();
-      g.driveNodeValue(nodeId, next);
+      if (!g.isInBatch()) {
+        g.beginBatch();
+        try {
+          g.driveNodeValue(nodeId, next);
+        } finally {
+          queueMicrotask(() => {
+            if (g.isInBatch()) {
+              g.endBatch();
+            }
+          });
+        }
+      } else {
+        g.driveNodeValue(nodeId, next);
+      }
     },
     nodeId,
     name,

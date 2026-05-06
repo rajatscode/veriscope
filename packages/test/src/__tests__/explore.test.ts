@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CircuitGraph, assertAfter } from '@veriscope/graph';
+import { CircuitGraph, assertAfter, assertNever } from '@veriscope/graph';
 import { explore } from '../explore';
 import { backwardCone } from '../backward-solve';
 import { enumerateBooleanCombinations } from '../truth-table';
@@ -1110,4 +1110,49 @@ describe('explore — assertAfter eventually resolution (end-to-end)', () => {
     expect(loadingVal).toBe(true);
   });
 
+});
+
+describe('explore — assertNever adversarial', () => {
+  it('finds assertNever violations in the adversarial pass', async () => {
+    const g = new CircuitGraph();
+
+    let dangerVal = false;
+    const danger = g.registerNode({ name: 'danger', type: 'signal' });
+    g.setNodeValue(danger, () => dangerVal);
+    g.setNodeSetter(danger, (v: boolean) => { dangerVal = v; });
+
+    // assertNever: danger should never be true
+    const assertId = assertNever(
+      () => dangerVal,
+      'never-danger',
+      g,
+      [{ nodeId: danger }],
+    );
+
+    const result = await explore(g, { budget: 50 });
+
+    expect(result.violations.some(v => v.assertionName === 'never-danger')).toBe(true);
+    expect(g.getAssertions().find(a => a.id === assertId)?.kind).toBe('never');
+  });
+
+  it('finds assertNever violation when check uses negation pattern', async () => {
+    const g = new CircuitGraph();
+
+    let validVal = true;
+    const valid = g.registerNode({ name: 'valid', type: 'signal' });
+    g.setNodeValue(valid, () => validVal);
+    g.setNodeSetter(valid, (v: boolean) => { validVal = v; });
+
+    // assertNever: !valid should never be true (i.e., valid must always be true)
+    assertNever(
+      () => !validVal,
+      'never-invalid',
+      g,
+      [{ nodeId: valid }],
+    );
+
+    const result = await explore(g, { budget: 50 });
+
+    expect(result.violations.some(v => v.assertionName === 'never-invalid')).toBe(true);
+  });
 });

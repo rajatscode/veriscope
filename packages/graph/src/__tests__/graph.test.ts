@@ -824,4 +824,187 @@ describe('CircuitGraph', () => {
     g.reset();
     expect(g.getNodeLastSetContext(sig)).toBeUndefined();
   });
+
+  // --- Batch API ---
+
+  it('beginBatch/endBatch correctly scopes a tick', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.beginBatch();
+    g.notifyChange(a, 0, 1);
+    expect(g.currentTick).toBe(0);
+    g.endBatch();
+    expect(g.currentTick).toBe(1);
+  });
+
+  it('nested batches use depth counting', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.beginBatch();
+    g.beginBatch();
+    g.notifyChange(a, 0, 1);
+    g.endBatch();
+    expect(g.currentTick).toBe(0);
+    g.endBatch();
+    expect(g.currentTick).toBe(1);
+  });
+
+  it('multiple signal changes within a batch share the same tick', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    const b = g.registerNode({ name: 'b', type: 'signal' });
+
+    g.beginBatch();
+    g.notifyChange(a, 0, 1);
+    g.notifyChange(b, 'x', 'y');
+    g.endBatch();
+
+    expect(g.currentTick).toBe(1);
+    const events = g.getRecentEvents(2);
+    expect(events[0].tick).toBe(0);
+    expect(events[1].tick).toBe(0);
+  });
+
+  it('microtask fallback still works when no batch is active', async () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+
+    g.notifyChange(a, 0, 1);
+    expect(g.isInBatch()).toBe(false);
+    expect(g.currentTick).toBe(0);
+
+    await g.flushTick();
+    expect(g.currentTick).toBe(1);
+  });
+
+  it('isInBatch reflects batch state', () => {
+    const g = new CircuitGraph();
+    expect(g.isInBatch()).toBe(false);
+    g.beginBatch();
+    expect(g.isInBatch()).toBe(true);
+    g.endBatch();
+    expect(g.isInBatch()).toBe(false);
+  });
+
+  it('batch state is recoverable after driveNodeValue throws', () => {
+    const g = new CircuitGraph();
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => 0);
+    g.setNodeSetter(a, () => { throw new Error('boom'); });
+
+    g.beginBatch();
+    expect(() => g.driveNodeValue(a, 1)).toThrow('boom');
+    expect(g.isInBatch()).toBe(true);
+    g.endBatch();
+    expect(g.isInBatch()).toBe(false);
+    expect(g.currentTick).toBe(1);
+  });
+
+  // --- Cycle detection ---
+
+  it('detects cycles in derived nodes and emits warning via onCycleDetected', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+
+    const a = g.registerNode({ name: 'a', type: 'derived' });
+    const b = g.registerNode({ name: 'b', type: 'derived' });
+    g.addEdge(a, b);
+    g.addEdge(b, a);
+
+    const cycles: string[][] = [];
+    g.onCycleDetected(nodeIds => cycles.push(nodeIds));
+
+    g.openTick();
+    g.propagate();
+    g.closeTick();
+
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]).toContain(a);
+    expect(cycles[0]).toContain(b);
+  });
+
+  it('onCycleDetected listener can be unsubscribed', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+
+    const a = g.registerNode({ name: 'a', type: 'derived' });
+    const b = g.registerNode({ name: 'b', type: 'derived' });
+    g.addEdge(a, b);
+    g.addEdge(b, a);
+
+    const cycles: string[][] = [];
+    const unsub = g.onCycleDetected(nodeIds => cycles.push(nodeIds));
+    unsub();
+
+    g.openTick();
+    g.propagate();
+    g.closeTick();
+
+    expect(cycles).toHaveLength(0);
+  });
+
+  it('topological sort still appends cycle members so behavior is preserved', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+
+    let aVal = 1;
+    const a = g.registerNode({
+      name: 'a',
+      type: 'derived',
+      computeFn: () => aVal + 1,
+    });
+    const b = g.registerNode({
+      name: 'b',
+      type: 'derived',
+      computeFn: () => 42,
+    });
+    g.addEdge(a, b);
+    g.addEdge(b, a);
+
+    g.openTick();
+    g.propagate();
+    g.closeTick();
+
+    expect(g.getNode(b)?.getValue?.()).toBe(42);
+  });
+
+  // --- Re-entrancy guard ---
+
+  it('re-entrant driveNodeValue does not corrupt state', () => {
+    const g = new CircuitGraph();
+    g.enterTestMode();
+
+    let aVal = 0;
+    let bVal = 0;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (v: number) => { aVal = v; });
+
+    const b = g.registerNode({ name: 'b', type: 'signal' });
+    g.setNodeValue(b, () => bVal);
+    g.setNodeSetter(b, (v: number) => { bVal = v; });
+
+    const derived = g.registerNode({
+      name: 'sum',
+      type: 'derived',
+      deps: [a, b],
+      computeFn: () => {
+        // Re-entrant: driving b from within a's propagation
+        if (aVal === 1 && bVal === 0) {
+          g.driveNodeValue(b, 10);
+        }
+        return aVal + bVal;
+      },
+    });
+
+    g.openTick();
+    g.driveNodeValue(a, 1);
+    g.closeTick();
+
+    expect(aVal).toBe(1);
+    expect(bVal).toBe(10);
+    expect(g.getNode(derived)?.getValue?.()).toBe(11);
+  });
 });

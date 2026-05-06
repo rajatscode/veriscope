@@ -45,9 +45,13 @@ export class CircuitGraph {
   private tickOpen = false;
   private tickCloseScheduled = false;
   private coverageEnabled = false;
+  private _batchDepth = 0;
   private _inAsyncContext = false;
   private nodeLastSetContext = new Map<string, 'sync' | 'async'>();
   private cdcWarningListeners = new Set<(warning: CdcWarning) => void>();
+  private cycleListeners = new Set<(nodeIds: string[]) => void>();
+  private _propagating = false;
+  private _pendingPropagations: string[] = [];
 
   /** Current simulation tick (increments on closeTick). */
   get currentTick(): number {
@@ -193,6 +197,25 @@ export class CircuitGraph {
 
   propagate(fromNodeId?: string): void {
     if (!this.instrumentationEnabled) return;
+
+    if (this._propagating) {
+      if (fromNodeId) this._pendingPropagations.push(fromNodeId);
+      return;
+    }
+
+    this._propagating = true;
+    try {
+      this.propagateFrom(fromNodeId);
+      while (this._pendingPropagations.length > 0) {
+        const pending = this._pendingPropagations.shift()!;
+        this.propagateFrom(pending);
+      }
+    } finally {
+      this._propagating = false;
+    }
+  }
+
+  private propagateFrom(fromNodeId?: string): void {
     const candidates = this.collectDownstreamDerivedNodes(fromNodeId);
     const ordered = this.topologicalDerivedOrder(candidates);
 
@@ -253,17 +276,29 @@ export class CircuitGraph {
 
     const queue = ids.filter(id => (indegree.get(id) ?? 0) === 0);
     const ordered: string[] = [];
+    const orderedSet = new Set<string>();
     while (queue.length > 0) {
       const id = queue.shift()!;
       ordered.push(id);
+      orderedSet.add(id);
       for (const child of children.get(id) ?? []) {
         indegree.set(child, (indegree.get(child) ?? 0) - 1);
         if ((indegree.get(child) ?? 0) === 0) queue.push(child);
       }
     }
 
+    const cycleMembers: string[] = [];
     for (const id of ids) {
-      if (!ordered.includes(id)) ordered.push(id);
+      if (!orderedSet.has(id)) {
+        cycleMembers.push(id);
+        ordered.push(id);
+      }
+    }
+
+    if (cycleMembers.length > 0 && this.cycleListeners.size > 0) {
+      for (const listener of this.cycleListeners) {
+        listener(cycleMembers);
+      }
     }
 
     return ordered;
@@ -359,7 +394,7 @@ export class CircuitGraph {
   }
 
   private scheduleTickClose(): void {
-    if (this.testMode || this.tickCloseScheduled) return;
+    if (this.testMode || this.tickCloseScheduled || this._batchDepth > 0) return;
 
     this.tickCloseScheduled = true;
     const schedule =
@@ -952,12 +987,31 @@ export class CircuitGraph {
     this.ensureTickOpen();
   }
 
+  beginBatch(): void {
+    if (this._batchDepth === 0) {
+      this.ensureTickOpen();
+    }
+    this._batchDepth++;
+  }
+
+  endBatch(): void {
+    if (this._batchDepth <= 0) return;
+    this._batchDepth--;
+    if (this._batchDepth === 0) {
+      this.closeTick();
+    }
+  }
+
+  isInBatch(): boolean {
+    return this._batchDepth > 0;
+  }
+
   runInTick<T>(fn: () => T): T {
-    this.openTick();
+    this.beginBatch();
     try {
       return fn();
     } finally {
-      this.closeTick();
+      this.endBatch();
     }
   }
 
@@ -1009,6 +1063,11 @@ export class CircuitGraph {
   onCdcWarning(listener: (warning: CdcWarning) => void): () => void {
     this.cdcWarningListeners.add(listener);
     return () => { this.cdcWarningListeners.delete(listener); };
+  }
+
+  onCycleDetected(listener: (nodeIds: string[]) => void): () => void {
+    this.cycleListeners.add(listener);
+    return () => { this.cycleListeners.delete(listener); };
   }
 
   // --- Waveform recording ---
@@ -1093,11 +1152,15 @@ export class CircuitGraph {
     this.testMode = false;
     this.tickOpen = false;
     this.tickCloseScheduled = false;
+    this._batchDepth = 0;
     this.coverageEnabled = false;
     coverage.reset();
     this._inAsyncContext = false;
     this.nodeLastSetContext.clear();
     this.cdcWarningListeners.clear();
+    this.cycleListeners.clear();
+    this._propagating = false;
+    this._pendingPropagations = [];
     this.instrumentationEnabled = instrumentationEnabled;
     if (this.instrumentationEnabled) {
       this.emitEvent({
