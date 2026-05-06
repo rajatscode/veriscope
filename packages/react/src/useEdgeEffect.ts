@@ -30,7 +30,7 @@ export function useEdgeEffect(
   const graphRef = useRef(g);
 
   // Register in graph once
-  if (nodeIdRef.current === null) {
+  if (nodeIdRef.current === null && graphRef.current.isInstrumentationEnabled()) {
     const metadata = options?.scope ? { scope: options.scope } : undefined;
     nodeIdRef.current = graphRef.current.registerNode({
       name,
@@ -62,7 +62,9 @@ export function useEdgeEffect(
     }
 
     if (edgeDetected) {
-      graphRef.current.notifyEffect(nodeIdRef.current!);
+      if (nodeIdRef.current && graphRef.current.isInstrumentationEnabled()) {
+        graphRef.current.notifyEffect(nodeIdRef.current);
+      }
       action();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,7 +72,7 @@ export function useEdgeEffect(
 
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
-    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+    if (graphRef.current.isInstrumentationEnabled() && (!nodeIdRef.current || !graphRef.current.getNode(nodeIdRef.current))) {
       const metadata = options?.scope ? { scope: options.scope } : undefined;
       nodeIdRef.current = graphRef.current.registerNode({
         name,

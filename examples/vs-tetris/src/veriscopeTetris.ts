@@ -3,6 +3,7 @@ import {
   DEFAULT_OPPONENTS,
   ROWS,
   clampOpponentCount,
+  leaderId,
   resetPlayers,
   targetIdsFor,
   type OpponentCount,
@@ -101,6 +102,8 @@ interface TetrisAssertionBindings {
   targetDomain: string[];
   attackBankNodeId: string;
   getAttackBank: () => number;
+  leaderNodeId: string;
+  getLeader: () => string;
   canSend2NodeId: string;
   getCanSend2: () => boolean;
   canSend4NodeId: string;
@@ -119,6 +122,11 @@ export function registerTetrisAssertions(
 ): { ids: Record<string, string>; dispose: () => void } {
   const ids: Record<string, string> = {};
   const disposables: string[] = [];
+  const targetExploreDomain = representativeDomain(bindings.targetDomain);
+  const targetDomainIsPartial = targetExploreDomain.length !== bindings.targetDomain.length;
+  const targetDomainReason = targetDomainIsPartial
+    ? `large target domain represented by ${targetExploreDomain.join(', ')} for deterministic exploration`
+    : undefined;
 
   const register = (name: string, deps: string[], checkFn: () => boolean) => {
     const id = registerAssertion(targetGraph, name, deps, checkFn);
@@ -146,10 +154,11 @@ export function registerTetrisAssertions(
   targetGraph.setAssertionMetadata(targetId, {
     checkDeps: [bindings.humanTargetNodeId],
     domains: {
-      [bindings.humanTargetNodeId]: bindings.targetDomain,
-      'arena.humanTarget': bindings.targetDomain,
+      [bindings.humanTargetNodeId]: targetExploreDomain,
+      'arena.humanTarget': targetExploreDomain,
     },
-    partial: false,
+    partial: targetDomainIsPartial,
+    reason: targetDomainReason,
   });
 
   const bridgeId = register(
@@ -181,14 +190,15 @@ export function registerTetrisAssertions(
       'arena.started': [false, true],
       [bindings.pausedNodeId]: [false, true],
       'arena.paused': [false, true],
-      [bindings.humanTargetNodeId]: bindings.targetDomain,
-      'arena.humanTarget': bindings.targetDomain,
+      [bindings.humanTargetNodeId]: targetExploreDomain,
+      'arena.humanTarget': targetExploreDomain,
       [bindings.attackBankNodeId]: [0, 1, 2, 4],
       'p1.attackBank': [0, 1, 2, 4],
       [bindings.garbagePulseNodeId]: [false],
       'arena.garbagePulse': [false],
     },
-    partial: false,
+    partial: targetDomainIsPartial,
+    reason: targetDomainReason,
   });
 
   const garbageId = register(
@@ -258,13 +268,32 @@ export function registerTetrisAssertions(
       'arena.started': [false, true],
       [bindings.pausedNodeId]: [false, true],
       'arena.paused': [false, true],
-      [bindings.humanTargetNodeId]: bindings.targetDomain,
-      'arena.humanTarget': bindings.targetDomain,
+      [bindings.humanTargetNodeId]: targetExploreDomain,
+      'arena.humanTarget': targetExploreDomain,
       [bindings.attackBankNodeId]: [0, 1, 2, 4],
       'p1.attackBank': [0, 1, 2, 4],
     },
     partial: true,
     reason: 'checks exact button availability against the current PlayerState array; scalar controls are enumerated',
+  });
+
+  const leaderIdAssertion = register(
+    'leader-is-active-highest-score',
+    [bindings.playersNodeId, bindings.leaderNodeId],
+    () => {
+      const players = safePlayers(bindings.getPlayers());
+      const active = players.filter(player => !player.ko);
+      if (active.length === 0) return true;
+      const leader = active.find(player => player.id === bindings.getLeader());
+      if (!leader) return false;
+      const highScore = Math.max(...active.map(player => player.score));
+      return leader.score === highScore;
+    },
+  );
+  targetGraph.setAssertionMetadata(leaderIdAssertion, {
+    checkDeps: [bindings.playersNodeId, bindings.leaderNodeId],
+    partial: true,
+    reason: 'checks leader projection over observed PlayerState arrays',
   });
 
   const pulseId = register(
@@ -405,8 +434,15 @@ export function registerTetrisAssertions(
   };
 }
 
-export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPONENTS): CircuitGraph {
+export function createVsTetrisGraph(
+  opponentCount: OpponentCount = DEFAULT_OPPONENTS,
+  options?: { instrumentationEnabled?: boolean },
+): CircuitGraph {
   const targetGraph = new CircuitGraph();
+  if (options?.instrumentationEnabled === false) {
+    targetGraph.disableInstrumentation();
+  }
+
   const count = clampOpponentCount(opponentCount);
   const targetDomain = targetIdsFor(count);
   let players = resetPlayers(count);
@@ -480,6 +516,7 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
       targetGraph.getNode(telemetry.ids['arena.anyGarbageQueued'])?.getValue?.() === true
       || targetGraph.getNode(telemetry.ids['arena.anyRecipientReceived'])?.getValue?.() === true,
   );
+  const leader = registerDerived(targetGraph, 'arena.leader', [playersSignal.id], () => leaderId(players));
 
   targetGraph.registerOperationModel({
     name: 'garbage-relay',
@@ -507,6 +544,8 @@ export function createVsTetrisGraph(opponentCount: OpponentCount = DEFAULT_OPPON
     targetDomain,
     attackBankNodeId: bankSignal.id,
     getAttackBank: () => attackBank,
+    leaderNodeId: leader,
+    getLeader: () => targetGraph.getNode(leader)?.getValue?.() as string,
     canSend2NodeId: canSend2,
     getCanSend2: () => targetGraph.getNode(canSend2)?.getValue?.() === true,
     canSend4NodeId: canSend4,
@@ -586,6 +625,17 @@ function registerTemporalAssertion(
   const id = targetGraph.registerNode({ name, type: 'assertion', deps, stablePath: name });
   targetGraph.setAssertionFn(id, checkFn, kind === 'after' ? 'after' : 'never');
   return id;
+}
+
+function representativeDomain<T>(values: T[]): T[] {
+  if (values.length <= 6) return [...values];
+  const indexes = [0, 1, Math.floor((values.length - 1) / 2), values.length - 1];
+  const result: T[] = [];
+  for (const index of indexes) {
+    const value = values[index];
+    if (!result.some(existing => Object.is(existing, value))) result.push(value);
+  }
+  return result;
 }
 
 function safePlayers(value: PlayerState[] | unknown): PlayerState[] {

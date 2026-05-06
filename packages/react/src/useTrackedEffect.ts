@@ -24,7 +24,7 @@ export function useTrackedEffect(
   const graphRef = useRef(g);
 
   // Register in graph once
-  if (nodeIdRef.current === null) {
+  if (nodeIdRef.current === null && graphRef.current.isInstrumentationEnabled()) {
     const metadata = options?.scope ? { scope: options.scope } : undefined;
     nodeIdRef.current = graphRef.current.registerNode({
       name,
@@ -39,7 +39,9 @@ export function useTrackedEffect(
   const depValues = deps.map(d => d.val);
 
   useEffect(() => {
-    graphRef.current.notifyEffect(nodeIdRef.current!);
+    if (nodeIdRef.current && graphRef.current.isInstrumentationEnabled()) {
+      graphRef.current.notifyEffect(nodeIdRef.current);
+    }
     const cleanup = fn();
     return cleanup ?? undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -47,7 +49,7 @@ export function useTrackedEffect(
 
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
-    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+    if (graphRef.current.isInstrumentationEnabled() && (!nodeIdRef.current || !graphRef.current.getNode(nodeIdRef.current))) {
       const metadata = options?.scope ? { scope: options.scope } : undefined;
       nodeIdRef.current = graphRef.current.registerNode({
         name,

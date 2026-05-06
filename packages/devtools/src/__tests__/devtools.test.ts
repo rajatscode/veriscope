@@ -521,6 +521,36 @@ describe('mountDevtools', () => {
     const updatedName = [...host.querySelectorAll('span')].find(el => el.textContent === 'ready');
     expect(updatedName!.parentElement!.style.opacity).toBe('0.35');
 
+    handle.refresh();
+    const refreshedRow = host.querySelector<HTMLElement>('[data-waveform-signal="player.ready"]');
+    expect(refreshedRow?.style.opacity).toBe('0.35');
+
+    handle.dispose();
+  });
+
+  it('keeps waveform groups collapsed across refreshes', () => {
+    const graph = new CircuitGraph();
+    graph.registerNode({ name: 'player.ready', type: 'signal' });
+    graph.registerNode({ name: 'player.score', type: 'signal' });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'waveform' });
+
+    const header = host.querySelector<HTMLElement>('[data-waveform-group="player"]');
+    expect(header).toBeDefined();
+    expect(host.querySelector('[data-waveform-signal="player.ready"]')).not.toBeNull();
+
+    header!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.querySelector('[data-waveform-signal="player.ready"]')).toBeNull();
+
+    handle.refresh();
+    expect(host.querySelector('[data-waveform-signal="player.ready"]')).toBeNull();
+
+    const refreshedHeader = host.querySelector<HTMLElement>('[data-waveform-group="player"]');
+    refreshedHeader!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.querySelector('[data-waveform-signal="player.ready"]')).not.toBeNull();
+
     handle.dispose();
   });
 

@@ -9,6 +9,7 @@
     clampOpponentCount,
     garbageFromClearedLines,
     hardDrop,
+    leaderId,
     move,
     resetPlayers,
     rotate,
@@ -33,7 +34,7 @@
   let sendLog = $state<GarbageSend[]>([]);
 
   let activePlayers = $derived(players.filter(player => !player.ko).length);
-  let leader = $derived([...players].sort((a, b) => b.score - a.score)[0].id);
+  let leader = $derived(leaderId(players));
   let winner = $derived(started && activePlayers === 1 ? players.find(player => !player.ko)?.id : null);
   let totalPending = $derived(players.reduce((sum, player) => sum + player.pendingGarbage, 0));
   let targets = $derived(targetIdsFor(opponentCount));

@@ -11,6 +11,7 @@ import {
   clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
+  leaderId,
   move,
   resetPlayers,
   rotate,
@@ -56,7 +57,7 @@ export function VeriscopeReactVsTetris() {
     'arena.activePlayers',
   );
   const leader = useDerived(
-    () => [...players.val].sort((a, b) => b.score - a.score)[0]?.id ?? 'p1',
+    () => leaderId(players.val),
     [players],
     'arena.leader',
   );
@@ -151,6 +152,18 @@ export function VeriscopeReactVsTetris() {
         [players],
       ),
       assertAlways(() => target.val !== 'p1', 'human-never-targets-self', graph, [target]),
+      assertAlways(
+        () => {
+          if (!started.val) return true;
+          const active = players.val.filter(player => !player.ko);
+          if (active.length === 0) return true;
+          const currentLeader = active.find(player => player.id === leader.val);
+          return Boolean(currentLeader && currentLeader.score === Math.max(...active.map(player => player.score)));
+        },
+        'leader-is-active-highest-score',
+        graph,
+        [players, leader, started],
+      ),
       assertAfter(
         garbagePulse,
         'posedge',

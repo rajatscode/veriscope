@@ -25,6 +25,19 @@ describe('useSignal', () => {
     expect(result.current.val).toBe(5);
   });
 
+  it('updates state without graph registration when instrumentation is disabled', () => {
+    graph.disableInstrumentation();
+    const { result } = renderHook(() => useSignal(0, 'count', { graph }));
+
+    act(() => {
+      result.current.set(5);
+    });
+
+    expect(result.current.val).toBe(5);
+    expect(result.current.nodeId).toBe('disabled:count');
+    expect(graph.getNodes()).toHaveLength(0);
+  });
+
   it('supports updater functions via set()', () => {
     const { result } = renderHook(() => useSignal(1, 'count', { graph }));
 

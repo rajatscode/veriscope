@@ -4,6 +4,23 @@ import { coverage } from '../coverage';
 import { assertAfter, assertAlways, assertNoStaleOperations, assertOperationStatus } from '../assertions';
 
 describe('CircuitGraph', () => {
+  it('can disable instrumentation so graph APIs become no-ops', () => {
+    const g = new CircuitGraph();
+    g.disableInstrumentation();
+
+    const id = g.registerNode({ name: 'count', type: 'signal' });
+    g.setNodeValue(id, () => 1);
+    g.setNodeSetter(id, () => {});
+    g.driveNodeValue(id, 2);
+    g.notifyChange(id, 1, 2);
+
+    expect(g.isInstrumentationEnabled()).toBe(false);
+    expect(g.getNodes()).toHaveLength(0);
+    expect(g.getEdges()).toHaveLength(0);
+    expect(g.getRecentEvents()).toHaveLength(0);
+    expect(g.checkAssertions()).toEqual([]);
+  });
+
   it('registers nodes and edges', () => {
     const g = new CircuitGraph();
     const a = g.registerNode({ name: 'a', type: 'signal' });

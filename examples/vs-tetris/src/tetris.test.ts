@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { mutate } from '@veriscope/mutate';
 import { runAutotest } from '@veriscope/test';
-import { advanceArena, garbageFromClearedLines, hardDrop, resetPlayers, sendManualGarbage } from './tetris';
+import { advanceArena, garbageFromClearedLines, hardDrop, leaderId, resetPlayers, sendManualGarbage } from './tetris';
+import { measureVsTetrisPerf } from './perf';
 import { createVsTetrisGraph } from './veriscopeTetris';
 
 describe('vs-tetris engine', () => {
@@ -90,6 +91,16 @@ describe('vs-tetris engine', () => {
     expect(result.koReason).toBe('spawn-blocked');
   });
 
+  it('chooses the leader from active players', () => {
+    const players = resetPlayers(2);
+    players[0].score = 9999;
+    players[0].ko = true;
+    players[1].score = 10;
+    players[2].score = 20;
+
+    expect(leaderId(players)).toBe('p3');
+  });
+
   it('exposes Tetris state to Veriscope autotest as scalar graph nodes and generated cases', async () => {
     const graph = createVsTetrisGraph(2);
     const names = graph.getNodes().map(node => node.name);
@@ -117,6 +128,7 @@ describe('vs-tetris engine', () => {
       'garbage-queue-bounded',
       'attack-bank-gates-send-buttons',
       'send-button-availability-exact',
+      'leader-is-active-highest-score',
       'garbage-pulse-has-recipient',
       'recipient-projection-matches-players',
       'after-garbage-pulse-recipient-eventually-visible',
@@ -135,6 +147,31 @@ describe('vs-tetris engine', () => {
     expect(result.scenarios.every(scenario =>
       scenario.steps.every(step => step.signal !== 'p1.attackBank' || typeof step.value !== 'number' || step.value >= 0),
     )).toBe(true);
+  });
+
+  it('keeps large-opponent autotest within the deterministic generated space', async () => {
+    const graph = createVsTetrisGraph(24);
+    const result = await runAutotest(graph, { budget: 1000, name: 'vs-tetris-large-autotest' });
+
+    expect(result.plan.stoppedByBudget).toBe(false);
+    expect(result.plan.exhausted).toBe(true);
+    expect(result.coverage.overall.percentage).toBe(100);
+    expect(result.coverage.operations.covered).toBe(result.coverage.operations.total);
+    expect(result.assertions.every(assertion => assertion.exercised)).toBe(true);
+  });
+
+  it('benchmarks plain and Veriscope loops from the same deterministic seed', () => {
+    const result = measureVsTetrisPerf(3, 50);
+
+    expect(result.checksumMatched).toBe(true);
+    expect(result.disabledChecksum).toBe(result.plainChecksum);
+    expect(result.plainChecksum).toBe(result.veriscopeChecksum);
+    expect(result.plainMs).toBeGreaterThanOrEqual(0);
+    expect(result.disabledMs).toBeGreaterThanOrEqual(0);
+    expect(result.veriscopeMs).toBeGreaterThanOrEqual(0);
+    expect(result.disabledNodeCount).toBe(0);
+    expect(result.nodeCount).toBeGreaterThan(0);
+    expect(result.assertionCount).toBeGreaterThan(0);
   });
 
   it('registers a real mutation target that autotest can kill', async () => {

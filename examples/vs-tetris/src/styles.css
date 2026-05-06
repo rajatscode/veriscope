@@ -365,12 +365,64 @@ button:disabled:hover {
 }
 
 .telemetry-panel,
+.perf-panel,
 .devtools-shell {
   border: 1px solid #303238;
   background: #17191c;
   border-radius: 8px;
   padding: 10px;
   min-width: 0;
+}
+
+.perf-panel {
+  margin-top: 12px;
+}
+
+.perf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.perf-subtitle {
+  color: #8f949d;
+  font-size: 0.74rem;
+}
+
+.perf-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.perf-controls label {
+  display: grid;
+  grid-template-columns: auto 86px;
+  gap: 6px;
+  align-items: center;
+  color: #a7abb3;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.perf-controls input {
+  min-height: 34px;
+  border: 1px solid #3a3d42;
+  background: #15171a;
+  color: #f4f1e8;
+  border-radius: 6px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
 }
 
 .panel-title {
@@ -541,6 +593,7 @@ pre {
   .arena-toolbar,
   .setup-panel,
   .telemetry-grid,
+  .perf-grid,
   .code-compare {
     grid-template-columns: 1fr;
   }
@@ -548,7 +601,8 @@ pre {
   .target-control,
   .command-row,
   .setup-controls,
-  .send-control {
+  .send-control,
+  .perf-controls {
     justify-content: flex-start;
   }
 
@@ -559,6 +613,11 @@ pre {
 
   .send-control {
     grid-template-columns: 1fr;
+  }
+
+  .perf-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .arena-grid {

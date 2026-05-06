@@ -120,19 +120,29 @@ const PIECES: Record<PieceName, number[][][]> = {
 
 const PIECE_NAMES = Object.keys(PIECES) as PieceName[];
 const SCORE_BY_LINES = [0, 100, 300, 500, 800];
+const DEFAULT_RNG_SEED = 0x5eed2026;
 
-function makeRng(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 0x100000000;
-  };
+let rngState = DEFAULT_RNG_SEED;
+
+function nextRandom(): number {
+  rngState = (1664525 * rngState + 1013904223) >>> 0;
+  return rngState / 0x100000000;
 }
 
-const rng = makeRng(0x5eed2026);
-
 function randomPiece(): PieceName {
-  return PIECE_NAMES[Math.floor(rng() * PIECE_NAMES.length)];
+  return PIECE_NAMES[Math.floor(nextRandom() * PIECE_NAMES.length)];
+}
+
+export function snapshotTetrisRng(): number {
+  return rngState;
+}
+
+export function restoreTetrisRng(state: number): void {
+  rngState = state >>> 0;
+}
+
+export function resetTetrisRng(seed = DEFAULT_RNG_SEED): void {
+  restoreTetrisRng(seed);
 }
 
 export function emptyBoard(): Cell[][] {
@@ -279,6 +289,12 @@ export function resetPlayers(opponentCount: OpponentCount = DEFAULT_OPPONENTS): 
   ];
 }
 
+export function leaderId(players: PlayerState[]): PlayerId {
+  const active = players.filter(player => !player.ko);
+  const candidates = active.length > 0 ? active : players;
+  return [...candidates].sort((a, b) => b.score - a.score)[0]?.id ?? 'p1';
+}
+
 function gravity(player: PlayerState): PlayerState {
   const next = clonePlayer(player);
   if (!collides(next.board, next.piece, next.x, next.y + 1, next.rot)) {
@@ -356,7 +372,7 @@ function addGarbage(player: PlayerState, lines: number): void {
       player.koReason = 'garbage-overflow';
       return;
     }
-    const gap = Math.floor(rng() * COLS);
+    const gap = Math.floor(nextRandom() * COLS);
     player.board.shift();
     const row = Array.from({ length: COLS }, () => 8 as Cell);
     row[gap] = 0;

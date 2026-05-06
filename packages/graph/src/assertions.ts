@@ -20,6 +20,8 @@ export function assertAlways(
   deps?: AssertionDep[],
   metadata?: AssertionMetadata,
 ): string {
+  if (!targetGraph.isInstrumentationEnabled()) return `disabled-assertion:${name}`;
+
   const depIds = deps?.map(d => d.nodeId);
   const inferredPartial = depIds === undefined || depIds.length === 0;
   const nodeId = targetGraph.registerNode({
@@ -88,6 +90,8 @@ export function assertAfter(
   options: AssertAfterOptions,
   targetGraph: CircuitGraph = graph,
 ): string {
+  if (!targetGraph.isInstrumentationEnabled()) return `disabled-assertion:${options.name}`;
+
   const checkDeps = normalizeDeps(options.checkDeps);
   const partial = options.partial ?? checkDeps.length === 0;
   const nodeId = targetGraph.registerNode({
@@ -218,6 +222,8 @@ export function assertOperationStatus(
   name = `${operationName}-allowed-outcomes`,
   targetGraph: CircuitGraph = graph,
 ): string {
+  if (!targetGraph.isInstrumentationEnabled()) return `disabled-assertion:${name}`;
+
   const allowed = new Set<OperationStatus>(allowedStatuses);
   const nodeId = targetGraph.registerNode({
     name,
@@ -241,6 +247,8 @@ export function assertNoStaleOperations(
   name = operationName ? `${operationName}-not-stale` : 'operations-not-stale',
   targetGraph: CircuitGraph = graph,
 ): string {
+  if (!targetGraph.isInstrumentationEnabled()) return `disabled-assertion:${name}`;
+
   const nodeId = targetGraph.registerNode({
     name,
     type: 'assertion',

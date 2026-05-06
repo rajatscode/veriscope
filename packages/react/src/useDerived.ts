@@ -9,6 +9,10 @@ interface UseDerivedOptions {
   graph?: CircuitGraph;
 }
 
+function disabledNodeId(name: string): string {
+  return `disabled:${name}`;
+}
+
 /**
  * Create a derived (computed) signal that tracks dependencies and registers in the graph.
  *
@@ -36,7 +40,7 @@ export function useDerived<T>(
   };
 
   // Register in graph once
-  if (nodeIdRef.current === null) {
+  if (nodeIdRef.current === null && graphRef.current.isInstrumentationEnabled()) {
     const metadata: Record<string, any> = {};
     if (options?.scope) metadata.scope = options.scope;
     if (options?.coverage && options.coverage !== 'auto') metadata.coverage = options.coverage;
@@ -60,14 +64,16 @@ export function useDerived<T>(
     const old = prevRef.current;
     prevRef.current = newValue;
     valueRef.current = newValue;
-    graphRef.current.notifyChange(nodeIdRef.current!, old, newValue);
+    if (nodeIdRef.current && graphRef.current.isInstrumentationEnabled()) {
+      graphRef.current.notifyChange(nodeIdRef.current, old, newValue);
+    }
   } else {
     valueRef.current = newValue;
   }
 
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
-    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+    if (graphRef.current.isInstrumentationEnabled() && (!nodeIdRef.current || !graphRef.current.getNode(nodeIdRef.current))) {
       const metadata: Record<string, any> = {};
       if (options?.scope) metadata.scope = options.scope;
       if (options?.coverage && options.coverage !== 'auto') metadata.coverage = options.coverage;
@@ -97,7 +103,7 @@ export function useDerived<T>(
       enumerable: true,
     });
     Object.defineProperty(sig, 'nodeId', {
-      get() { return nodeIdRef.current; },
+      get() { return nodeIdRef.current ?? disabledNodeId(name); },
       enumerable: true,
     });
     signalRef.current = sig as ReadonlySignal<T>;

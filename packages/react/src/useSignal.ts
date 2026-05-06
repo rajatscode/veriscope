@@ -12,6 +12,10 @@ interface UseSignalOptions {
 
 type SignalNext<T> = T | ((prev: T) => T);
 
+function disabledNodeId(name: string): string {
+  return `disabled:${name}`;
+}
+
 function resolveNext<T>(old: T, next: SignalNext<T>): T {
   return typeof next === 'function' ? (next as (prev: T) => T)(old) : next;
 }
@@ -45,7 +49,7 @@ export function useSignal<T>(
 
   const set = useCallback((next: SignalNext<T>) => {
     const nodeId = nodeIdRef.current;
-    if (!nodeId) {
+    if (!nodeId || !graphRef.current.isInstrumentationEnabled()) {
       applyNext(next);
       return;
     }
@@ -53,7 +57,7 @@ export function useSignal<T>(
   }, [applyNext]);
 
   // Register in graph once
-  if (nodeIdRef.current === null) {
+  if (nodeIdRef.current === null && graphRef.current.isInstrumentationEnabled()) {
     const metadata: Record<string, any> = {};
     if (options?.states) metadata.states = options.states;
     if (options?.coverage && options.coverage !== 'auto') metadata.coverage = options.coverage;
@@ -73,7 +77,7 @@ export function useSignal<T>(
 
   // Re-register if disposed (React StrictMode double-mount), cleanup on real unmount
   useEffect(() => {
-    if (nodeIdRef.current && !graphRef.current.getNode(nodeIdRef.current)) {
+    if (graphRef.current.isInstrumentationEnabled() && (!nodeIdRef.current || !graphRef.current.getNode(nodeIdRef.current))) {
       const metadata: Record<string, any> = {};
       if (options?.states) metadata.states = options.states;
       if (options?.coverage && options.coverage !== 'auto') metadata.coverage = options.coverage;
@@ -103,7 +107,7 @@ export function useSignal<T>(
       enumerable: true,
     });
     Object.defineProperty(sig, 'nodeId', {
-      get() { return nodeIdRef.current; },
+      get() { return nodeIdRef.current ?? disabledNodeId(name); },
       enumerable: true,
     });
     signalRef.current = sig as Signal<T>;

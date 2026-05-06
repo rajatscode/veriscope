@@ -7,6 +7,7 @@ import type { CircuitGraph, WaveformPoint } from '@veriscope/graph';
 
 export interface WaveformSignal {
   id: string;
+  stableKey: string;
   displayName: string;
   group: string;
   type: 'boolean' | 'numeric' | 'enum' | 'assertion' | 'coverage';
@@ -92,6 +93,7 @@ function buildSignalList(graph: CircuitGraph): WaveformSignal[] {
       }
       signals.push({
         id: node.id,
+        stableKey: node.stablePath,
         displayName,
         group,
         type: sigType,
@@ -106,6 +108,7 @@ function buildSignalList(graph: CircuitGraph): WaveformSignal[] {
     if (node.type === 'assertion') {
       signals.push({
         id: node.id,
+        stableKey: node.stablePath,
         displayName: node.name,
         group: 'assertions',
         type: 'assertion',
@@ -774,6 +777,7 @@ function createHierarchyBrowser(
 
   interface HierGroup { name: string; signals: WaveformSignal[]; collapsed: boolean; }
   const groups = new Map<string, HierGroup>();
+  const collapsedGroups = new Set<string>();
   let currentSignals = signals;
 
   function buildGroups() {
@@ -781,7 +785,7 @@ function createHierarchyBrowser(
     for (const sig of currentSignals) {
       let group = groups.get(sig.group);
       if (!group) {
-        group = { name: sig.group, signals: [], collapsed: false };
+        group = { name: sig.group, signals: [], collapsed: collapsedGroups.has(sig.group) };
         groups.set(sig.group, group);
       }
       group.signals.push(sig);
@@ -799,7 +803,13 @@ function createHierarchyBrowser(
         text-transform:uppercase; letter-spacing:0.5px;
       `;
       header.innerHTML = `<span style="font-size:8px">${group.collapsed ? '\u25B6' : '\u25BC'}</span> ${group.name}`;
-      header.addEventListener('click', () => { group.collapsed = !group.collapsed; render(); });
+      header.dataset.waveformGroup = group.name;
+      header.addEventListener('click', () => {
+        if (group.collapsed) collapsedGroups.delete(group.name);
+        else collapsedGroups.add(group.name);
+        buildGroups();
+        render();
+      });
       panel.appendChild(header);
 
       if (group.collapsed) continue;
@@ -811,6 +821,7 @@ function createHierarchyBrowser(
           cursor:pointer; transition:background 0.1s;
           opacity:${sig.visible ? '1' : '0.35'};
         `;
+        entry.dataset.waveformSignal = sig.stableKey;
         entry.addEventListener('mouseenter', () => { entry.style.background = 'rgba(110,231,249,0.06)'; });
         entry.addEventListener('mouseleave', () => { entry.style.background = ''; });
 
@@ -861,6 +872,7 @@ export function createWaveformPanel(
 ): { dispose: () => void; refresh: () => void } {
   let disposed = false;
   let signals = buildSignalList(graph);
+  const signalUiState = new Map<string, Pick<WaveformSignal, 'visible' | 'renderMode'>>();
   const markers = createMarkerSystem();
 
   let cursorX = -1;
@@ -874,6 +886,34 @@ export function createWaveformPanel(
   let panStartX = 0;
   let panStartViewStart = 0;
   let panStartViewEnd = 0;
+
+  function rememberSignalUiState() {
+    for (const sig of signals) {
+      signalUiState.set(sig.stableKey, {
+        visible: sig.visible,
+        renderMode: sig.renderMode,
+      });
+    }
+  }
+
+  function applySignalUiState(nextSignals: WaveformSignal[]): WaveformSignal[] {
+    rememberSignalUiState();
+    const stateById = new Map(signals.map(sig => [sig.id, signalUiState.get(sig.stableKey)]));
+    for (const sig of nextSignals) {
+      const state = signalUiState.get(sig.stableKey) ?? stateById.get(sig.id);
+      if (!state) continue;
+      sig.visible = state.visible;
+      sig.renderMode = state.renderMode;
+    }
+    return nextSignals;
+  }
+
+  function signalListChanged(nextSignals: WaveformSignal[]): boolean {
+    if (nextSignals.length !== signals.length) return true;
+    return nextSignals.some((sig, index) =>
+      sig.id !== signals[index]?.id || sig.stableKey !== signals[index]?.stableKey
+    );
+  }
 
   container.style.cssText = 'position:relative; display:flex; flex-direction:column; overflow:hidden; height:100%;';
 
@@ -995,11 +1035,20 @@ export function createWaveformPanel(
     hierPanel, signals,
     (signalId) => {
       const sig = signals.find(s => s.id === signalId);
-      if (sig) { sig.visible = !sig.visible; resize(); draw(); }
+      if (sig) {
+        sig.visible = !sig.visible;
+        rememberSignalUiState();
+        resize();
+        draw();
+      }
     },
     (signalId) => {
       const sig = signals.find(s => s.id === signalId);
-      if (sig) { sig.renderMode = sig.renderMode === 'analog' ? 'digital' : 'analog'; draw(); }
+      if (sig) {
+        sig.renderMode = sig.renderMode === 'analog' ? 'digital' : 'analog';
+        rememberSignalUiState();
+        draw();
+      }
     },
   );
 
@@ -1230,15 +1279,8 @@ export function createWaveformPanel(
   // Refresh signals from graph periodically (new signals may appear)
   const interval = setInterval(() => {
     if (disposed) return;
-    const newSignals = buildSignalList(graph);
-    if (newSignals.length !== signals.length) {
-      // Preserve visibility state
-      const visMap = new Map(signals.map(s => [s.id, s.visible]));
-      const modeMap = new Map(signals.map(s => [s.id, s.renderMode]));
-      for (const s of newSignals) {
-        if (visMap.has(s.id)) s.visible = visMap.get(s.id)!;
-        if (modeMap.has(s.id)) s.renderMode = modeMap.get(s.id)!;
-      }
+    const newSignals = applySignalUiState(buildSignalList(graph));
+    if (signalListChanged(newSignals)) {
       signals = newSignals;
       hierarchyBrowser.update(signals);
       resize();
@@ -1276,7 +1318,7 @@ export function createWaveformPanel(
   return {
     dispose,
     refresh() {
-      signals = buildSignalList(graph);
+      signals = applySignalUiState(buildSignalList(graph));
       hierarchyBrowser.update(signals);
       resize();
       draw();

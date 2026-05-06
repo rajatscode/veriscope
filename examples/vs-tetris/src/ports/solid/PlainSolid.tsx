@@ -10,6 +10,7 @@ import {
   clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
+  leaderId,
   move,
   resetPlayers,
   rotate,
@@ -35,7 +36,7 @@ export function PlainSolidVsTetris() {
   const [sendLog, setSendLog] = createSignal<GarbageSend[]>([]);
 
   const activePlayers = createMemo(() => players().filter(player => !player.ko).length);
-  const leader = createMemo(() => [...players()].sort((a, b) => b.score - a.score)[0].id);
+  const leader = createMemo(() => leaderId(players()));
   const winner = createMemo(() => started() && activePlayers() === 1 ? players().find(player => !player.ko)?.id : null);
   const totalPending = createMemo(() => players().reduce((sum, player) => sum + player.pendingGarbage, 0));
   const targets = createMemo(() => targetIdsFor(opponentCount()));

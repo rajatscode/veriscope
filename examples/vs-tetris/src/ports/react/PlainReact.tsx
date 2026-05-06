@@ -9,6 +9,7 @@ import {
   clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
+  leaderId,
   move,
   resetPlayers,
   rotate,
@@ -36,7 +37,7 @@ export function PlainReactVsTetris() {
   const stepRef = useRef<() => void>(() => {});
 
   const activePlayers = players.filter(player => !player.ko).length;
-  const leader = [...players].sort((a, b) => b.score - a.score)[0].id;
+  const leader = leaderId(players);
   const winner = started && activePlayers === 1 ? players.find(player => !player.ko)?.id : null;
   const totalPending = players.reduce((sum, player) => sum + player.pendingGarbage, 0);
   const targets = targetIdsFor(opponentCount);

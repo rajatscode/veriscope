@@ -23,6 +23,7 @@ const EVENT_BUFFER_SIZE = 256;
 let idCounter = 0;
 
 export class CircuitGraph {
+  private instrumentationEnabled = true;
   private nodes = new Map<string, GraphNode>();
   private edges: GraphEdge[] = [];
   private events: GraphEvent[] = [];
@@ -53,6 +54,26 @@ export class CircuitGraph {
     return this._currentTick;
   }
 
+  isInstrumentationEnabled(): boolean {
+    return this.instrumentationEnabled;
+  }
+
+  enableInstrumentation(): void {
+    this.instrumentationEnabled = true;
+  }
+
+  disableInstrumentation(options?: { clear?: boolean }): void {
+    if (options?.clear) this.reset();
+    this.instrumentationEnabled = false;
+    this.disableCoverage();
+    this.stopRecording();
+  }
+
+  setInstrumentationEnabled(enabled: boolean, options?: { clear?: boolean }): void {
+    if (enabled) this.enableInstrumentation();
+    else this.disableInstrumentation(options);
+  }
+
   // --- Node management ---
 
   registerNode(info: {
@@ -64,6 +85,8 @@ export class CircuitGraph {
     assertionMetadata?: AssertionMetadata;
     computeFn?: () => any;
   }): string {
+    if (!this.instrumentationEnabled) return `disabled:${info.name}_${idCounter++}`;
+
     const id = `${info.name}_${idCounter++}`;
     const stablePath = this.allocateStablePath(info.name, info.stablePath, info.metadata);
     const node: GraphNode = {
@@ -129,6 +152,7 @@ export class CircuitGraph {
   }
 
   addEdge(from: string, to: string): void {
+    if (!this.instrumentationEnabled) return;
     const exists = this.edges.some(e => e.from === from && e.to === to);
     if (!exists) {
       this.edges.push({ from, to });
@@ -136,16 +160,19 @@ export class CircuitGraph {
   }
 
   setNodeValue(id: string, getter: () => any): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (node) node.getValue = getter;
   }
 
   setNodeSetter(id: string, setter: (v: any) => void): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (node) node.setValue = setter;
   }
 
   driveNodeValue(id: string, value: any): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (!node?.setValue) return;
 
@@ -165,6 +192,7 @@ export class CircuitGraph {
   }
 
   propagate(fromNodeId?: string): void {
+    if (!this.instrumentationEnabled) return;
     const candidates = this.collectDownstreamDerivedNodes(fromNodeId);
     const ordered = this.topologicalDerivedOrder(candidates);
 
@@ -242,6 +270,7 @@ export class CircuitGraph {
   }
 
   setAssertionFn(id: string, fn: () => boolean, kind: 'always' | 'never' | 'after'): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (node) {
       node.assertionFn = fn;
@@ -250,6 +279,7 @@ export class CircuitGraph {
   }
 
   setAssertionUserCheckFn(id: string, userCheckFn: () => boolean): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (node) {
       if (!node.metadata) node.metadata = {};
@@ -258,6 +288,7 @@ export class CircuitGraph {
   }
 
   setAssertionMetadata(id: string, metadata: AssertionMetadata): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (node) {
       node.assertionMetadata = {
@@ -273,6 +304,7 @@ export class CircuitGraph {
   }
 
   disposeNode(id: string): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(id);
     if (!node) return;
 
@@ -342,6 +374,7 @@ export class CircuitGraph {
   }
 
   notifyChange(nodeId: string, oldValue: any, newValue: any): void {
+    if (!this.instrumentationEnabled) return;
     const node = this.nodes.get(nodeId);
     if (!node) return;
 
@@ -423,6 +456,7 @@ export class CircuitGraph {
   }
 
   notifyEffect(nodeId: string): void {
+    if (!this.instrumentationEnabled) return;
     if (!this.testMode) {
       this.ensureTickOpen();
       this.scheduleTickClose();
@@ -442,6 +476,7 @@ export class CircuitGraph {
   }
 
   notifyAssertionArmed(nodeId: string): void {
+    if (!this.instrumentationEnabled) return;
     const event: GraphEvent = {
       type: 'assertion-armed',
       nodeId,
@@ -454,6 +489,7 @@ export class CircuitGraph {
   }
 
   notifyAssertionPassed(nodeId: string): void {
+    if (!this.instrumentationEnabled) return;
     const event: GraphEvent = {
       type: 'assertion-passed',
       nodeId,
@@ -466,6 +502,7 @@ export class CircuitGraph {
   }
 
   notifyAssertionFailed(nodeId: string): void {
+    if (!this.instrumentationEnabled) return;
     const event: GraphEvent = {
       type: 'assertion-failed',
       nodeId,
@@ -488,6 +525,8 @@ export class CircuitGraph {
     metadata?: Record<string, any>;
     handleOutcome?: OperationModel['handleOutcome'];
   }): string {
+    if (!this.instrumentationEnabled) return `disabled-operation:${info.name}_${this.operationCounter++}`;
+
     const id = this.allocateStablePath(`operation:${info.name}`, info.stablePath, info.metadata);
     const model: OperationModel = {
       id,
@@ -513,6 +552,8 @@ export class CircuitGraph {
   }
 
   beginOperation(name: string, metadata?: Record<string, any>): string {
+    if (!this.instrumentationEnabled) return `disabled-operation:${name}_${this.operationCounter++}`;
+
     if (!this.testMode) {
       this.ensureTickOpen();
       this.scheduleTickClose();
@@ -542,6 +583,7 @@ export class CircuitGraph {
   }
 
   completeOperationOutcome(id: string, status: OperationStatus, payload?: any): void {
+    if (!this.instrumentationEnabled) return;
     switch (status) {
       case 'resolved':
         this.resolveOperation(id, payload);
@@ -586,6 +628,8 @@ export class CircuitGraph {
   }
 
   withOperation<T>(id: string, fn: () => T): T {
+    if (!this.instrumentationEnabled) return fn();
+
     this.operationStack.push(id);
     const previousAsyncContext = this._inAsyncContext;
     this._inAsyncContext = true;
@@ -643,6 +687,8 @@ export class CircuitGraph {
     eventType: GraphEvent['type'],
     metadata?: Record<string, any>,
   ): void {
+    if (!this.instrumentationEnabled) return;
+
     if (!this.testMode) {
       this.ensureTickOpen();
       this.scheduleTickClose();
@@ -727,6 +773,7 @@ export class CircuitGraph {
   }
 
   checkAssertions(): AssertionViolation[] {
+    if (!this.instrumentationEnabled) return [];
     const violations: AssertionViolation[] = [];
     for (const node of this.nodes.values()) {
       if (node.type === 'assertion' && node.assertionFn && node.assertionKind) {
@@ -967,6 +1014,11 @@ export class CircuitGraph {
   // --- Waveform recording ---
 
   startRecording(): void {
+    if (!this.instrumentationEnabled) {
+      this.recording = false;
+      this.waveforms.clear();
+      return;
+    }
     this.recording = true;
     this.waveforms.clear();
     const t = this.now();
@@ -1019,6 +1071,7 @@ export class CircuitGraph {
   // --- Reset ---
 
   reset(): void {
+    const instrumentationEnabled = this.instrumentationEnabled;
     const listeners = new Set(this.listeners);
     this.nodes.clear();
     this.edges = [];
@@ -1045,11 +1098,14 @@ export class CircuitGraph {
     this._inAsyncContext = false;
     this.nodeLastSetContext.clear();
     this.cdcWarningListeners.clear();
-    this.emitEvent({
-      type: 'graph-reset',
-      nodeId: '',
-      tick: this._currentTick,
-    });
+    this.instrumentationEnabled = instrumentationEnabled;
+    if (this.instrumentationEnabled) {
+      this.emitEvent({
+        type: 'graph-reset',
+        nodeId: '',
+        tick: this._currentTick,
+      });
+    }
   }
 }
 

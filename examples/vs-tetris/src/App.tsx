@@ -16,6 +16,7 @@ import {
   clampOpponentCount,
   garbageFromClearedLines,
   hardDrop,
+  leaderId,
   move,
   resetPlayers,
   rotate,
@@ -29,6 +30,7 @@ import {
   type PlayerId,
   type PlayerState,
 } from './tetris';
+import { measureVsTetrisPerf, type PerfResult } from './perf';
 import {
   GARBAGE_RELAY_OUTCOMES,
   GARBAGE_RELAY_STATUSES,
@@ -70,7 +72,7 @@ export function App() {
     'arena.activePlayers',
   );
   const leader = useDerived(
-    () => [...arenaPlayers.val].sort((a, b) => b.score - a.score)[0]?.id ?? 'p1',
+    () => leaderId(arenaPlayers.val),
     [arenaPlayers],
     'arena.leader',
   );
@@ -288,6 +290,8 @@ export function App() {
       targetDomain,
       attackBankNodeId: attackBank.nodeId,
       getAttackBank: () => attackBank.val,
+      leaderNodeId: leader.nodeId,
+      getLeader: () => leader.val,
       canSend2NodeId: canSend2Signal.nodeId,
       getCanSend2: () => canSend2Signal.val,
       canSend4NodeId: canSend4Signal.nodeId,
@@ -416,10 +420,67 @@ export function App() {
         </>
       )}
 
+      <PerfWorkbench opponentCount={opponentCount.val} />
+
       <SourceReview />
 
       <EmbeddedDevtools opponentCount={opponentCount.val} />
     </main>
+  );
+}
+
+function PerfWorkbench({ opponentCount }: { opponentCount: OpponentCount }) {
+  const [iterations, setIterations] = useState(500);
+  const [result, setResult] = useState<PerfResult | null>(null);
+  const [running, setRunning] = useState(false);
+
+  function run() {
+    setRunning(true);
+    window.setTimeout(() => {
+      try {
+        setResult(measureVsTetrisPerf(opponentCount, iterations));
+      } finally {
+        setRunning(false);
+      }
+    }, 0);
+  }
+
+  return (
+    <section className="perf-panel" aria-label="Veriscope performance">
+      <div className="perf-header">
+        <div>
+          <div className="panel-title">Performance</div>
+          <span className="perf-subtitle">Same seed and Tetris ticks; disabled mode bypasses graph registration, dev mode adds propagation and assertions.</span>
+        </div>
+        <div className="perf-controls">
+          <label>
+            Ticks
+            <input
+              type="number"
+              min={50}
+              max={3000}
+              step={50}
+              value={iterations}
+              onChange={event => setIterations(Math.max(50, Math.min(3000, Number(event.currentTarget.value) || 50)))}
+            />
+          </label>
+          <button onClick={run} disabled={running}>{running ? 'Running' : 'Run Benchmark'}</button>
+        </div>
+      </div>
+      <div className="perf-grid">
+        <Metric label="Plain data path" value={result ? `${result.plainMs.toFixed(2)}ms` : '-'} />
+        <Metric label="Veriscope disabled" value={result ? `${result.disabledMs.toFixed(2)}ms` : '-'} />
+        <Metric label="Veriscope dev" value={result ? `${result.veriscopeMs.toFixed(2)}ms` : '-'} />
+        <Metric label="Disabled overhead" value={result ? `${result.disabledRatio.toFixed(2)}x` : '-'} />
+        <Metric label="Dev overhead" value={result ? `${result.ratio.toFixed(2)}x` : '-'} />
+        <Metric label="Disabled delta" value={result ? `${result.disabledDeltaPerTickUs.toFixed(1)}us/tick` : '-'} />
+        <Metric label="Dev delta" value={result ? `${result.deltaPerTickUs.toFixed(1)}us/tick` : '-'} />
+        <Metric label="Seed" value={result ? result.seed : '-'} />
+        <Metric label="Checksum" value={result ? (result.checksumMatched ? `matched ${result.plainChecksum}` : 'mismatch') : '-'} />
+        <Metric label="Dev graph" value={result ? `${result.nodeCount} nodes / ${result.assertionCount} asserts` : '-'} />
+        <Metric label="Disabled graph" value={result ? `${result.disabledNodeCount} nodes` : '-'} />
+      </div>
+    </section>
   );
 }
 
