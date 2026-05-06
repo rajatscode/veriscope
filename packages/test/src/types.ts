@@ -100,6 +100,7 @@ export interface AutotestAssertionResult {
   kind: string;
   status: 'passed' | 'failed';
   partialCoverage: boolean;
+  confidence: 'verified' | 'partial' | 'unverifiable';
   reason?: string;
   exercised: boolean;
   scenarioCount: number;
@@ -107,9 +108,16 @@ export interface AutotestAssertionResult {
   failScenarioCount: number;
 }
 
+export interface AutotestConfidenceSummary {
+  verified: number;
+  partial: number;
+  unverifiable: number;
+}
+
 export interface AutotestResult {
   status: 'passed' | 'failed';
   assertions: AutotestAssertionResult[];
+  confidence: AutotestConfidenceSummary;
   violations: Violation[];
   scenarios: ScenarioTrace[];
   coverage: ExploreCoverage;

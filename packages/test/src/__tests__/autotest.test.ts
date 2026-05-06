@@ -31,6 +31,7 @@ describe('runAutotest', () => {
       name: 'mutex',
       status: 'failed',
       partialCoverage: false,
+      confidence: 'verified',
       exercised: true,
     });
     expect(result.assertions[0].scenarioCount).toBeGreaterThan(0);
@@ -49,7 +50,73 @@ describe('runAutotest', () => {
 
     expect(result.status).toBe('passed');
     expect(result.assertions[0].partialCoverage).toBe(true);
-    expect(result.assertions[0].reason).toContain('missing explorable');
+    expect(result.assertions[0].reason).toContain('assertion reads no graph signals');
+    expect(result.assertions[0].confidence).toBe('unverifiable');
+  });
+
+  it('confidence is verified for fully-exercised assertions with deps', async () => {
+    const g = new CircuitGraph();
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (next: boolean) => { aVal = next; });
+
+    const assertId = g.registerNode({
+      name: 'always-true',
+      type: 'assertion',
+      deps: [a],
+      assertionMetadata: { checkDeps: [a] },
+    });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await runAutotest(g, { budget: 4 });
+
+    expect(result.assertions[0].confidence).toBe('verified');
+    expect(result.assertions[0].exercised).toBe(true);
+    expect(result.assertions[0].partialCoverage).toBe(false);
+    expect(result.confidence.verified).toBe(1);
+    expect(result.confidence.partial).toBe(0);
+    expect(result.confidence.unverifiable).toBe(0);
+  });
+
+  it('confidence is partial for assertions with partial coverage', async () => {
+    const g = new CircuitGraph();
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (next: boolean) => { aVal = next; });
+
+    const assertId = g.registerNode({
+      name: 'partial-check',
+      type: 'assertion',
+      assertionMetadata: { partial: true, checkDeps: [a] },
+    });
+    g.setAssertionFn(assertId, () => true, 'always');
+
+    const result = await runAutotest(g, { budget: 4 });
+
+    expect(result.assertions[0].confidence).toBe('partial');
+    expect(result.assertions[0].partialCoverage).toBe(true);
+    expect(result.confidence.partial).toBe(1);
+  });
+
+  it('provides specific reason when assertion has explorable roots but no deps', async () => {
+    const g = new CircuitGraph();
+    let aVal = false;
+    const a = g.registerNode({ name: 'a', type: 'signal' });
+    g.setNodeValue(a, () => aVal);
+    g.setNodeSetter(a, (next: boolean) => { aVal = next; });
+
+    // Register assertion without deps but with an edge to 'a' in the graph
+    const assertId = g.registerNode({ name: 'no-deps', type: 'assertion' });
+    g.setAssertionFn(assertId, () => true, 'always');
+    g.addEdge(a, assertId);
+
+    const result = await runAutotest(g, { budget: 4 });
+
+    expect(result.assertions[0].partialCoverage).toBe(true);
+    expect(result.assertions[0].reason).toMatch(/missing dependency metadata — explorer found \d+ reachable signal/);
+    expect(result.assertions[0].confidence).toBe('partial');
   });
 
   it('counts assertions checked by shared generated scenarios when the budget is exhausted early', async () => {

@@ -88,12 +88,18 @@ export interface AutotestResult extends ExploreResult {
     kind: string;
     status: 'passed' | 'failed';
     partialCoverage: boolean;
+    confidence: 'verified' | 'partial' | 'unverifiable';
     reason?: string;
     exercised?: boolean;
     scenarioCount?: number;
     passScenarioCount?: number;
     failScenarioCount?: number;
   }>;
+  confidence: {
+    verified: number;
+    partial: number;
+    unverifiable: number;
+  };
 }
 
 export interface MutateResult {
