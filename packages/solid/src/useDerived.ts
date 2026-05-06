@@ -5,6 +5,7 @@ import type { CircuitGraph, ReadonlySignal, Signal } from '@veriscope/graph';
 interface UseDerivedOptions {
   stablePath?: string;
   scope?: string;
+  coverage?: 'auto' | 'transition' | 'activity' | 'counter';
   graph?: CircuitGraph;
 }
 
@@ -34,7 +35,12 @@ export function useDerived<T>(
     type: 'derived',
     deps: deps.map(d => d.nodeId),
     stablePath: options?.stablePath,
-    metadata: options?.scope ? { scope: options.scope } : undefined,
+    metadata: (() => {
+      const m: Record<string, any> = {};
+      if (options?.scope) m.scope = options.scope;
+      if (options?.coverage && options.coverage !== 'auto') m.coverage = options.coverage;
+      return Object.keys(m).length > 0 ? m : undefined;
+    })(),
     computeFn: computeForGraph,
   });
 

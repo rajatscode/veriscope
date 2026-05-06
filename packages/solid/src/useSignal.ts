@@ -3,7 +3,8 @@ import { graph as defaultGraph } from '@veriscope/graph';
 import type { CircuitGraph, Signal } from '@veriscope/graph';
 
 interface UseSignalOptions {
-  states?: string[];
+  states?: Array<string | number | boolean | null>;
+  coverage?: 'auto' | 'transition' | 'activity' | 'counter';
   stablePath?: string;
   scope?: string;
   graph?: CircuitGraph;
@@ -28,6 +29,7 @@ export function useSignal<T>(
 
   const metadata: Record<string, any> = {};
   if (options?.states) metadata.states = options.states;
+  if (options?.coverage && options.coverage !== 'auto') metadata.coverage = options.coverage;
   if (options?.scope) metadata.scope = options.scope;
 
   const nodeId = g.registerNode({

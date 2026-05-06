@@ -4,6 +4,13 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
   "files": ["dist"],
   "peerDependencies": {
     "solid-js": ">=1.8"
@@ -12,11 +19,13 @@
     "@veriscope/graph": "*"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --external solid-js"
+    "build": "tsup src/index.ts --format esm,cjs --dts --external solid-js",
+    "test": "vitest run"
   },
   "devDependencies": {
     "solid-js": "^1.9.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }
