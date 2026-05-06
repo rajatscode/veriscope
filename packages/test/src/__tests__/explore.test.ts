@@ -1156,3 +1156,62 @@ describe('explore — assertNever adversarial', () => {
     expect(result.violations.some(v => v.assertionName === 'never-invalid')).toBe(true);
   });
 });
+
+describe('explore — domain inference without declared domains', () => {
+  it('finds violation for assertAlways(() => count.val >= 0) with no declared domains', async () => {
+    const g = new CircuitGraph();
+    let count = 0;
+    const countId = g.registerNode({ name: 'count', type: 'signal' });
+    g.setNodeValue(countId, () => count);
+    g.setNodeSetter(countId, (v: number) => {
+      count = v;
+    });
+
+    const assertId = g.registerNode({ name: 'count-non-negative', type: 'assertion', deps: [countId] });
+    g.setAssertionFn(assertId, () => count >= 0, 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    const violation = result.violations.find(v => v.assertionName === 'count-non-negative');
+    expect(violation).toBeDefined();
+    expect(violation!.signalValues.count).toBeLessThan(0);
+  });
+
+  it('uses signal metadata.states as domain', async () => {
+    const g = new CircuitGraph();
+    let status = 'idle';
+    const statusId = g.registerNode({
+      name: 'status',
+      type: 'signal',
+      metadata: { states: ['idle', 'loading', 'error'] },
+    });
+    g.setNodeValue(statusId, () => status);
+    g.setNodeSetter(statusId, (v: string) => {
+      status = v;
+    });
+
+    const assertId = g.registerNode({ name: 'status-valid', type: 'assertion', deps: [statusId] });
+    g.setAssertionFn(assertId, () => ['idle', 'loading', 'error'].includes(status), 'always');
+
+    const result = await explore(g, { budget: 20 });
+
+    const enumeratedValues = result.scenarios
+      .filter(s => s.kind === 'enumerated')
+      .flatMap(s => s.steps)
+      .filter(step => step.signal === 'status')
+      .map(step => step.value);
+    expect(enumeratedValues).toEqual(expect.arrayContaining(['idle', 'loading', 'error']));
+    expect(enumeratedValues.every(v => ['idle', 'loading', 'error'].includes(v))).toBe(true);
+  });
+});
+
+describe('parseComputeFn — val alias patterns', () => {
+  it('handles const c = sig.val; return c >= 0 pattern', () => {
+    const fn = () => { const c = count.val; return c >= 0; };
+    // @ts-ignore
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('count');
+    expect(parsed!.comparisons.some(c => c.signal === 'count' && c.op === '>=' && c.value === '0')).toBe(true);
+  });
+});

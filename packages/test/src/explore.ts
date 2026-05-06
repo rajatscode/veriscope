@@ -462,11 +462,25 @@ function domainForExplorationNode(
   if (reachableInferred.length > 0) return reachableInferred;
   if (declaredDomain && declaredDomain.length > 0) return uniqueValues(declaredDomain);
 
+  const waveformData = graph.getWaveformData();
+  const nodeWaveform = waveformData.get(node.id);
+  if (nodeWaveform && nodeWaveform.length > 0) {
+    const observedValues = [...new Set(nodeWaveform.map(p => p.v))];
+    if (observedValues.length > 1) {
+      if (observedValues.every(v => typeof v === 'number')) {
+        const min = Math.min(...observedValues as number[]);
+        const max = Math.max(...observedValues as number[]);
+        return uniqueValues([...observedValues, min - 1, max + 1, 0]);
+      }
+      return observedValues;
+    }
+  }
+
   const currentVal = node.getValue?.();
   if (isOpaqueRootValue(currentVal)) return [];
   if (currentVal === null) return [null, 'value'];
-  if (typeof currentVal === 'string') return uniqueValues([currentVal, 'value']);
-  if (typeof currentVal === 'number') return uniqueValues([currentVal, 0, 1]);
+  if (typeof currentVal === 'string') return uniqueValues([currentVal, '', 'value']);
+  if (typeof currentVal === 'number') return uniqueValues([currentVal, 0, 1, -1, currentVal - 1, currentVal + 1]);
   return currentVal === undefined ? [] : uniqueValues([currentVal]);
 }
 
@@ -1625,8 +1639,8 @@ function domainForDriveNode(
   const current = node.getValue?.();
   if (typeof current === 'boolean') return [true, false];
   if (isOpaqueRootValue(current)) return [];
-  if (typeof current === 'string') return uniqueValues([current, 'value']);
-  if (typeof current === 'number') return uniqueValues([current, 0, 1]);
+  if (typeof current === 'string') return uniqueValues([current, '', 'value']);
+  if (typeof current === 'number') return uniqueValues([current, 0, 1, -1, current - 1, current + 1]);
   if (current === null) return [null, 'value'];
   return uniqueValues([current, true, false]);
 }
