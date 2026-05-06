@@ -1056,4 +1056,77 @@ describe('CircuitGraph', () => {
     g.reset();
     expect(g.getBufferStats().overflowCount).toBe(0);
   });
+
+  it('enterSandbox shadows signal values and exitSandbox restores them', () => {
+    const g = new CircuitGraph();
+    let realValue = 'original';
+    const id = g.registerNode({ name: 'sig', type: 'signal' });
+    g.setNodeValue(id, () => realValue);
+    g.setNodeSetter(id, (v: any) => { realValue = v; });
+
+    expect(g.getNode(id)!.getValue!()).toBe('original');
+
+    g.enterSandbox();
+    expect(g.isInSandbox()).toBe(true);
+
+    // Drive a value in sandbox — should NOT affect real value
+    g.driveNodeValue(id, 'sandboxed');
+    expect(g.getNode(id)!.getValue!()).toBe('sandboxed');
+    expect(realValue).toBe('original'); // Real value untouched
+
+    g.exitSandbox();
+    expect(g.isInSandbox()).toBe(false);
+
+    // Original getter/setter restored
+    expect(g.getNode(id)!.getValue!()).toBe('original');
+    g.getNode(id)!.setValue!('updated');
+    expect(realValue).toBe('updated');
+  });
+
+  it('sandbox supports function updaters without affecting the real value', () => {
+    const g = new CircuitGraph();
+    let realValue = 10;
+    const id = g.registerNode({ name: 'count', type: 'signal' });
+    g.setNodeValue(id, () => realValue);
+    g.setNodeSetter(id, (v: any) => { realValue = v; });
+
+    g.enterSandbox();
+    g.driveNodeValue(id, (prev: number) => prev + 5);
+    expect(g.getNode(id)!.getValue!()).toBe(15);
+    expect(realValue).toBe(10);
+
+    g.exitSandbox();
+    expect(g.getNode(id)!.getValue!()).toBe(10);
+  });
+
+  it('sandbox mode uses test mode ticks', () => {
+    const g = new CircuitGraph();
+    const id = g.registerNode({ name: 'sig', type: 'signal' });
+    let realValue = 0;
+    g.setNodeValue(id, () => realValue);
+    g.setNodeSetter(id, (v: any) => { realValue = v; });
+
+    g.enterSandbox();
+
+    // In sandbox (which enables test mode), ticks should not auto-close
+    g.openTick();
+    g.driveNodeValue(id, 1);
+    expect(g.currentTick).toBe(0); // tick not auto-closed
+    g.closeTick();
+    expect(g.currentTick).toBe(1);
+
+    g.exitSandbox();
+  });
+
+  it('reset clears sandbox state', () => {
+    const g = new CircuitGraph();
+    const id = g.registerNode({ name: 'sig', type: 'signal' });
+    g.setNodeValue(id, () => 'val');
+    g.setNodeSetter(id, () => {});
+
+    g.enterSandbox();
+    expect(g.isInSandbox()).toBe(true);
+    g.reset();
+    expect(g.isInSandbox()).toBe(false);
+  });
 });

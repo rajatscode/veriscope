@@ -441,7 +441,7 @@ export function createMutantsPanel(
     if (!options?.mutate) {
       const empty = document.createElement('div');
       empty.style.cssText = 'color:#8b949e; padding:14px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; line-height:1.6; text-align:center; white-space:pre-line;';
-      empty.textContent = 'No mutation runner detected.\nInstall @veriscope/mutate to enable mutation testing:\nnpm install @veriscope/mutate';
+      empty.textContent = 'Mutation testing requires a graph factory function.\nPass a mutate callback to mountDevtools().';
       container.appendChild(empty);
       return;
     }

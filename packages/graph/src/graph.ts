@@ -54,6 +54,8 @@ export class CircuitGraph {
   private cycleListeners = new Set<(nodeIds: string[]) => void>();
   private _propagating = false;
   private _pendingPropagations: string[] = [];
+  private _sandboxMode = false;
+  private _sandboxOriginals = new Map<string, { getValue: (() => any) | null; setValue: ((v: any) => void) | null }>();
 
   constructor(options?: { eventBufferSize?: number }) {
     this._eventBufferSize = options?.eventBufferSize ?? DEFAULT_EVENT_BUFFER_SIZE;
@@ -1055,6 +1057,39 @@ export class CircuitGraph {
     this.testMode = false;
   }
 
+  enterSandbox(): void {
+    if (this._sandboxMode) return;
+    this._sandboxMode = true;
+    for (const [id, node] of this.nodes) {
+      if (!node.getValue) continue;
+      const origGet = node.getValue;
+      const origSet = node.setValue;
+      let shadow = origGet();
+      this._sandboxOriginals.set(id, { getValue: origGet, setValue: origSet });
+      node.getValue = () => shadow;
+      node.setValue = (v: any) => { shadow = typeof v === 'function' ? v(shadow) : v; };
+    }
+    this.enterTestMode();
+  }
+
+  exitSandbox(): void {
+    if (!this._sandboxMode) return;
+    for (const [id, orig] of this._sandboxOriginals) {
+      const node = this.nodes.get(id);
+      if (node) {
+        node.getValue = orig.getValue;
+        node.setValue = orig.setValue;
+      }
+    }
+    this._sandboxOriginals.clear();
+    this._sandboxMode = false;
+    this.exitTestMode();
+  }
+
+  isInSandbox(): boolean {
+    return this._sandboxMode;
+  }
+
   enableCoverage(): void {
     this.coverageEnabled = true;
     coverage.enable();
@@ -1177,6 +1212,8 @@ export class CircuitGraph {
     this.cycleListeners.clear();
     this._propagating = false;
     this._pendingPropagations = [];
+    this._sandboxMode = false;
+    this._sandboxOriginals.clear();
     this.instrumentationEnabled = instrumentationEnabled;
     if (this.instrumentationEnabled) {
       this.emitEvent({

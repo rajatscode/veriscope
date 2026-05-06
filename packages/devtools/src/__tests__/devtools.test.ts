@@ -499,9 +499,9 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
 
-    expect(canvasText).toContain('p1.*');
+    expect(canvasText).toContain('p[10].*');
     expect(canvasText).not.toContain('p1.score');
-    expect(host.textContent).toContain('Grouped 90 prefix-similar nodes');
+    expect(host.textContent).toContain('Grouped 90 repeated-instance nodes');
 
     handle.dispose();
   });

@@ -235,13 +235,10 @@ export function mountDevtools(
         mutants = createMutantsPanel(mutantsContainer, { mutate: options.mutate });
       } else {
         mutants = createMutantsPanel(mutantsContainer, {});
-        tryDiscoverMutate(graph).then(discovered => {
-          if (discovered && !disposed) {
-            mutants?.dispose();
-            mutants = createMutantsPanel(mutantsContainer, { mutate: discovered });
-            if (activeTab === 'mutants') mutants.refresh();
-          }
-        });
+        mutantsContainer.insertAdjacentHTML('beforeend',
+          '<p style="color:#888;font-size:13px;padding:8px 12px;margin:0">' +
+          'Mutation testing requires a graph factory function. ' +
+          'Pass a <code>mutate</code> callback to <code>mountDevtools()</code> — see docs.</p>');
       }
       disposers.push(() => mutants?.dispose());
     }
@@ -293,29 +290,31 @@ async function tryDiscoverAutotest(): Promise<{ autotest?: DevtoolsOptions['auto
   try {
     const testModule: Record<string, any> = await import('@veriscope/test');
     if (typeof testModule.runAutotest === 'function') {
-      return { autotest: (g, opts) => testModule.runAutotest(g, opts) };
+      return {
+        autotest: async (g, opts) => {
+          g.enterSandbox();
+          try {
+            return await testModule.runAutotest(g, opts);
+          } finally {
+            g.exitSandbox();
+          }
+        },
+      };
     }
     if (typeof testModule.explore === 'function') {
-      return { explore: (g, opts) => testModule.explore(g, opts) };
+      return {
+        explore: async (g, opts) => {
+          g.enterSandbox();
+          try {
+            return await testModule.explore(g, opts);
+          } finally {
+            g.exitSandbox();
+          }
+        },
+      };
     }
   } catch {
     // @veriscope/test not installed
-  }
-  return null;
-}
-
-async function tryDiscoverMutate(graph: CircuitGraph): Promise<DevtoolsOptions['mutate'] | null> {
-  try {
-    const mutateModule: Record<string, any> = await import('@veriscope/mutate');
-    if (typeof mutateModule.mutate === 'function') {
-      return (opts) => mutateModule.mutate(() => graph, {
-        budget: 1200,
-        operators: opts?.mode === 'broad' ? 'all' : undefined,
-        onProgress: opts?.onProgress,
-      });
-    }
-  } catch {
-    // @veriscope/mutate not installed
   }
   return null;
 }
