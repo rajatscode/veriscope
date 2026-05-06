@@ -6,7 +6,13 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./bridge": "./dist/bridge.js"
+    "./bridge": "./dist/bridge.js",
+    "./waveform": "./dist/waveform.js",
+    "./visualizer": "./dist/visualizer.js",
+    "./assertions": "./dist/assertions.js",
+    "./liveAssertions": "./dist/liveAssertions.js",
+    "./mutants": "./dist/mutants.js",
+    "./layout": "./dist/layout.js"
   },
   "files": ["dist"],
   "dependencies": {

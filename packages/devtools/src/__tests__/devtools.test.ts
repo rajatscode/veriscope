@@ -3,8 +3,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CircuitGraph, coverage } from '@veriscope/graph';
-import { mountDevtools } from '../index';
-import type { AutotestResult, MutateResult } from '../index';
+import {
+  mountDevtools,
+  createWaveformPanel,
+  createVisualizerPanel,
+  createAssertionsPanel,
+  createLiveAssertionsPanel,
+  createMutantsPanel,
+  createTabLayout,
+} from '../index';
+import type { AutotestResult, MutateResult, TabLayout, TabDefinition } from '../index';
 
 const canvasText: string[] = [];
 const canvasOps: Array<{ op: string; args: unknown[] }> = [];
@@ -1096,5 +1104,90 @@ describe('mountDevtools', () => {
     expect(host.textContent).toContain('Last run: #1 completed');
 
     handle.dispose();
+  });
+});
+
+describe('standalone panel constructors', () => {
+  it('creates and disposes a WaveformPanel independently', () => {
+    const graph = new CircuitGraph();
+    graph.registerNode({ name: 'sig', type: 'signal' });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const panel = createWaveformPanel(host, graph);
+
+    expect(typeof panel.dispose).toBe('function');
+    expect(typeof panel.refresh).toBe('function');
+    panel.refresh();
+    panel.dispose();
+  });
+
+  it('creates and disposes a VisualizerPanel independently', () => {
+    const graph = new CircuitGraph();
+    graph.registerNode({ name: 'node', type: 'signal' });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const panel = createVisualizerPanel(host, graph);
+
+    expect(typeof panel.dispose).toBe('function');
+    expect(typeof panel.refresh).toBe('function');
+    panel.refresh();
+    panel.dispose();
+  });
+
+  it('creates and disposes an AssertionsPanel independently', () => {
+    const graph = new CircuitGraph();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const panel = createAssertionsPanel(host, graph, {});
+
+    expect(typeof panel.dispose).toBe('function');
+    expect(typeof panel.refresh).toBe('function');
+    panel.refresh();
+    panel.dispose();
+  });
+
+  it('creates and disposes a LiveAssertionsPanel independently', () => {
+    const graph = new CircuitGraph();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const panel = createLiveAssertionsPanel(host, graph, { coverage });
+
+    expect(typeof panel.dispose).toBe('function');
+    expect(typeof panel.refresh).toBe('function');
+    panel.refresh();
+    panel.dispose();
+  });
+
+  it('creates and disposes a MutantsPanel independently', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const panel = createMutantsPanel(host, {});
+
+    expect(typeof panel.dispose).toBe('function');
+    expect(typeof panel.refresh).toBe('function');
+    panel.refresh();
+    panel.dispose();
+  });
+
+  it('creates and disposes a TabLayout independently', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const layout = createTabLayout(host);
+
+    expect(layout.contentPanels.size).toBe(5);
+    expect(typeof layout.setActive).toBe('function');
+    expect(typeof layout.onTabChange).toBe('function');
+    expect(typeof layout.dispose).toBe('function');
+    layout.setActive('waveform');
+    layout.dispose();
+  });
+
+  it('exports TabLayout and TabDefinition types', () => {
+    const layout: TabLayout = createTabLayout(document.createElement('div'));
+    const tab: TabDefinition = { id: 'circuit', label: 'Circuit' };
+    expect(tab.id).toBe('circuit');
+    layout.dispose();
   });
 });

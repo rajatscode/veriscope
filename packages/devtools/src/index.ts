@@ -10,7 +10,13 @@ import { createAssertionsPanel } from './assertions.js';
 import { createLiveAssertionsPanel } from './liveAssertions.js';
 import { createMutantsPanel } from './mutants.js';
 
-export type { TabId } from './layout.js';
+export { createWaveformPanel } from './waveform.js';
+export { createVisualizerPanel } from './visualizer.js';
+export { createAssertionsPanel } from './assertions.js';
+export { createLiveAssertionsPanel } from './liveAssertions.js';
+export { createMutantsPanel } from './mutants.js';
+export { createTabLayout } from './layout.js';
+export type { TabLayout, TabDefinition, TabId } from './layout.js';
 
 export interface ExploreResult {
   violations: Array<{ assertionName: string; tick: number; signalValues: Record<string, any>; sequence: Array<{ signal: string; value: any }> }>;
