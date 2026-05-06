@@ -8,6 +8,17 @@ function nodeToString(node: any, source: string): string {
   return source.slice(node.start, node.end);
 }
 
+/** Flip a comparison operator so the signal stays on the left conceptually. */
+function flipOp(op: string): string {
+  switch (op) {
+    case '>': return '<';
+    case '<': return '>';
+    case '>=': return '<=';
+    case '<=': return '>=';
+    default: return op; // ===, !==, == , != are symmetric
+  }
+}
+
 /**
  * Parse fn.toString() to extract expression structure using Acorn AST.
  * Detects signal reads (.val), comparison operators/boundaries, and branch structure.
@@ -66,7 +77,7 @@ export function parseComputeFn(fn: () => any): ParsedExpression | null {
         ) {
           comparisons.push({
             signal: node.right.object.name,
-            op: node.operator,
+            op: flipOp(node.operator),
             value: nodeToString(node.left, source),
           });
         }
@@ -96,6 +107,24 @@ export function parseComputeFn(fn: () => any): ParsedExpression | null {
         }
         if (node.right.type === 'Identifier' && !valAliases.has(node.right.name)) {
           signals.add(node.right.name);
+        }
+      },
+      UnaryExpression(node: any) {
+        if (node.operator === '!' &&
+            node.argument?.type === 'MemberExpression' &&
+            node.argument.property?.name === 'val' &&
+            node.argument.object?.type === 'Identifier') {
+          signals.add(node.argument.object.name);
+        }
+        if (node.operator === '!' &&
+            node.argument?.type === 'Identifier' &&
+            valAliases.has(node.argument.name)) {
+          signals.add(valAliases.get(node.argument.name)!);
+        }
+      },
+      ConditionalExpression(node: any) {
+        if (node.test?.type === 'Identifier' && valAliases.has(node.test.name)) {
+          signals.add(valAliases.get(node.test.name)!);
         }
       },
       LogicalExpression(_node: any) {

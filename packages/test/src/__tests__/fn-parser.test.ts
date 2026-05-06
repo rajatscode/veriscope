@@ -4,6 +4,7 @@ import { inferBoundaryValues, parseComputeFn } from '../fn-parser';
 // Declare globals so fn.toString() references them by name
 declare const loading: { val: boolean };
 declare const validated: { val: boolean };
+declare const count: { val: number };
 declare const score: { val: number };
 declare const foo: { val: any };
 declare const bar: { val: any };
@@ -81,6 +82,39 @@ describe('parseComputeFn (Acorn)', () => {
     expect(boundaries.get('score')).toEqual([0, -1, 1]);
     expect(boundaries.get('status')).toEqual(['error']);
     expect(boundaries.get('message')).toEqual([null]);
+  });
+
+  it('extracts right-side .val comparison with flipped operator', () => {
+    const fn = () => 0 >= count.val;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('count');
+    expect(parsed!.comparisons).toContainEqual({
+      signal: 'count',
+      op: '<=',
+      value: '0',
+    });
+  });
+
+  it('extracts negation of .val signal', () => {
+    const fn = () => !loading.val;
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('loading');
+  });
+
+  it('extracts negation of alias', () => {
+    const fn = () => { const l = loading.val; return !l; };
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('loading');
+  });
+
+  it('extracts signal from ternary condition', () => {
+    const fn = () => loading.val ? 'yes' : 'no';
+    const parsed = parseComputeFn(fn as any);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.signals).toContain('loading');
   });
 
   it('returns null for unparseable input', () => {
