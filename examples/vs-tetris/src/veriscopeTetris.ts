@@ -170,12 +170,19 @@ export function registerTetrisAssertions(
       bindings.attackBankNodeId,
       bindings.garbagePulseNodeId,
     ],
-    () =>
-      targetGraph.getNode(bindings.startedNodeId)?.getValue?.() === bindings.getStarted()
-      && targetGraph.getNode(bindings.pausedNodeId)?.getValue?.() === bindings.getPaused()
-      && targetGraph.getNode(bindings.humanTargetNodeId)?.getValue?.() === bindings.getHumanTarget()
-      && targetGraph.getNode(bindings.attackBankNodeId)?.getValue?.() === bindings.getAttackBank()
-      && targetGraph.getNode(bindings.garbagePulseNodeId)?.getValue?.() === bindings.getGarbagePulse(),
+    () => {
+      const gv = (id: string) => targetGraph.getNode(id)?.getValue?.();
+      const started = gv(bindings.startedNodeId);
+      const paused = gv(bindings.pausedNodeId);
+      const target = gv(bindings.humanTargetNodeId);
+      const bank = gv(bindings.attackBankNodeId);
+      const pulse = gv(bindings.garbagePulseNodeId);
+      return typeof started === 'boolean'
+        && typeof paused === 'boolean'
+        && typeof target === 'string' && bindings.targetDomain.includes(target)
+        && typeof bank === 'number' && Number.isFinite(bank) && bank >= 0
+        && typeof pulse === 'boolean';
+    },
   );
   targetGraph.setAssertionMetadata(bridgeId, {
     checkDeps: [
@@ -483,30 +490,38 @@ export function createVsTetrisGraph(
     { states: [...GARBAGE_RELAY_STATUSES] },
   );
 
-  const telemetry = registerTetrisTelemetry(targetGraph, playersSignal.id, () => players);
+  const graphPlayers = (): PlayerState[] => safePlayers(targetGraph.getNode(playersSignal.id)?.getValue?.());
+  const graphStarted = () => targetGraph.getNode(startedSignal.id)?.getValue?.() as boolean;
+  const graphPaused = () => targetGraph.getNode(pausedSignal.id)?.getValue?.() as boolean;
+  const graphTarget = () => targetGraph.getNode(targetSignal.id)?.getValue?.() as string;
+  const graphBank = () => targetGraph.getNode(bankSignal.id)?.getValue?.() as number;
+  const graphPulse = () => targetGraph.getNode(pulseSignal.id)?.getValue?.() as boolean;
+  const graphRelayStatus = () => targetGraph.getNode(relayStatusSignal.id)?.getValue?.() as GarbageRelayStatus;
+
+  const telemetry = registerTetrisTelemetry(targetGraph, playersSignal.id, graphPlayers);
 
   const targetAlive = registerDerived(targetGraph, 'arena.targetAlive', [playersSignal.id, targetSignal.id], () => {
-    const target = players.find(player => player.id === humanTarget);
+    const target = graphPlayers().find(player => player.id === graphTarget());
     return Boolean(target && !target.ko);
   });
   const humanAlive = registerDerived(targetGraph, 'p1.aliveForAttack', [playersSignal.id], () => {
-    const human = players.find(player => player.id === 'p1');
+    const human = graphPlayers().find(player => player.id === 'p1');
     return Boolean(human && !human.ko);
   });
   registerDerived(targetGraph, 'arena.activePlayersForTests', [playersSignal.id], () =>
-    players.filter(player => !player.ko).length,
+    graphPlayers().filter(player => !player.ko).length,
   );
   const canSend2 = registerDerived(
     targetGraph,
     'p1.canSend2',
     [startedSignal.id, pausedSignal.id, bankSignal.id, targetSignal.id, targetAlive, humanAlive],
-    () => started && !paused && attackBank >= 2 && targetDomain.includes(humanTarget) && targetGraph.getNode(targetAlive)?.getValue?.() === true && targetGraph.getNode(humanAlive)?.getValue?.() === true,
+    () => graphStarted() && !graphPaused() && graphBank() >= 2 && targetDomain.includes(graphTarget()) && targetGraph.getNode(targetAlive)?.getValue?.() === true && targetGraph.getNode(humanAlive)?.getValue?.() === true,
   );
   const canSend4 = registerDerived(
     targetGraph,
     'p1.canSend4',
     [startedSignal.id, pausedSignal.id, bankSignal.id, targetSignal.id, targetAlive, humanAlive],
-    () => started && !paused && attackBank >= 4 && targetDomain.includes(humanTarget) && targetGraph.getNode(targetAlive)?.getValue?.() === true && targetGraph.getNode(humanAlive)?.getValue?.() === true,
+    () => graphStarted() && !graphPaused() && graphBank() >= 4 && targetDomain.includes(graphTarget()) && targetGraph.getNode(targetAlive)?.getValue?.() === true && targetGraph.getNode(humanAlive)?.getValue?.() === true,
   );
   const sendHasRecipient = registerDerived(
     targetGraph,
@@ -516,7 +531,7 @@ export function createVsTetrisGraph(
       targetGraph.getNode(telemetry.ids['arena.anyGarbageQueued'])?.getValue?.() === true
       || targetGraph.getNode(telemetry.ids['arena.anyRecipientReceived'])?.getValue?.() === true,
   );
-  const leader = registerDerived(targetGraph, 'arena.leader', [playersSignal.id], () => leaderId(players));
+  const leader = registerDerived(targetGraph, 'arena.leader', [playersSignal.id], () => leaderId(graphPlayers()));
 
   targetGraph.registerOperationModel({
     name: 'garbage-relay',
@@ -534,16 +549,16 @@ export function createVsTetrisGraph(
 
   registerTetrisAssertions(targetGraph, {
     playersNodeId: playersSignal.id,
-    getPlayers: () => players,
+    getPlayers: graphPlayers,
     startedNodeId: startedSignal.id,
-    getStarted: () => started,
+    getStarted: graphStarted,
     pausedNodeId: pausedSignal.id,
-    getPaused: () => paused,
+    getPaused: graphPaused,
     humanTargetNodeId: targetSignal.id,
-    getHumanTarget: () => humanTarget,
+    getHumanTarget: graphTarget,
     targetDomain,
     attackBankNodeId: bankSignal.id,
-    getAttackBank: () => attackBank,
+    getAttackBank: graphBank,
     leaderNodeId: leader,
     getLeader: () => targetGraph.getNode(leader)?.getValue?.() as string,
     canSend2NodeId: canSend2,
@@ -551,11 +566,11 @@ export function createVsTetrisGraph(
     canSend4NodeId: canSend4,
     getCanSend4: () => targetGraph.getNode(canSend4)?.getValue?.() === true,
     garbagePulseNodeId: pulseSignal.id,
-    getGarbagePulse: () => garbagePulse,
+    getGarbagePulse: graphPulse,
     sendHasRecipientNodeId: sendHasRecipient,
     getSendHasRecipient: () => targetGraph.getNode(sendHasRecipient)?.getValue?.() === true,
     relayStatusNodeId: relayStatusSignal.id,
-    getRelayStatus: () => relayStatus,
+    getRelayStatus: graphRelayStatus,
   });
 
   targetGraph.propagate();

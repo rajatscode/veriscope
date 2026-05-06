@@ -235,6 +235,7 @@ export class CircuitGraph {
       const newValue = node.computeFn();
       node.currentValue = newValue;
       node.hasCurrentValue = true;
+      if (node.setValue) node.setValue(newValue);
 
       if (!Object.is(oldValue, newValue)) {
         this.notifyChange(id, oldValue, newValue);
