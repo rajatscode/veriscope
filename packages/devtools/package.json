@@ -5,14 +5,46 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./bridge": "./dist/bridge.js",
-    "./waveform": "./dist/waveform.js",
-    "./visualizer": "./dist/visualizer.js",
-    "./assertions": "./dist/assertions.js",
-    "./liveAssertions": "./dist/liveAssertions.js",
-    "./mutants": "./dist/mutants.js",
-    "./layout": "./dist/layout.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./bridge": {
+      "types": "./dist/bridge.d.ts",
+      "import": "./dist/bridge.js",
+      "require": "./dist/bridge.cjs"
+    },
+    "./waveform": {
+      "types": "./dist/waveform.d.ts",
+      "import": "./dist/waveform.js",
+      "require": "./dist/waveform.cjs"
+    },
+    "./visualizer": {
+      "types": "./dist/visualizer.d.ts",
+      "import": "./dist/visualizer.js",
+      "require": "./dist/visualizer.cjs"
+    },
+    "./assertions": {
+      "types": "./dist/assertions.d.ts",
+      "import": "./dist/assertions.js",
+      "require": "./dist/assertions.cjs"
+    },
+    "./liveAssertions": {
+      "types": "./dist/liveAssertions.d.ts",
+      "import": "./dist/liveAssertions.js",
+      "require": "./dist/liveAssertions.cjs"
+    },
+    "./mutants": {
+      "types": "./dist/mutants.d.ts",
+      "import": "./dist/mutants.js",
+      "require": "./dist/mutants.cjs"
+    },
+    "./layout": {
+      "types": "./dist/layout.d.ts",
+      "import": "./dist/layout.js",
+      "require": "./dist/layout.cjs"
+    }
   },
   "files": ["dist"],
   "dependencies": {
