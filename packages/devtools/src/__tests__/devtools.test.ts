@@ -491,9 +491,9 @@ describe('mountDevtools', () => {
     document.body.appendChild(host);
     const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
 
-    expect(canvasText).toContain('p1.metrics');
+    expect(canvasText).toContain('p1.*');
     expect(canvasText).not.toContain('p1.score');
-    expect(host.textContent).toContain('Grouped 90 repeated player metric nodes');
+    expect(host.textContent).toContain('Grouped 90 prefix-similar nodes');
 
     handle.dispose();
   });
@@ -676,11 +676,12 @@ describe('mountDevtools', () => {
 
     handle.setTab('autotest');
 
+    const emptyMsg = 'No autotest runner detected.\nInstall @veriscope/test to enable automatic test generation:\nnpm install @veriscope/test';
     const autotestEmpty = [...host.querySelectorAll<HTMLElement>('div')]
-      .find(el => el.textContent === 'No autotest runner registered.');
+      .find(el => el.textContent === emptyMsg);
     expect(autotestEmpty).toBeDefined();
     const autotestText = autotestEmpty!.parentElement!.textContent ?? '';
-    expect(autotestText).toContain('No autotest runner registered.');
+    expect(autotestText).toContain('No autotest runner detected.');
     expect(autotestText).not.toContain('P:1 F:0');
     expect(autotestText).not.toContain('Operations (1)');
 

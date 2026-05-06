@@ -522,10 +522,12 @@ export function createAssertionsPanel(
       container.appendChild(resultBox);
     } else {
       const empty = document.createElement('div');
-      empty.style.cssText = 'color:#666; padding:20px; text-align:center;';
+      empty.style.cssText = options?.autotest || options?.explore
+        ? 'color:#666; padding:20px; text-align:center;'
+        : 'color:#8b949e; padding:14px; background:rgba(255,255,255,0.03); border:1px solid #21262d; border-radius:4px; line-height:1.6; text-align:center; white-space:pre-line;';
       empty.textContent = options?.autotest || options?.explore
         ? 'No autotest run yet.'
-        : 'No autotest runner registered.';
+        : 'No autotest runner detected.\nInstall @veriscope/test to enable automatic test generation:\nnpm install @veriscope/test';
       container.appendChild(empty);
     }
   }

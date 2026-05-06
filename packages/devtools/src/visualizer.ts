@@ -13,10 +13,10 @@ const NODE_COLORS: Record<string, string> = {
 const NODE_W = 168;
 const NODE_H = 50;
 const PADDING = 40;
-const PLAYER_GROUP_THRESHOLD = 80;
+const GROUP_THRESHOLD = 80;
+const MIN_GROUP_SIZE = 3;
 const MIN_DRAW_INTERVAL_MS = 120;
 const ACTIVITY_TTL_MS = 1400;
-const PLAYER_METRIC_RE = /^p\d+\.(score|lines|pendingGarbage|lastSent|lastReceived|stackHeight|alive|ko|piece)$/;
 
 interface LayoutNode {
   id: string;
@@ -92,7 +92,7 @@ function displayModel(graph: CircuitGraph): DisplayModel {
   const edges = graph.getEdges();
   const identityMap = new Map(nodes.map(node => [node.id, node.id]));
 
-  if (nodes.length < PLAYER_GROUP_THRESHOLD) {
+  if (nodes.length < GROUP_THRESHOLD) {
     return {
       nodes: nodes.map(node => ({
         id: node.id,
@@ -106,18 +106,28 @@ function displayModel(graph: CircuitGraph): DisplayModel {
     };
   }
 
-  const groupByPlayer = new Map<string, GraphNode[]>();
-  const groupedNodeIds = new Set<string>();
+  // Group by dotted prefix (e.g., "player1.score" → prefix "player1")
+  const prefixGroups = new Map<string, GraphNode[]>();
   for (const node of nodes) {
-    if (!PLAYER_METRIC_RE.test(node.name)) continue;
-    const playerId = node.name.split('.')[0];
-    const group = groupByPlayer.get(playerId) ?? [];
+    const dotIndex = node.name.indexOf('.');
+    if (dotIndex === -1) continue;
+    const prefix = node.name.substring(0, dotIndex);
+    const group = prefixGroups.get(prefix) ?? [];
     group.push(node);
-    groupByPlayer.set(playerId, group);
-    groupedNodeIds.add(node.id);
+    prefixGroups.set(prefix, group);
   }
 
-  if (groupByPlayer.size === 0) {
+  // Only keep groups with MIN_GROUP_SIZE+ members
+  const groupedNodeIds = new Set<string>();
+  for (const [prefix, members] of prefixGroups) {
+    if (members.length < MIN_GROUP_SIZE) {
+      prefixGroups.delete(prefix);
+    } else {
+      for (const member of members) groupedNodeIds.add(member.id);
+    }
+  }
+
+  if (prefixGroups.size === 0) {
     return {
       nodes: nodes.map(node => ({
         id: node.id,
@@ -146,13 +156,13 @@ function displayModel(graph: CircuitGraph): DisplayModel {
     });
   }
 
-  for (const [playerId, members] of groupByPlayer) {
-    const groupId = `group:${playerId}`;
+  for (const [prefix, members] of prefixGroups) {
+    const groupId = `group:${prefix}`;
     groupedMembers += members.length;
     for (const member of members) groupIdByNode.set(member.id, groupId);
     displayNodes.push({
       id: groupId,
-      name: `${playerId}.metrics`,
+      name: `${prefix}.*`,
       type: 'derived',
       deps: unique(members.flatMap(member => member.deps).map(id => groupIdByNode.get(id) ?? id).filter(id => id !== groupId)),
       memberIds: members.map(member => member.id),
@@ -523,7 +533,7 @@ export function createVisualizerPanel(
       ? ` · Selected ${selectedNode.name}: ${flow.upstreamNodes.size} upstream, ${flow.downstreamNodes.size} downstream`
       : ' · Click a node to highlight flow';
     status.textContent = groupedMembers > 0
-      ? `${activityText}${flowText} · Grouped ${groupedMembers} repeated player metric nodes`
+      ? `${activityText}${flowText} · Grouped ${groupedMembers} prefix-similar nodes`
       : `${activityText}${flowText}`;
 
     const ctx = canvas.getContext('2d')!;
@@ -741,18 +751,19 @@ export function createVisualizerPanel(
 
 function formatLayoutNodeValue(graph: CircuitGraph, node: LayoutNode): string {
   if (node.memberIds) {
-    const memberByMetric = new Map<string, GraphNode>();
-    for (const memberId of node.memberIds) {
+    const values: string[] = [];
+    for (const memberId of node.memberIds.slice(0, 4)) {
       const member = graph.getNode(memberId);
-      if (!member) continue;
-      const metric = member.name.split('.')[1];
-      if (metric) memberByMetric.set(metric, member);
+      if (!member?.getValue) continue;
+      const metric = member.name.includes('.') ? member.name.split('.').slice(1).join('.') : member.name;
+      try {
+        values.push(`${metric}=${formatNodeValue(member.getValue())}`);
+      } catch {
+        values.push(`${metric}=?`);
+      }
     }
-    const score = memberByMetric.get('score')?.getValue?.();
-    const lines = memberByMetric.get('lines')?.getValue?.();
-    const queue = memberByMetric.get('pendingGarbage')?.getValue?.();
-    const ko = memberByMetric.get('ko')?.getValue?.();
-    return `S ${formatNodeValue(score)} L ${formatNodeValue(lines)} Q ${formatNodeValue(queue)} ${ko ? 'KO' : 'live'}`;
+    const suffix = node.memberIds.length > 4 ? ` +${node.memberIds.length - 4}` : '';
+    return values.join(' ') + suffix;
   }
 
   const graphNode = graph.getNode(node.id);

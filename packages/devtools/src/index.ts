@@ -2,7 +2,7 @@
 // Provides circuit, waveform, autotest, and mutation testing panels
 // Bridge is imported for side effects only: import '@veriscope/devtools/bridge'
 
-import type { CircuitGraph, CoverageCollector, GraphSnapshot } from '@veriscope/graph';
+import { coverage as globalCoverage, type CircuitGraph, type CoverageCollector, type GraphSnapshot } from '@veriscope/graph';
 import { createTabLayout } from './layout.js';
 import { createWaveformPanel } from './waveform.js';
 import { createVisualizerPanel } from './visualizer.js';
@@ -190,6 +190,8 @@ export function mountDevtools(
   const mutantsContainer = layout.contentPanels.get('mutants')!;
   let mutants: ReturnType<typeof createMutantsPanel> | null = null;
 
+  let disposed = false;
+
   // Lazy-init panels on tab switch (avoid unnecessary work for hidden tabs)
   function ensurePanel(tab: string) {
     if (tab === 'circuit' && !visualizer) {
@@ -199,21 +201,43 @@ export function mountDevtools(
       disposers.push(visualizer.dispose);
     }
     if (tab === 'autotest' && !autotest) {
-      autotest = createAssertionsPanel(autotestContainer, graph, {
-        autotest: options?.autotest,
-        explore: options?.explore,
-      });
-      disposers.push(autotest.dispose);
+      if (options?.autotest || options?.explore) {
+        autotest = createAssertionsPanel(autotestContainer, graph, {
+          autotest: options.autotest,
+          explore: options.explore,
+        });
+      } else {
+        autotest = createAssertionsPanel(autotestContainer, graph, {});
+        tryDiscoverAutotest().then(discovered => {
+          if (discovered && !disposed) {
+            autotest?.dispose();
+            autotest = createAssertionsPanel(autotestContainer, graph, discovered);
+            if (activeTab === 'autotest') autotest.refresh();
+          }
+        });
+      }
+      disposers.push(() => autotest?.dispose());
     }
     if (tab === 'live-assertions' && !liveAssertions) {
       liveAssertions = createLiveAssertionsPanel(liveAssertionsContainer, graph, {
-        coverage: options?.coverage,
+        coverage: options?.coverage ?? globalCoverage,
       });
       disposers.push(liveAssertions.dispose);
     }
     if (tab === 'mutants' && !mutants) {
-      mutants = createMutantsPanel(mutantsContainer, { mutate: options?.mutate });
-      disposers.push(mutants.dispose);
+      if (options?.mutate) {
+        mutants = createMutantsPanel(mutantsContainer, { mutate: options.mutate });
+      } else {
+        mutants = createMutantsPanel(mutantsContainer, {});
+        tryDiscoverMutate(graph).then(discovered => {
+          if (discovered && !disposed) {
+            mutants?.dispose();
+            mutants = createMutantsPanel(mutantsContainer, { mutate: discovered });
+            if (activeTab === 'mutants') mutants.refresh();
+          }
+        });
+      }
+      disposers.push(() => mutants?.dispose());
     }
   }
 
@@ -234,6 +258,7 @@ export function mountDevtools(
 
   return {
     dispose() {
+      disposed = true;
       for (const d of disposers) d();
       layout.dispose();
     },
@@ -256,4 +281,35 @@ function normalizeTab(tab: NonNullable<DevtoolsOptions['initialTab']>): 'circuit
   if (tab === 'assertions') return 'live-assertions';
   if (tab === 'coverage') return 'autotest';
   return tab;
+}
+
+async function tryDiscoverAutotest(): Promise<{ autotest?: DevtoolsOptions['autotest']; explore?: DevtoolsOptions['explore'] } | null> {
+  try {
+    const testModule: Record<string, any> = await import('@veriscope/test');
+    if (typeof testModule.runAutotest === 'function') {
+      return { autotest: (g, opts) => testModule.runAutotest(g, opts) };
+    }
+    if (typeof testModule.explore === 'function') {
+      return { explore: (g, opts) => testModule.explore(g, opts) };
+    }
+  } catch {
+    // @veriscope/test not installed
+  }
+  return null;
+}
+
+async function tryDiscoverMutate(graph: CircuitGraph): Promise<DevtoolsOptions['mutate'] | null> {
+  try {
+    const mutateModule: Record<string, any> = await import('@veriscope/mutate');
+    if (typeof mutateModule.mutate === 'function') {
+      return (opts) => mutateModule.mutate(() => graph, {
+        budget: 1200,
+        operators: opts?.mode === 'broad' ? 'all' : undefined,
+        onProgress: opts?.onProgress,
+      });
+    }
+  } catch {
+    // @veriscope/mutate not installed
+  }
+  return null;
 }

@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { coverage, graph } from '@veriscope/graph';
+import { graph } from '@veriscope/graph';
 import { useDerived, useSignal, useTrackedEffect } from '@veriscope/react';
 import { mountDevtools } from '@veriscope/devtools';
-import { runAutotest } from '@veriscope/test';
-import { mutate as runMutationTest } from '@veriscope/mutate';
 import { leftSources, rightSources } from './reviewSources';
 import {
   COLS,
@@ -34,7 +32,6 @@ import { measureVsTetrisPerf, type PerfResult } from './perf';
 import {
   GARBAGE_RELAY_OUTCOMES,
   GARBAGE_RELAY_STATUSES,
-  createVsTetrisGraph,
   registerTetrisAssertions,
   registerTetrisTelemetry,
   type GarbageRelayStatus,
@@ -729,28 +726,10 @@ function TabRow({
 
 function EmbeddedDevtools({ opponentCount }: { opponentCount: OpponentCount }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const opponentCountRef = useRef(opponentCount);
-
-  useEffect(() => {
-    opponentCountRef.current = opponentCount;
-  }, [opponentCount]);
 
   useEffect(() => {
     if (!hostRef.current) return;
     const handle = mountDevtools(hostRef.current, graph, {
-      coverage,
-      autotest: (_liveGraph, options) => runAutotest(
-        createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
-        options,
-      ),
-      mutate: options => runMutationTest(
-        () => createVsTetrisGraph(clampOpponentCount(opponentCountRef.current)),
-        {
-          budget: 1200,
-          operators: options?.mode === 'broad' ? 'all' : undefined,
-          onProgress: options?.onProgress,
-        },
-      ),
       initialTab: 'circuit',
       height: '380px',
     });
