@@ -103,13 +103,14 @@ export function createCoveragePanel(
       section.style.cssText = 'margin-bottom:16px;';
       const sectionTitle = document.createElement('div');
       sectionTitle.style.cssText = 'font-size:0.8rem; font-weight:600; color:#c9d1d9; margin-bottom:8px;';
-      sectionTitle.textContent = 'Transition Coverage';
+      sectionTitle.textContent = 'Observed / Planned Transitions';
       section.appendChild(sectionTitle);
 
       for (const tc of report.transitions) {
         const fsmLabel = document.createElement('div');
         fsmLabel.style.cssText = 'color:#a78bfa; font-size:0.75rem; margin-bottom:4px;';
-        fsmLabel.textContent = tc.fsmId;
+        const planned = tc.plannedTransitions ?? new Set<string>();
+        fsmLabel.textContent = `${tc.fsmId} (${tc.transitions.size} observed${planned.size > 0 ? `, ${planned.size} planned` : ''})`;
         section.appendChild(fsmLabel);
 
         const states = [...tc.states];
@@ -138,9 +139,10 @@ export function createCoveragePanel(
           for (const to of states) {
             const key = `${from}->${to}`;
             const count = tc.transitions.get(key) ?? 0;
+            const isPlanned = planned.size === 0 || planned.has(key);
             const cell = document.createElement('div');
-            cell.style.cssText = `padding:3px 4px; background:#0d1117; text-align:center; font-size:0.65rem; color:${count > 0 ? '#72f1b8' : '#333'};`;
-            cell.textContent = count > 0 ? String(count) : '\u2014';
+            cell.style.cssText = `padding:3px 4px; background:#0d1117; text-align:center; font-size:0.65rem; color:${count > 0 ? '#72f1b8' : isPlanned ? '#f8d66d' : '#333'};`;
+            cell.textContent = count > 0 ? String(count) : isPlanned ? '0' : '\u2014';
             grid.appendChild(cell);
           }
         }

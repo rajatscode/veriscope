@@ -22,6 +22,7 @@ export interface ScenarioObservation {
     | 'operation-timeout'
     | 'operation-stale';
   node: string;
+  nodeId?: string;
   oldValue?: any;
   newValue?: any;
   operationId?: string;

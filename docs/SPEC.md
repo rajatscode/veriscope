@@ -286,7 +286,7 @@ those mocks.
 Coverage should be honest and actionable:
 
 - toggle coverage for boolean-like values;
-- finite-state transition coverage for enumerated states;
+- observed transition coverage plus generated planned-transition coverage;
 - cross coverage for explicitly declared combinations;
 - operation outcome coverage for tracked external I/O;
 - assertion coverage showing which assertions were actually exercised.
@@ -295,10 +295,10 @@ Unexplored surfaces should be reported as gaps, not hidden behind optimistic
 percentages.
 
 Every coverage percentage needs an explicit denominator. Denominators may come
-from declared signal domains, declared transition sets, declared cross products,
-declared operation outcome domains, or a clearly labeled observed-only baseline.
-Observed-only coverage is useful for debugging, but it must not be presented as
-complete state-space coverage.
+from declared signal domains, generated planned transitions, declared cross
+products, declared operation outcome domains, or a clearly labeled observed-only
+baseline. Observed-only coverage is useful for debugging, but it must not be
+presented as complete state-space coverage.
 
 ## Devtools And CLI
 
@@ -327,7 +327,7 @@ The extraction plan maps to these Veriscope package responsibilities:
 - framework adapters such as `@veriscope/react` and `@veriscope/solid`: tracked
   signals, derived values, effects, edge effects, scoping, lifecycle cleanup,
   and adapter settle barriers;
-- `@veriscope/coverage`: toggle, finite-state transition, cross, operation
+- `@veriscope/coverage`: toggle, observed/planned transition, cross, operation
   outcome, and assertion coverage with reporters, thresholds, and merge support;
 - `@veriscope/test`: backward-cone exploration, domain generation,
   coverage-steered sampling, adversarial assertion checks, async outcome

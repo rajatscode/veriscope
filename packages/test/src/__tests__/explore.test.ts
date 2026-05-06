@@ -326,13 +326,9 @@ describe('explore', () => {
     });
 
     const assertId = g.registerNode({
-      name: 'flag-true-domain',
+      name: 'unrelated-invariant',
       type: 'assertion',
-      deps: [flag],
-      assertionMetadata: {
-        domains: { [flag]: [true] },
-        partial: false,
-      },
+      deps: [],
     });
     g.setAssertionFn(assertId, () => true, 'always');
 
@@ -340,12 +336,12 @@ describe('explore', () => {
 
     expect(result.scenarios.some(scenario =>
       scenario.kind === 'coverage-directed'
-      && scenario.steps.some(step => step.signal === 'flag' && step.value === false),
+      && scenario.steps.some(step => step.signal === 'flag' && step.value === true),
     )).toBe(true);
     expect(result.coverage.toggle.covered).toBe(2);
   });
 
-  it('drives FSM state pairs for transition coverage completion', async () => {
+  it('does not infer transition gaps from value domains alone', async () => {
     const g = new CircuitGraph();
     let modeVal = 'idle';
 
@@ -372,41 +368,51 @@ describe('explore', () => {
 
     const result = await explore(g, { budget: 50 });
 
-    expect(result.coverage.transitions.total).toBe(6);
-    expect(result.coverage.transitions.covered).toBe(6);
+    expect(result.coverage.transitions.total).toBeLessThan(6);
     expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(false);
   });
 
-  it('reports transition coverage from exploration before all transitions are exhausted', async () => {
+  it('records planned derived transitions from generated graph steps', async () => {
     const g = new CircuitGraph();
-    let phase = 'idle';
+    let tick = 0;
+    const tickId = g.registerNode({
+      name: 'tick',
+      type: 'signal',
+    });
+    g.setNodeValue(tickId, () => tick);
+    g.setNodeSetter(tickId, (v: number) => {
+      tick = v;
+    });
     const phaseId = g.registerNode({
       name: 'phase',
-      type: 'signal',
-      metadata: { states: ['idle', 'loading', 'success', 'error'] },
+      type: 'derived',
+      deps: [tickId],
+      computeFn: () => tick % 2 === 0 ? 'even' : 'odd',
     });
-    g.setNodeValue(phaseId, () => phase);
-    g.setNodeSetter(phaseId, (v: string) => {
-      phase = v;
-    });
+    g.addEdge(tickId, phaseId);
 
     const assertId = g.registerNode({
       name: 'phase-valid',
       type: 'assertion',
       deps: [phaseId],
       assertionMetadata: {
-        domains: { [phaseId]: ['idle', 'loading', 'success', 'error'] },
+        domains: { [tickId]: [0, 1, 2, 3] },
         partial: false,
       },
     });
-    g.setAssertionFn(assertId, () => ['idle', 'loading', 'success', 'error'].includes(phase), 'always');
+    g.addEdge(phaseId, assertId);
+    g.setAssertionFn(assertId, () => ['even', 'odd'].includes(g.getNode(phaseId)?.getValue?.()), 'always');
+    g.propagate();
 
-    const result = await explore(g, { budget: 5 });
+    const result = await explore(g, { budget: 20 });
 
-    expect(result.coverage.transitions.total).toBe(12);
+    expect(result.coverage.transitions.total).toBeGreaterThan(0);
     expect(result.coverage.transitions.covered).toBeGreaterThan(0);
-    expect(result.coverage.transitions.covered).toBeLessThan(result.coverage.transitions.total);
-    expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(true);
+    expect(result.coverage.transitions.covered).toBe(result.coverage.transitions.total);
+    expect(result.coverage.gaps.some(gap => gap.kind === 'transition')).toBe(false);
+    expect(result.scenarios.some(scenario =>
+      scenario.observations?.some(observation => observation.type === 'derived-recompute' && observation.node === 'phase'),
+    )).toBe(true);
   });
 
   it('reports uncovered coverage gaps with explicit denominators', async () => {

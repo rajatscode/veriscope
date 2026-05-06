@@ -91,6 +91,7 @@ export interface GraphEvent {
   type:
     | 'node-created'
     | 'node-disposed'
+    | 'graph-reset'
     | 'signal-change'
     | 'derived-recompute'
     | 'effect-run'

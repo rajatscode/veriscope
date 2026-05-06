@@ -30,13 +30,16 @@ describe('checkThresholds', () => {
 
   it('fails when transition coverage below threshold', () => {
     const collector = new CoverageCollector();
+    collector.declarePlannedTransition('fsm', 'a', 'b');
+    collector.declarePlannedTransition('fsm', 'b', 'c');
+    collector.declarePlannedTransition('fsm', 'c', 'a');
     collector.enable();
     collector.recordTransition('fsm', 'a', 'b');
     collector.recordTransition('fsm', 'b', 'c');
-    // 3 states -> 6 possible transitions, only 2 observed = 33.3%
+    // 3 planned transitions, only 2 observed = 66.7%
 
     const report = collector.getReport();
-    const result = checkThresholds(report, { transitions: 50 });
+    const result = checkThresholds(report, { transitions: 80 });
     expect(result.pass).toBe(false);
     expect(result.failures[0]).toContain('Transition coverage');
   });

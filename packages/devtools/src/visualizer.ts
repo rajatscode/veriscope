@@ -698,8 +698,15 @@ export function createVisualizerPanel(
   const unsubscribe = graph.subscribe((event: GraphEvent) => {
     if (
       event.type === 'node-created' ||
-      event.type === 'node-disposed'
+      event.type === 'node-disposed' ||
+      event.type === 'graph-reset'
     ) {
+      if (event.type === 'graph-reset') {
+        nodeActivity.clear();
+        edgeActivity.clear();
+        lastEventLabel = 'graph reset';
+        selectedDisplayId = null;
+      }
       scheduleDraw(true);
     } else if (
       event.type === 'signal-change' ||

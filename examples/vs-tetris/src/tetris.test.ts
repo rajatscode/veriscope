@@ -131,7 +131,7 @@ describe('vs-tetris engine', () => {
     expect(result.scenarios.some(scenario => scenario.kind === 'operation-outcome')).toBe(true);
     expect(result.coverage.operations.total).toBeGreaterThan(0);
     expect(result.coverage.operations.covered).toBe(result.coverage.operations.total);
-    expect(result.scenarios.some(scenario => scenario.kind === 'coverage-directed')).toBe(true);
+    expect(result.coverage.gaps.some(gap => gap.kind === 'transition' && gap.id.includes('tick'))).toBe(false);
     expect(result.scenarios.every(scenario =>
       scenario.steps.every(step => step.signal !== 'p1.attackBank' || typeof step.value !== 'number' || step.value >= 0),
     )).toBe(true);

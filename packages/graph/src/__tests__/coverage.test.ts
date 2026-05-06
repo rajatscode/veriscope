@@ -21,7 +21,7 @@ describe('CoverageCollector', () => {
     expect(report.transitions[0].transitions.size).toBe(2);
   });
 
-  it('includes FSM transitions in summary and reports missing transition gaps', () => {
+  it('treats observed transitions as observed activity without inferred all-pairs gaps', () => {
     const c = new CoverageCollector();
     c.enable();
     c.recordTransition('fsm1', 'idle', 'loading');
@@ -29,12 +29,26 @@ describe('CoverageCollector', () => {
 
     const report = c.getReport();
 
-    expect(report.summary.totalPoints).toBe(6);
+    expect(report.summary.totalPoints).toBe(2);
     expect(report.summary.coveredPoints).toBe(2);
+    expect(report.gaps.some(gap => gap.kind === 'transition')).toBe(false);
+  });
+
+  it('reports missing planned transition gaps only from generated plans', () => {
+    const c = new CoverageCollector();
+    c.declarePlannedTransition('fsm1', 'idle', 'loading');
+    c.declarePlannedTransition('fsm1', 'loading', 'success');
+    c.enable();
+    c.recordTransition('fsm1', 'idle', 'loading');
+
+    const report = c.getReport();
+
+    expect(report.summary.totalPoints).toBe(2);
+    expect(report.summary.coveredPoints).toBe(1);
     expect(report.gaps).toContainEqual({
       kind: 'transition',
       id: 'fsm1',
-      missing: ['idle->success', 'loading->idle', 'success->idle', 'success->loading'],
+      missing: ['loading->success'],
     });
   });
 

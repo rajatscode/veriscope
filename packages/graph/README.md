@@ -279,7 +279,7 @@ Returns a copy of all recorded waveform data, keyed by node ID.
 
 ##### `reset(): void`
 
- Clears all state: nodes, edges, events, listeners, waveforms, disposed node history, operation spans/models, tick counter, coverage, CDC state, and CDC warning listeners.
+Clears graph state and emits `graph-reset`. Active subscribers are preserved so mounted devtools and integrations can rebuild against the new graph.
 
 ---
 
@@ -298,7 +298,7 @@ A default `CircuitGraph` instance for convenience. The assertion helper function
 HDL-style coverage collection for measuring test completeness. Tracks:
 
 - **Toggle** -- has every boolean signal been both `true` and `false`?
-- **Transition** -- which FSM state transitions have been exercised?
+- **Transition** -- which primitive signal/derived transitions have been observed, and which generated planned transitions were covered?
 - **Cross** -- which combinations of boolean signal values have been observed?
 - **Operation outcomes** -- which declared external operation outcomes were observed?
 
@@ -326,11 +326,15 @@ Records a boolean signal value for toggle coverage.
 
 ##### `recordTransition(fsmId: string, from: string, to: string): void`
 
-Records an FSM state transition. Tracks all observed states and transition counts.
+Records an observed primitive transition. Tracks all observed states and transition counts.
+
+##### `declarePlannedTransition(fsmId: string, from: string, to: string): void`
+
+Declares a generated reachable transition bin. Missing transition gaps are reported only against planned transitions, never against every pair in a value domain.
 
 ##### `declareTransitionStates(fsmId: string, states: string[]): void`
 
-Declares the finite state domain used to report missing transition bins.
+Declares a finite state value domain for display. This does not imply every state pair is reachable.
 
 ##### `registerCrossGroup(groupId: string, signalIds: string[]): void`
 
@@ -487,6 +491,7 @@ interface GraphEdge {
 interface GraphEvent {
   seq?: number;
   type: 'node-created' | 'node-disposed'
+      | 'graph-reset'
       | 'signal-change' | 'derived-recompute' | 'effect-run'
       | 'assertion-armed' | 'assertion-passed' | 'assertion-failed'
       | 'operation-begin' | 'operation-resolve' | 'operation-reject'
@@ -583,6 +588,7 @@ interface TransitionCoverage {
   fsmId: string;
   transitions: Map<string, number>;  // "stateA->stateB" -> count
   states: Set<string>;
+  plannedTransitions?: Set<string>;
 }
 ```
 

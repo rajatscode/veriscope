@@ -384,7 +384,7 @@ Buffer limit: 2000 samples per node.
 #### Reset
 
 ```ts
-reset(): void  // clears all state
+reset(): void  // clears graph state, preserves subscribers, emits graph-reset
 ```
 
 ### Graph Types
@@ -417,6 +417,7 @@ interface GraphEdge {
 interface GraphEvent {
   seq?: number;
   type: 'node-created' | 'node-disposed'
+      | 'graph-reset'
       | 'signal-change' | 'derived-recompute' | 'effect-run'
       | 'assertion-armed' | 'assertion-passed' | 'assertion-failed'
       | 'operation-begin' | 'operation-resolve' | 'operation-reject'
@@ -500,6 +501,8 @@ disable(): void
 isEnabled(): boolean
 recordToggle(signalId: string, value: boolean): void
 recordTransition(fsmId: string, from: string, to: string): void
+declarePlannedTransition(fsmId: string, from: string, to: string): void
+declarePlannedTransitions(fsmId: string, transitions: Array<{ from: string; to: string }>): void
 declareTransitionStates(fsmId: string, states: string[]): void
 registerCrossGroup(groupId: string, signalIds: string[]): void
 recordCross(groupId: string, values: boolean[]): void
@@ -533,6 +536,7 @@ interface TransitionCoverage {
   fsmId: string;
   transitions: Map<string, number>;  // "stateA->stateB" -> count
   states: Set<string>;
+  plannedTransitions?: Set<string>;
 }
 
 interface CrossCoverage {
@@ -591,7 +595,7 @@ function saveCoverageToFile(report: CoverageReport, path: string): void
 function loadCoverageFromFile(path: string): CoverageReport
 ```
 
-Merge strategy: toggle OR-unions `seenTrue`/`seenFalse`, transitions/cross sum counts and union keys.
+Merge strategy: toggle OR-unions `seenTrue`/`seenFalse`; transitions sum observed counts and union planned bins; cross coverage sums counts and unions keys.
 
 ### Vitest Reporter (`@veriscope/coverage`)
 

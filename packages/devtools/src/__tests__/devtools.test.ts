@@ -356,6 +356,35 @@ describe('mountDevtools', () => {
     handle.dispose();
   });
 
+  it('rebuilds Circuit after graph reset while devtools stays mounted', () => {
+    const graph = new CircuitGraph();
+    graph.registerNode({ name: 'first', type: 'signal' });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handle = mountDevtools(host, graph, { initialTab: 'circuit' });
+
+    expect(canvasText).toContain('first');
+
+    canvasText.length = 0;
+    graph.reset();
+    const signalId = graph.registerNode({ name: 'arena.players', type: 'signal' });
+    graph.registerNode({
+      name: 'arena.activePlayers',
+      type: 'derived',
+      deps: [signalId],
+      computeFn: () => 4,
+    });
+    handle.refresh();
+
+    expect(host.textContent).toContain('graph reset');
+    expect(canvasText).toContain('arena.players');
+    expect(canvasText).toContain('arena.activePlayers');
+    expect(canvasText).not.toContain('first');
+
+    handle.dispose();
+  });
+
   it('shows recent Circuit graph activity from signal and derived events', () => {
     const graph = new CircuitGraph();
     let ready = false;
@@ -665,12 +694,13 @@ describe('mountDevtools', () => {
     const handle = mountDevtools(host, graph, { initialTab: 'live-assertions', coverage });
 
     expect(host.textContent).toContain('Runtime Coverage (live graph activity)');
-    expect(host.textContent).toContain('Counts observed boolean signal values');
-    expect(host.textContent).toContain('not assertion, line, branch, or autotest coverage');
-    expect(host.textContent).toContain('Overall: 2/4 (50.0%)');
+    expect(host.textContent).toContain('Observed Activity counts live boolean values');
+    expect(host.textContent).toContain('Transition gaps appear only for Planned Coverage');
+    expect(host.textContent).toContain('Overall: 2/3 (66.7%)');
     expect(host.textContent).toContain('Toggles: 1/2 (50.0%)');
+    expect(host.textContent).toContain('Transitions: 1/1 (100.0%)');
     expect(host.textContent).toContain('Missing toggle: player.ready=false');
-    expect(host.textContent).toContain('Missing transition: player.ready -> true->false');
+    expect(host.textContent).not.toContain('Missing planned transition: player.ready -> true->false');
 
     graph.disableCoverage();
     handle.dispose();

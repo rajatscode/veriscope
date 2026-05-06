@@ -45,11 +45,16 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
         for (const [key, count] of fsm.transitions) {
           existing.transitions.set(key, (existing.transitions.get(key) ?? 0) + count);
         }
+        for (const planned of fsm.plannedTransitions ?? []) {
+          if (!existing.plannedTransitions) existing.plannedTransitions = new Set();
+          existing.plannedTransitions.add(planned);
+        }
       } else {
         transitionMap.set(fsm.fsmId, {
           fsmId: fsm.fsmId,
           transitions: new Map(fsm.transitions),
           states: new Set(fsm.states),
+          plannedTransitions: new Set(fsm.plannedTransitions ?? []),
         });
       }
     }
@@ -113,6 +118,17 @@ export function mergeCoverageReports(...reports: CoverageReport[]): CoverageRepo
     if (missing.length > 0) gaps.push({ kind: 'toggle', id: t.signalId, missing });
   }
 
+  for (const fsm of transitions) {
+    const planned = [...(fsm.plannedTransitions ?? [])];
+    const total = planned.length > 0 ? planned.length : fsm.transitions.size;
+    totalPoints += total;
+    coveredPoints += planned.length > 0
+      ? planned.filter(key => fsm.transitions.has(key)).length
+      : fsm.transitions.size;
+    const missing = planned.filter(key => !fsm.transitions.has(key));
+    if (missing.length > 0) gaps.push({ kind: 'transition', id: fsm.fsmId, missing });
+  }
+
   for (const c of cross) {
     totalPoints += c.total;
     coveredPoints += c.observed.size;
@@ -155,6 +171,7 @@ export function saveCoverageToFile(report: CoverageReport, path: string): void {
       fsmId: t.fsmId,
       transitions: Object.fromEntries(t.transitions),
       states: [...t.states],
+      plannedTransitions: [...(t.plannedTransitions ?? [])],
     })),
     cross: report.cross.map(c => ({
       groupId: c.groupId,
@@ -186,6 +203,7 @@ export function loadCoverageFromFile(path: string): CoverageReport {
       fsmId: t.fsmId,
       transitions: new Map(Object.entries(t.transitions).map(([k, v]) => [k, v as number])),
       states: new Set(t.states as string[]),
+      plannedTransitions: new Set((t.plannedTransitions ?? []) as string[]),
     })),
     cross: raw.cross.map((c: any) => ({
       groupId: c.groupId,

@@ -369,6 +369,19 @@ describe('CircuitGraph', () => {
     expect(events).toHaveLength(1);
   });
 
+  it('preserves subscribers across reset and emits graph-reset', () => {
+    const g = new CircuitGraph();
+    const events: any[] = [];
+    g.subscribe(e => events.push(e));
+    g.registerNode({ name: 'before', type: 'signal' });
+
+    g.reset();
+    g.registerNode({ name: 'after', type: 'signal' });
+
+    expect(events.some(event => event.type === 'graph-reset')).toBe(true);
+    expect(events.some(event => event.type === 'node-created' && event.metadata?.name === 'after')).toBe(true);
+  });
+
   it('ring buffer wraps after EVENT_BUFFER_SIZE', () => {
     const g = new CircuitGraph();
     g.enterTestMode();

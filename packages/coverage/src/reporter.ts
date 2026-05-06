@@ -34,12 +34,16 @@ export function formatConsole(report: CoverageReport): string {
     lines.push('  (no FSM coverage points)');
   } else {
     for (const fsm of report.transitions) {
-      const states = [...fsm.states];
-      const totalPossible = states.length * (states.length - 1);
+      const planned = fsm.plannedTransitions ?? new Set<string>();
+      const totalPossible = planned.size > 0 ? planned.size : fsm.transitions.size;
       const observed = fsm.transitions.size;
-      lines.push(`  FSM: ${fsm.fsmId}  (${observed}/${totalPossible} transitions)`);
+      const label = planned.size > 0 ? 'planned transitions' : 'observed transitions';
+      lines.push(`  FSM: ${fsm.fsmId}  (${observed}/${totalPossible} ${label})`);
       for (const [trans, count] of fsm.transitions) {
         lines.push(`    ${trans}  ×${count}`);
+      }
+      for (const trans of planned) {
+        if (!fsm.transitions.has(trans)) lines.push(`    ${trans}  missing`);
       }
     }
   }
@@ -111,6 +115,7 @@ export function formatJSON(report: CoverageReport): string {
       fsmId: t.fsmId,
       transitions: Object.fromEntries(t.transitions),
       states: [...t.states],
+      plannedTransitions: [...(t.plannedTransitions ?? [])],
     })),
     cross: report.cross.map(c => ({
       groupId: c.groupId,
@@ -177,6 +182,7 @@ export function formatHTML(report: CoverageReport): string {
   if (report.transitions.length > 0) {
     for (const fsm of report.transitions) {
       const states = [...fsm.states];
+      const planned = fsm.plannedTransitions ?? new Set<string>();
       lines.push(`<h3>${esc(fsm.fsmId)}</h3>`);
       lines.push('<table><tr><th>From \\ To</th>');
       for (const s of states) lines.push(`<th>${esc(s)}</th>`);
@@ -189,8 +195,9 @@ export function formatHTML(report: CoverageReport): string {
           } else {
             const key = `${from}->${to}`;
             const count = fsm.transitions.get(key);
-            const cls = count ? 'covered' : 'uncovered';
-            lines.push(`<td class="${cls}">${count ?? 0}</td>`);
+            const isPlanned = planned.size === 0 || planned.has(key);
+            const cls = count ? 'covered' : isPlanned ? 'uncovered' : '';
+            lines.push(`<td class="${cls}">${count ?? (isPlanned ? 0 : '-')}</td>`);
           }
         }
         lines.push('</tr>');

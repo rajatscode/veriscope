@@ -406,7 +406,12 @@ export class CircuitGraph {
       if (typeof newValue === 'boolean') {
         coverage.recordToggle(nodeId, newValue);
       }
-      if (node.type === 'signal' && oldValue !== undefined && !Object.is(oldValue, newValue)) {
+      if (
+        (node.type === 'signal' || node.type === 'derived')
+        && isTransitionValue(oldValue)
+        && isTransitionValue(newValue)
+        && !Object.is(oldValue, newValue)
+      ) {
         coverage.recordTransition(nodeId, String(oldValue), String(newValue));
       }
     }
@@ -1015,13 +1020,14 @@ export class CircuitGraph {
   // --- Reset ---
 
   reset(): void {
+    const listeners = new Set(this.listeners);
     this.nodes.clear();
     this.edges = [];
     this.events = [];
     this.eventWriteIdx = 0;
     this.eventsFull = false;
     this.eventSeq = 0;
-    this.listeners.clear();
+    this.listeners = listeners;
     this.recording = false;
     this.waveforms.clear();
     this.disposedNodes.clear();
@@ -1039,6 +1045,11 @@ export class CircuitGraph {
     this._inAsyncContext = false;
     this.nodeLastSetContext.clear();
     this.cdcWarningListeners.clear();
+    this.emitEvent({
+      type: 'graph-reset',
+      nodeId: '',
+      tick: this._currentTick,
+    });
   }
 }
 
@@ -1055,6 +1066,10 @@ function arrayMetadata(metadata: Record<string, any> | undefined, key: string): 
   if (!Array.isArray(value)) return undefined;
   const strings = value.filter((entry): entry is string => typeof entry === 'string');
   return strings.length > 0 ? [...strings] : undefined;
+}
+
+function isTransitionValue(value: unknown): boolean {
+  return value === null || ['boolean', 'number', 'string'].includes(typeof value);
 }
 
 function stableJson(value: unknown): string {

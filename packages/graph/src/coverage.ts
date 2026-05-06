@@ -11,6 +11,7 @@ export interface TransitionCoverage {
   fsmId: string;
   transitions: Map<string, number>; // "stateA->stateB" -> count
   states: Set<string>;
+  plannedTransitions?: Set<string>; // generated reachable transition bins
 }
 
 export interface CrossCoverage {
@@ -46,7 +47,8 @@ export interface CoverageReport {
  *
  * Three coverage types, inspired by hardware verification:
  * - Toggle: has every boolean signal been both true and false?
- * - Transition: which FSM state transitions have been exercised?
+ * - Transition: which primitive transitions were observed, and which planned
+ *   generated transitions were covered?
  * - Cross: which combinations of boolean signal values have been observed?
  */
 export class CoverageCollector {
@@ -105,7 +107,32 @@ export class CoverageCollector {
   }
 
   /**
+   * Declare a transition that Veriscope generated as reachable. Transition
+   * gaps are computed against these planned transitions, not against every
+   * pair in a value domain.
+   */
+  declarePlannedTransition(fsmId: string, from: string, to: string): void {
+    let entry = this.transitionMap.get(fsmId);
+    if (!entry) {
+      entry = { fsmId, transitions: new Map(), states: new Set(), plannedTransitions: new Set() };
+      this.transitionMap.set(fsmId, entry);
+    }
+    if (!entry.plannedTransitions) entry.plannedTransitions = new Set();
+    entry.states.add(from);
+    entry.states.add(to);
+    entry.plannedTransitions.add(`${from}->${to}`);
+  }
+
+  declarePlannedTransitions(fsmId: string, transitions: Array<{ from: string; to: string }>): void {
+    for (const transition of transitions) {
+      this.declarePlannedTransition(fsmId, transition.from, transition.to);
+    }
+  }
+
+  /**
    * Declare the finite state domain for transition coverage.
+   * This is a value-domain hint only. It does not imply every state pair is a
+   * reachable transition.
    */
   declareTransitionStates(fsmId: string, states: string[]): void {
     let entry = this.transitionMap.get(fsmId);
@@ -207,16 +234,13 @@ export class CoverageCollector {
     }
 
     for (const fsm of transitions) {
-      const states = [...fsm.states];
-      const expected = states.flatMap(from =>
-        states.filter(to => to !== from).map(to => `${from}->${to}`),
-      );
-      const total = expected.length > 0 ? expected.length : fsm.transitions.size;
+      const planned = [...(fsm.plannedTransitions ?? [])];
+      const total = planned.length > 0 ? planned.length : fsm.transitions.size;
       totalPoints += total;
-      coveredPoints += expected.length > 0
-        ? expected.filter(key => fsm.transitions.has(key)).length
+      coveredPoints += planned.length > 0
+        ? planned.filter(key => fsm.transitions.has(key)).length
         : fsm.transitions.size;
-      const missing = expected.filter(key => !fsm.transitions.has(key));
+      const missing = planned.filter(key => !fsm.transitions.has(key));
       if (missing.length > 0) gaps.push({ kind: 'transition', id: fsm.fsmId, missing });
     }
 

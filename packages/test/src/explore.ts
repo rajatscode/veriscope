@@ -69,7 +69,6 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
     // 1. Discover assertions
     const assertions = graph.getAssertions();
     const checkedAssertionNames = assertions.map(assertion => assertion.name);
-    declareTransitionDomains(signalNodes, assertions);
     const restoreScenarioBaseline = async () => {
       graph.restoreOperations(savedOperations);
       await restoreSavedSignalValues(graph, signalNodes, savedValues, flush);
@@ -313,7 +312,8 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
       await emitProgress('adversarial');
     }
 
-    // 10. Coverage completion pass — drive untoggled booleans and FSM state transitions
+    // 10. Coverage completion pass — drive untoggled booleans. Transition
+    // coverage is planned from generated graph steps, never from domain pairs.
     if (steps < budget) {
       for (const node of signalNodes) {
         if (steps >= budget) {
@@ -354,67 +354,6 @@ export async function explore(graph: CircuitGraph, options: ExploreOptions = {})
           }
         }
 
-        const stateDomain = node.metadata?.states && Array.isArray(node.metadata.states)
-          ? node.metadata.states
-          : coverageDomainForNode(assertions, node);
-        const states = (stateDomain ?? [])
-          .filter((state): state is string => typeof state === 'string')
-          .filter((state, index, all) => all.indexOf(state) === index);
-
-        // FSM signals with known states — drive ordered pairs so transition
-        // coverage observes A->B, not just isolated state values.
-        if (states.length > 1) {
-          for (const from of states) {
-            for (const to of states) {
-              if (steps >= budget) {
-                budgetAttempted = true;
-                break;
-              }
-              if (Object.is(from, to)) continue;
-              await restoreScenarioBaseline();
-              const eventMarker = markEvents(graph);
-              const scenarioSteps: Array<{ signal: string; value: any }> = [];
-
-              graph.openTick();
-              graph.driveNodeValue(node.id, from);
-              scenarioSteps.push({ signal: node.name, value: from });
-              await flush();
-              graph.closeTick();
-              steps++;
-              await emitProgress('coverage-completion');
-              if (steps >= budget) {
-                hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
-                  id: `scenario-${scenarioCounter++}`,
-                  kind: 'coverage-completion',
-                  tick: graph.currentTick,
-                  steps: scenarioSteps,
-                  assertions: checkedAssertionNames,
-                  violations: [],
-                  observations: observationsSince(graph, eventMarker),
-                });
-                break;
-              }
-
-              graph.openTick();
-              graph.driveNodeValue(node.id, to);
-              scenarioSteps.push({ signal: node.name, value: to });
-              await flush();
-              graph.closeTick();
-              steps++;
-              await emitProgress('coverage-completion');
-
-              hiddenDuplicateCases += recordScenario(scenarios, seenScenarioKeys, {
-                id: `scenario-${scenarioCounter++}`,
-                kind: 'coverage-completion',
-                tick: graph.currentTick,
-                steps: scenarioSteps,
-                assertions: checkedAssertionNames,
-                violations: [],
-                observations: observationsSince(graph, eventMarker),
-              });
-            }
-          }
-        }
       }
     }
 
@@ -501,21 +440,6 @@ async function restoreSavedSignalValues(
   } finally {
     if (tickOpened) graph.closeTick();
     graph.enableCoverage();
-  }
-}
-
-function declareTransitionDomains(
-  signalNodes: GraphNodeRef[],
-  assertions: Array<{ metadata?: AssertionMetadata }>,
-): void {
-  for (const node of signalNodes) {
-    const states = metadataStateDomain(node) ?? coverageDomainForNode(assertions, node);
-    if (!states || states.length < 2) continue;
-
-    const finiteStates = uniqueValues(states)
-      .filter(state => state === null || ['boolean', 'number', 'string'].includes(typeof state))
-      .map(String);
-    if (finiteStates.length > 1) coverage.declareTransitionStates(node.id, finiteStates);
   }
 }
 
@@ -652,6 +576,7 @@ function observationsSince(graph: CircuitGraph, before: Set<GraphEvent>): Scenar
     .map(event => ({
       type: event.type as NonNullable<ScenarioTrace['observations']>[number]['type'],
       node: graph.getNode(event.nodeId)?.name ?? event.stablePath ?? event.nodeId,
+      nodeId: event.nodeId,
       oldValue: event.oldValue,
       newValue: event.newValue,
       operationId: event.operationId,
@@ -702,10 +627,15 @@ function summarizeCoverage(report: CoverageReport): ExploreResult['coverage'] {
     0,
   );
   const toggleTotal = report.toggle.length * 2;
-  const transitionsCovered = report.transitions.reduce((sum, entry) => sum + entry.transitions.size, 0);
+  const transitionsCovered = report.transitions.reduce((sum, entry) => {
+    const planned = entry.plannedTransitions ?? new Set<string>();
+    return sum + (planned.size > 0
+      ? [...planned].filter(key => entry.transitions.has(key)).length
+      : entry.transitions.size);
+  }, 0);
   const transitionsTotal = report.transitions.reduce((sum, entry) => {
-    const stateCount = entry.states.size;
-    return sum + (stateCount > 1 ? stateCount * (stateCount - 1) : entry.transitions.size);
+    const planned = entry.plannedTransitions ?? new Set<string>();
+    return sum + (planned.size > 0 ? planned.size : entry.transitions.size);
   }, 0);
   const crossCovered = report.cross.reduce((sum, entry) => sum + entry.observed.size, 0);
   const crossTotal = report.cross.reduce((sum, entry) => sum + entry.total, 0);
@@ -796,7 +726,26 @@ function recordScenario(
   if (seenScenarioKeys.has(key)) return 1;
   seenScenarioKeys.add(key);
   scenarios.push(scenario);
+  declarePlannedTransitionsFromScenario(scenario);
   return 0;
+}
+
+function declarePlannedTransitionsFromScenario(scenario: ScenarioTrace): void {
+  for (const observation of scenario.observations ?? []) {
+    if (observation.type !== 'signal-change' && observation.type !== 'derived-recompute') continue;
+    if (!observation.nodeId) continue;
+    if (!isCoverageTransitionValue(observation.oldValue) || !isCoverageTransitionValue(observation.newValue)) continue;
+    if (Object.is(observation.oldValue, observation.newValue)) continue;
+    coverage.declarePlannedTransition(
+      observation.nodeId,
+      String(observation.oldValue),
+      String(observation.newValue),
+    );
+  }
+}
+
+function isCoverageTransitionValue(value: unknown): boolean {
+  return value === null || ['boolean', 'number', 'string'].includes(typeof value);
 }
 
 function scenarioKey(scenario: ScenarioTrace): string {
