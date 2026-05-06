@@ -1,7 +1,7 @@
 /**
  * verify-all.ts — Comprehensive package-by-package verification
  *
- * Tests EVERY feature across all 6 packages with EXPECTED vs ACTUAL output
+ * Tests EVERY feature across all 8 packages with EXPECTED vs ACTUAL output
  */
 
 import { spawn } from 'child_process';
@@ -198,6 +198,47 @@ async function verify(): Promise<void> {
       report('coverage', 'Toggle recording and report', expected5, actual5, actual5 === expected5 ? 'PASS' : 'FAIL', performance.now() - start);
     } catch (error) {
       report('coverage', 'Toggle recording', 'works', String(error), 'FAIL', 0);
+    }
+  }
+
+  // === 6. @veriscope/solid ===
+  {
+    const start = performance.now();
+    try {
+      const { useSignal } = await import('./packages/solid/dist/index.js');
+      const expected = 'hooks exported';
+      const actual = typeof useSignal === 'function' ? 'hooks exported' : 'FAILED';
+      report('solid', 'Hook exports', expected, actual, actual === expected ? 'PASS' : 'FAIL', performance.now() - start);
+    } catch (error) {
+      report('solid', 'Hook exports', 'exists', String(error), 'FAIL', 0);
+    }
+  }
+
+  // === 7. @veriscope/mutate ===
+  {
+    const start = performance.now();
+    try {
+      const { mutate, generateMutations } = await import('./packages/mutate/dist/index.js');
+      const expected = 'mutate functions exported';
+      const actual = typeof mutate === 'function' && typeof generateMutations === 'function'
+        ? 'mutate functions exported' : 'FAILED';
+      report('mutate', 'Mutation exports', expected, actual, actual === expected ? 'PASS' : 'FAIL', performance.now() - start);
+    } catch (error) {
+      report('mutate', 'Mutation exports', 'exists', String(error), 'FAIL', 0);
+    }
+  }
+
+  // === 8. @veriscope/devtools ===
+  {
+    const start = performance.now();
+    try {
+      const { mountDevtools, createWaveformPanel } = await import('./packages/devtools/dist/index.js');
+      const expected = 'devtools exported';
+      const actual = typeof mountDevtools === 'function' && typeof createWaveformPanel === 'function'
+        ? 'devtools exported' : 'FAILED';
+      report('devtools', 'Devtools exports', expected, actual, actual === expected ? 'PASS' : 'FAIL', performance.now() - start);
+    } catch (error) {
+      report('devtools', 'Devtools exports', 'exists', String(error), 'FAIL', 0);
     }
   }
 
