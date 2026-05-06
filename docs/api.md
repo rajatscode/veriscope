@@ -979,6 +979,7 @@ Mutation testing surface. Provide a callback backed by `@veriscope/mutate` to ru
 function createTabLayout(container: HTMLElement): TabLayout
 function createWaveformPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
 function createVisualizerPanel(container: HTMLElement, graph: CircuitGraph): { dispose: () => void; refresh: () => void }
+function createAssertionsPanel(container: HTMLElement, graph: CircuitGraph, options?: { autotest?: DevtoolsOptions['autotest']; explore?: DevtoolsOptions['explore'] }): { dispose: () => void; refresh: () => void }
 function createLiveAssertionsPanel(container: HTMLElement, graph: CircuitGraph, options?: { coverage?: CoverageCollector }): { dispose: () => void; refresh: () => void }
 function createMutantsPanel(container: HTMLElement, options?: { mutate?: DevtoolsOptions['mutate'] }): { dispose: () => void; refresh: () => void }
 ```

@@ -10,10 +10,12 @@ Veriscope connects the reactive dependency graph to debugging, testing, and cove
 |---|---|
 | `@veriscope/graph` | Core dependency graph, waveform recording, graph diffing, assertions |
 | `@veriscope/react` | React adapter: `useSignal`, `useDerived`, `useEdgeEffect` |
-| `@veriscope/devtools` | Waveform viewer, graph visualizer, assertion monitor, coverage panel |
+| `@veriscope/devtools` | Waveform viewer, graph visualizer, live assertion monitor, autotest runner, mutation testing panel |
 | `@veriscope/coverage` | Toggle/FSM/cross coverage metrics, reporters, CI thresholds |
 | `@veriscope/test` | Backward graph solver, truth tables, adversarial exploration |
 | `@veriscope/mutate` | Graph-level mutation testing for assertion validation |
+| `@veriscope/solid` | Solid.js adapter: `useSignal`, `useDerived`, `useEdgeEffect` |
+| `@veriscope/cli` | CLI for graph snapshot validation and diffing |
 
 ## Quick Start
 
@@ -64,7 +66,7 @@ import { graph } from '@veriscope/graph'
 test('checkout flow', async () => {
   render(<CheckoutForm />)
 
-  const result = explore(graph, { budget: 1000 })
+  const result = await explore(graph, { budget: 1000 })
   expect(result.violations).toHaveLength(0)
   expect(result.coverage.toggle).toBeGreaterThan(0.9)
 })
@@ -77,7 +79,7 @@ The explorer reads the dependency graph, traces backward from assertions to find
 ```ts
 import { mutate } from '@veriscope/mutate'
 
-const result = mutate(
+const result = await mutate(
   () => { render(<CheckoutForm />); return graph },
   { budget: 500 }
 )

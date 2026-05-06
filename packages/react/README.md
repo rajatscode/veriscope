@@ -45,7 +45,8 @@ function useSignal<T>(
   initialValue: T,
   name: string,
   options?: {
-    states?: string[];
+    states?: Array<string | number | boolean | null>;
+    coverage?: 'auto' | 'transition' | 'activity' | 'counter';
     graph?: CircuitGraph;
     stablePath?: string;
     scope?: string;
@@ -59,7 +60,8 @@ function useSignal<T>(
 |-----------|------|-------------|
 | `initialValue` | `T` | The initial value of the signal. |
 | `name` | `string` | Human-readable name used in graph registration, waveform display, and diffs. |
-| `options.states` | `string[]` | Optional finite state enumeration (e.g. `['idle', 'loading', 'done']`). Stored as node metadata for coverage collection. |
+| `options.states` | `Array<string \| number \| boolean \| null>` | Optional finite state enumeration (e.g. `['idle', 'loading', 'done']`). Stored as node metadata for coverage collection. |
+| `options.coverage` | `'auto' \| 'transition' \| 'activity' \| 'counter'` | Coverage mode override for numeric signals. By default (`'auto'`), unconstrained numeric changes are tracked as counter/gauge activity, not transition coverage. Use `'transition'` to force transition coverage on numeric signals. |
 | `options.graph` | `CircuitGraph` | Optional graph instance. Defaults to the singleton `graph` from `@veriscope/graph`. |
 | `options.stablePath` | `string` | Stable artifact identity for snapshots/diffs. |
 | `options.scope` | `string` | Component/module scope metadata; used to derive stable paths when one is not supplied. |
